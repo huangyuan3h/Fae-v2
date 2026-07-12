@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+.env
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Project
+data/
+models/
+checkpoints/
+*.log
+logs/
+.qdrant/
+.redis/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# OS
+Thumbs.db
