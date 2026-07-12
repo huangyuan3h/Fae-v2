@@ -1,0 +1,52 @@
+[project]
+name = "fae-v2-backend"
+version = "0.1.0"
+description = "FAE-v2 backend: Pipecat voice pipeline + Letta memory + FastAPI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "FAE-v2 Architecture Team" }
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0",
+    # Pipecat + voice stack — added in later checkpoints
+    # "pipecat-ai[daily,openai,silero,sentence]>=0.0.50",
+    # "letta>=0.50",
+    # "dashscope>=1.20",
+    # "apscheduler>=3.10",
+    # "qdrant-client>=1.12",
+    # "redis>=5.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",  # For TestClient async support
+    # "ruff>=0.7",  # Re-enable once network/extract issue is resolved
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fae"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+# ruff is disabled until the install issue is resolved; see pyproject.toml comment.
