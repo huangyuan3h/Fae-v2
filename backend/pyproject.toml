@@ -27,6 +27,7 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "httpx>=0.28",  # For TestClient async support
     # "ruff>=0.7",  # Re-enable once network/extract issue is resolved
 ]
@@ -42,6 +43,45 @@ packages = ["src/fae"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    # Coverage: enforce a minimum line+branch coverage.
+    # 80% is the floor for FAE-v2 application code. Library code and third-party
+    # integrations (when added in later checkpoints) are excluded via [tool.coverage.run]
+    # omit rules so the bar measures OUR code, not transitive deps.
+    "--cov=src/fae",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=80",
+]
+markers = [
+    "integration: marks tests that hit external services (deselect with '-m \"not integration\"')",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/fae"]
+omit = [
+    "*/__init__.py",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+# Lines to skip in coverage reports (defensive: never block on a `# pragma`).
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]
+# Show what's missing for the lines we did fail to hit.
+show_missing = true
+skip_covered = false
+# Don't fail twice — fail_under is also set via addopts for the pytest plugin.
+fail_under = 80
 
 [tool.ruff]
 line-length = 100
@@ -49,4 +89,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+
+[dependency-groups]
+dev = [
+    "coverage<7.10",
+]
 # ruff is disabled until the install issue is resolved; see pyproject.toml comment.
