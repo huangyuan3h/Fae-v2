@@ -12,10 +12,19 @@ backend/
 ├── src/fae/
 │   ├── __init__.py
 │   ├── config.py           # pydantic-settings env loader
-│   └── api.py              # FastAPI app (health/ready endpoints)
+│   ├── api.py              # FastAPI app (health, ready, chat, test-connection)
+│   └── llm/                # LLM abstraction layer
+│       ├── errors.py       #   normalised LLMError (code + message)
+│       ├── types.py        #   LLMConfig, ChatMessage, ChatRequest, ChatResponse
+│       ├── provider.py     #   LLMProvider Protocol + OpenAI + Fake implementations
+│       └── client.py       #   LLMClient wrapper (chat + test_connection)
 └── tests/
-    ├── test_api.py         # endpoint + lifespan tests
-    └── test_config.py      # env loading + defaults + cache
+    ├── test_api.py
+    ├── test_config.py
+    ├── test_chat_endpoints.py
+    ├── test_llm_client.py
+    ├── test_llm_provider.py
+    └── test_llm_types.py
 ```
 
 ## Development
@@ -73,10 +82,58 @@ The 80% floor is a **floor**, not a target. As the codebase grows, the
 test-to-code ratio should improve; if a PR lands and coverage drops
 below 80%, the test run fails until more tests are added.
 
-## Endpoints (Checkpoint 1)
+## Endpoints
 
-| Method | Path     | Description                              |
-|--------|----------|------------------------------------------|
-| GET    | /health  | Liveness probe (always 200 if process up) |
-| GET    | /ready   | Readiness probe (checks config loaded)     |
-| GET    | /docs    | Auto-generated OpenAPI / Swagger UI        |
+| Method | Path                  | Description                                |
+|--------|-----------------------|--------------------------------------------|
+| GET    | /health               | Liveness probe                             |
+| GET    | /ready                | Readiness probe                            |
+| POST   | /api/test-connection  | Probe an LLM provider (1-token, temp=0)    |
+| POST   | /api/chat             | Synchronous text-only chat completion      |
+| GET    | /docs                 | Auto-generated OpenAPI / Swagger UI        |
+
+### LLM error → HTTP status mapping
+
+| `LLMError.code` | HTTP status | Meaning                          |
+|-----------------|-------------|----------------------------------|
+| `auth`          | 401         | API key invalid / missing        |
+| `forbidden`     | 403         | Key valid, model not authorised  |
+| `not_found`     | 404         | Model name unknown               |
+| `bad_request`   | 400         | Provider rejected the request    |
+| `rate_limited`  | 429         | Provider 429'd us                |
+| `timeout`       | 504         | Request timed out (default 10s)  |
+| `connection`    | 502         | Cannot reach the endpoint        |
+| `length`        | 502         | LLM hit `max_tokens`             |
+| `empty_response`| 502         | LLM returned 0 choices           |
+| `unknown`       | 500         | Anything else (likely a bug)     |
+
+### Trying the LLM endpoints with curl
+
+```bash
+# 1. Start the server
+uv run uvicorn fae.api:app --port 8000
+
+# 2. Test connection (probe a real Qwen endpoint)
+curl -X POST http://localhost:8000/api/test-connection \
+  -H "Content-Type: application/json" \
+  -d '{
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+    "api_key": "sk-your-key",
+    "model": "qwen3-max"
+  }'
+
+# 3. Chat
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "config": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+      "api_key": "sk-your-key",
+      "model": "qwen3-max"
+    },
+    "messages": [{"role": "user", "content": "用一句话介绍你自己"}]
+  }'
+```
+
+The backend **never** persists the API key. Each request must include the
+`config` block; the UI stores it in `localStorage` and re-sends on every call.
