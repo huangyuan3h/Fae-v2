@@ -6,6 +6,7 @@ import httpx
 import pytest
 from openai import (
     APIConnectionError,
+    APIError,
     APITimeoutError,
     AuthenticationError,
     BadRequestError,
@@ -296,6 +297,329 @@ async def test_openai_provider_returns_usage_when_present() -> None:
         "completion_tokens": 22,
         "total_tokens": 33,
     }
+
+
+# ── FakeProvider.stream() ────────────────────────────────────────────
+
+
+async def test_fake_provider_stream_yields_configured_tokens() -> None:
+    fake = FakeProvider(tokens=["你", "好", "，", "世界"])
+    req = ChatRequest(
+        config=LLMConfig(api_key="sk-test"),
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+
+    collected: list[str] = []
+    async for token in fake.stream(req):
+        collected.append(token)
+
+    assert collected == ["你", "好", "，", "世界"]
+    # stream_calls records the request for observability.
+    assert len(fake.stream_calls) == 1
+
+
+async def test_fake_provider_stream_with_no_tokens_completes_immediately() -> None:
+    fake = FakeProvider()
+    req = ChatRequest(
+        config=LLMConfig(api_key="sk-test"),
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+
+    collected: list[str] = []
+    async for token in fake.stream(req):
+        collected.append(token)
+
+    assert collected == []
+
+
+async def test_fake_provider_stream_echo_mode() -> None:
+    """When echo=True, stream yields chars of the last user message."""
+    fake = FakeProvider(echo=True)
+    req = ChatRequest(
+        config=LLMConfig(api_key="sk-test"),
+        messages=[
+            ChatMessage(role="system", content="be terse"),
+            ChatMessage(role="user", content="abc"),
+        ],
+    )
+
+    collected: list[str] = []
+    async for token in fake.stream(req):
+        collected.append(token)
+
+    assert collected == ["a", "b", "c"]
+
+
+async def test_fake_provider_stream_propagates_injected_error() -> None:
+    """An injected error is raised on the first iteration, before any token."""
+    err = LLMError(code="auth", message="bad key")
+    fake = FakeProvider(tokens=["ok", "fail", "after"], error=err)
+    req = ChatRequest(
+        config=LLMConfig(api_key="sk-test"),
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+
+    collected: list[str] = []
+    with pytest.raises(LLMError) as ei:
+        async for token in fake.stream(req):
+            collected.append(token)
+
+    # The error fires before the first yield, so the consumer sees no tokens.
+    assert collected == []
+    assert ei.value.code == "auth"
+
+
+async def test_fake_provider_stream_cancellation_stops_iteration() -> None:
+    """Cancelling the consumer mid-stream must stop the provider cleanly."""
+    import asyncio as _asyncio
+
+    fake = FakeProvider(tokens=["a", "b", "c", "d", "e"])
+
+    async def consume_two() -> list[str]:
+        req = ChatRequest(
+            config=LLMConfig(api_key="sk-test"),
+            messages=[ChatMessage(role="user", content="hi")],
+        )
+        out: list[str] = []
+        async for token in fake.stream(req):
+            out.append(token)
+            if len(out) >= 2:
+                # Self-cancel by raising CancelledError into the task.
+                raise _asyncio.CancelledError()
+        return out
+
+    with pytest.raises(_asyncio.CancelledError):
+        await consume_two()
+
+
+# ── OpenAICompatibleProvider.stream() error mapping ───────────────────
+
+
+async def test_openai_provider_stream_maps_auth_error() -> None:
+    class _StubCompletions:
+        async def create(self, **_kw):  # noqa: ANN001
+            raise AuthenticationError(
+                message="bad key",
+                response=httpx.Response(
+                    status_code=401, request=httpx.Request("POST", "http://test")
+                ),
+                body=None,
+            )
+
+    class _StubChat:
+        completions = _StubCompletions()
+
+    class _StubClient:
+        chat = _StubChat()
+
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    try:
+        gen = OpenAICompatibleProvider().stream(_request())
+        with pytest.raises(LLMError) as ei:
+            await gen.__anext__()
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert ei.value.code == "auth"
+
+
+async def test_openai_provider_stream_maps_timeout_error() -> None:
+    class _StubCompletions:
+        async def create(self, **_kw):  # noqa: ANN001
+            raise APITimeoutError(request=_fake_request())
+
+    class _StubChat:
+        completions = _StubCompletions()
+
+    class _StubClient:
+        chat = _StubChat()
+
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    try:
+        gen = OpenAICompatibleProvider().stream(_request())
+        with pytest.raises(LLMError) as ei:
+            await gen.__anext__()
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert ei.value.code == "timeout"
+
+
+async def test_openai_provider_stream_maps_unknown_error() -> None:
+    class _StubCompletions:
+        async def create(self, **_kw):  # noqa: ANN001
+            raise RuntimeError("kaboom")
+
+    class _StubChat:
+        completions = _StubCompletions()
+
+    class _StubClient:
+        chat = _StubChat()
+
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    try:
+        gen = OpenAICompatibleProvider().stream(_request())
+        with pytest.raises(LLMError) as ei:
+            await gen.__anext__()
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert ei.value.code == "unknown"
+
+
+# ── OpenAICompatibleProvider.stream() happy path + cancellation ───────
+
+
+class _StubDelta:
+    def __init__(self, content: str | None) -> None:
+        self.content = content
+
+
+class _StubChoice:
+    def __init__(self, content: str | None) -> None:
+        self.delta = _StubDelta(content)
+
+
+class _StubChunk:
+    def __init__(self, content: str | None) -> None:
+        self.choices = [_StubChoice(content)]
+
+
+class _StubStreamResponse:
+    """Async-iterable stub mimicking openai's streaming response.
+
+    openai's Stream.close() is sync (returns None), so the stub mirrors
+    that — the provider's `_close_stream` helper handles both shapes.
+    """
+
+    def __init__(self, chunks: list[_StubChunk], delay_s: float = 0.01) -> None:
+        self._chunks = list(chunks)
+        self._delay_s = delay_s
+        self.closed = False
+
+    def __aiter__(self) -> "_StubStreamResponse":
+        return self
+
+    async def __anext__(self) -> _StubChunk:
+        import asyncio as _a
+        if self._delay_s:
+            await _a.sleep(self._delay_s)
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _stub_async_client(streaming_response: _StubStreamResponse) -> object:
+    class _StubCompletions:
+        async def create(self, **_kw):  # noqa: ANN001
+            return streaming_response
+
+    class _StubChat:
+        completions = _StubCompletions()
+
+    class _StubClient:
+        chat = _StubChat()
+
+    return _StubClient()
+
+
+async def test_openai_provider_stream_yields_tokens() -> None:
+    response = _StubStreamResponse(
+        [_StubChunk("你"), _StubChunk("好"), _StubChunk(None), _StubChunk("！")]
+    )
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _stub_async_client(response)  # type: ignore[assignment]
+    try:
+        tokens: list[str] = []
+        async for tok in OpenAICompatibleProvider().stream(_request()):
+            tokens.append(tok)
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    # None-delta chunks are skipped (tool-call frames etc).
+    assert tokens == ["你", "好", "！"]
+
+
+async def test_openai_provider_stream_cancellation_closes_response() -> None:
+    """Cancelling the consumer via Task.cancel() must close the openai response.
+
+    Mirror how the WebSocket endpoint cancels an in-flight stream on
+    client disconnect: spawn a consumer task, then cancel and await it.
+    """
+    import asyncio as _asyncio
+
+    # 50 tokens with 20ms delay each → stream takes ~1s; cancel well before.
+    response = _StubStreamResponse(
+        [_StubChunk(c) for c in "abcdefghijklmnopqrstuvwxyz0123456789abcdefghij"],
+        delay_s=0.02,
+    )
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _stub_async_client(response)  # type: ignore[assignment]
+    try:
+
+        async def consume() -> None:
+            async for _ in OpenAICompatibleProvider().stream(_request()):
+                pass
+
+        task = _asyncio.create_task(consume())
+        # Let the consumer pull 2-3 tokens.
+        await _asyncio.sleep(0.05)
+        task.cancel()
+        # Drain the cancelled task — expect CancelledError.
+        with __import__("contextlib").suppress(_asyncio.CancelledError):
+            await task
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert response.closed is True
+
+
+async def test_openai_provider_stream_mid_stream_api_error() -> None:
+    """Errors raised mid-stream (not at create time) get normalised."""
+
+    class _RaisingStream:
+        def __aiter__(self) -> "_RaisingStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise APIError(
+                message="connection lost",
+                request=httpx.Request("POST", "http://test"),
+                body=None,
+            )
+
+        def close(self) -> None:
+            pass
+
+    response = _RaisingStream()
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _stub_async_client(response)  # type: ignore[assignment]
+    try:
+        with pytest.raises(LLMError) as ei:
+            async for _ in OpenAICompatibleProvider().stream(_request()):
+                pass
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert ei.value.code == "connection"
 
 
 async def test_openai_provider_maps_unclassified_api_error() -> None:

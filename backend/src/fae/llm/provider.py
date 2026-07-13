@@ -7,13 +7,16 @@ provider-agnostic and makes hermetic tests trivial (see `FakeProvider`).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from openai import (
     APIConnectionError,
     APIError,
     APITimeoutError,
+    AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
     NotFoundError,
@@ -36,11 +39,48 @@ from fae.llm.types import ChatRequest, ChatResponse
 logger = logging.getLogger("fae.llm")
 
 
+def _close_stream(response: object) -> None:
+    """Best-effort close of an openai streaming response.
+
+    The SDK ships `close()` as a sync method, but tests and custom
+    transports may expose it as a coroutine. Handle both.
+    """
+    close = getattr(response, "close", None)
+    if close is None:
+        return
+    try:
+        result = close()
+    except Exception:  # noqa: BLE001 — best-effort cleanup
+        logger.debug("Stream close() raised", exc_info=True)
+        return
+    if asyncio.iscoroutine(result):
+        # We're in an async context; schedule and let the loop drain it.
+        # Using `get_event_loop().create_task` rather than awaiting keeps
+        # the close non-blocking during cancellation cleanup.
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        if loop.is_running():
+            loop.create_task(result)  # type: ignore[arg-type]
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     """The minimum surface the rest of the app needs from an LLM backend."""
 
     async def chat(self, request: ChatRequest) -> ChatResponse: ...
+
+    def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[str]:
+        """Yield content tokens as they arrive.
+
+        Implementations MUST honour asyncio cancellation: if the consumer
+        drops the iterator (e.g. via `asyncio.Task.cancel()`), the
+        underlying network stream must be closed promptly.
+        """
+        ...
 
 
 class OpenAICompatibleProvider:
@@ -152,6 +192,110 @@ class OpenAICompatibleProvider:
             }
         return ChatResponse(content=content, model=resp.model, usage=usage)
 
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Stream completion tokens via the OpenAI async streaming API.
+
+        Yields the assistant content piece by piece. The caller can
+        cancel mid-stream by closing the iterator; the openai SDK's
+        `stream()` context manager will then close the underlying
+        HTTP connection.
+        """
+        cfg = request.config
+        client = AsyncOpenAI(
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
+            timeout=self._default_timeout_s,
+        )
+        try:
+            response = await client.chat.completions.create(
+                model=cfg.model,
+                messages=[m.model_dump() for m in request.messages],
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=True,
+            )
+        except AuthenticationError as e:
+            raise LLMError(
+                code="auth",
+                message=f"Authentication failed for model '{cfg.model}': {e}",
+            ) from e
+        except PermissionDeniedError as e:
+            raise LLMError(
+                code="forbidden",
+                message=f"Permission denied for model '{cfg.model}': {e}",
+            ) from e
+        except NotFoundError as e:
+            raise LLMError(
+                code="not_found",
+                message=f"Model '{cfg.model}' not found at {cfg.base_url}: {e}",
+            ) from e
+        except RateLimitError as e:
+            raise LLMError(
+                code="rate_limited",
+                message=f"Rate limited by provider: {e}",
+            ) from e
+        except APITimeoutError as e:
+            raise LLMError(
+                code="timeout",
+                message=f"LLM request timed out after {self._default_timeout_s}s",
+            ) from e
+        except APIConnectionError as e:
+            raise LLMError(
+                code="connection",
+                message=f"Cannot reach LLM endpoint {cfg.base_url}: {e}",
+            ) from e
+        except BadRequestError as e:
+            raise LLMError(
+                code="bad_request",
+                message=f"LLM rejected request: {e}",
+            ) from e
+        except APIError as e:
+            logger.warning("Unclassified openai SDK streaming error: %s", e)
+            raise LLMError(
+                code="connection",
+                message=f"LLM provider error: {e}",
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Unexpected streaming error")
+            raise LLMError(
+                code="unknown",
+                message=f"Unexpected LLM error: {e}",
+            ) from e
+
+        # Consume the async iterator. openai's `stream=True` returns a
+        # ResponseStream whose __aiter__ yields ChatCompletionChunk.
+        # Cancellation propagates as CancelledError through the `async for`.
+        try:
+            async for chunk in response:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    piece = delta.content if delta and delta.content else None
+                    if piece:
+                        yield piece
+        except asyncio.CancelledError:
+            # Caller dropped the stream. Close the openai response so the
+            # HTTP connection is released back to the pool. The SDK's
+            # Stream.close() is sync (returns None), not a coroutine — be
+            # tolerant of either shape.
+            logger.debug("Stream cancelled by caller")
+            _close_stream(response)
+            raise
+        except APIError as e:
+            # Mid-stream errors (e.g. connection drop) surface here.
+            logger.warning("Stream interrupted by openai error: %s", e)
+            _close_stream(response)
+            raise LLMError(
+                code="connection",
+                message=f"Stream interrupted: {e}",
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Unexpected error during streaming")
+            _close_stream(response)
+            raise LLMError(
+                code="unknown",
+                message=f"Unexpected streaming error: {e}",
+            ) from e
+
 
 class FakeProvider:
     """Deterministic in-process provider. Used by tests.
@@ -165,13 +309,16 @@ class FakeProvider:
         responses: list[str] | None = None,
         error: Exception | None = None,
         echo: bool = False,
+        tokens: list[str] | None = None,
     ) -> None:
         # If `echo` is set, the provider echoes back the last user message
         # (handy for trivial "is the wire working" smoke tests).
         self._responses = list(responses or [])
+        self._tokens = list(tokens or [])
         self._error = error
         self._echo = echo
         self.calls: list[ChatRequest] = []  # observability for tests
+        self.stream_calls: list[ChatRequest] = []
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         self.calls.append(request)
@@ -190,3 +337,30 @@ class FakeProvider:
             model="fake-model",
             usage=None,
         )
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Yield the configured token list, one per loop tick.
+
+        - If `error` is set, raise it on the FIRST token iteration (so
+          callers can distinguish "stream started then failed" from
+          "stream never started").
+        - If `echo` is set, treat the last user message as the token
+          list (one character at a time) for trivially observable output.
+        - Cancellation propagates via CancelledError.
+        """
+        self.stream_calls.append(request)
+        if self._echo:
+            last_user = next(
+                (m.content for m in reversed(request.messages) if m.role == "user"),
+                "",
+            )
+            tokens = list(last_user)
+        else:
+            tokens = list(self._tokens)
+        for tok in tokens:
+            if self._error is not None:
+                raise self._error
+            # Yielding via sleep(0) lets the consumer's cancel() take
+            # effect at each token boundary (vs. only at end-of-stream).
+            await asyncio.sleep(0)
+            yield tok

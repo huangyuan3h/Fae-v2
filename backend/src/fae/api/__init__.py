@@ -2,7 +2,8 @@
 
 Checkpoint 1: /health, /ready.
 Checkpoint 2: /api/test-connection, /api/chat (text-only LLM).
-Voice / WebSocket endpoints land in later checkpoints.
+Checkpoint 3: /ws/chat (streaming WebSocket chat).
+Voice / Pipecat transport lands in later checkpoints.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from fae.api.ws import router as ws_router
 from fae.config import Settings, get_settings
 from fae.llm import (
     ChatRequest,
@@ -141,13 +143,22 @@ def create_app(
         """Synchronous text-only chat completion. Used by the UI's
         "text fallback" mode and by the smoke tests in this checkpoint.
 
-        The streaming variant (used for the voice-orb chat panel) lands
-        in Checkpoint 3 alongside the WebSocket transport.
+        For real-time streaming (the voice-orb chat panel), use the
+        WebSocket endpoint /ws/chat instead.
         """
         try:
             return await client.chat(body)
         except LLMError as e:
             raise _llm_error_to_http(e) from e
+
+    # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
+    # The WS router has its own get_llm_client placeholder; we override it
+    # to point at the same singleton so injecting `llm_client=...` here
+    # also routes the WS path through the same fake / real client.
+    from fae.api.ws import get_llm_client as _ws_get_llm_client  # noqa: PLC0415
+
+    app.dependency_overrides[_ws_get_llm_client] = get_llm_client
+    app.include_router(ws_router)
 
     return app
 

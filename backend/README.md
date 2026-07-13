@@ -12,19 +12,22 @@ backend/
 ├── src/fae/
 │   ├── __init__.py
 │   ├── config.py           # pydantic-settings env loader
-│   ├── api.py              # FastAPI app (health, ready, chat, test-connection)
+│   ├── api/                # FastAPI app package
+│   │   ├── __init__.py     #   create_app() + HTTP endpoints
+│   │   └── ws.py           #   /ws/chat WebSocket streaming
 │   └── llm/                # LLM abstraction layer
 │       ├── errors.py       #   normalised LLMError (code + message)
 │       ├── types.py        #   LLMConfig, ChatMessage, ChatRequest, ChatResponse
-│       ├── provider.py     #   LLMProvider Protocol + OpenAI + Fake implementations
-│       └── client.py       #   LLMClient wrapper (chat + test_connection)
+│       ├── provider.py     #   LLMProvider Protocol + OpenAI + Fake + stream()
+│       └── client.py       #   LLMClient wrapper (chat, stream, test_connection)
 └── tests/
     ├── test_api.py
     ├── test_config.py
     ├── test_chat_endpoints.py
     ├── test_llm_client.py
     ├── test_llm_provider.py
-    └── test_llm_types.py
+    ├── test_llm_types.py
+    └── test_ws_chat.py
 ```
 
 ## Development
@@ -90,7 +93,48 @@ below 80%, the test run fails until more tests are added.
 | GET    | /ready                | Readiness probe                            |
 | POST   | /api/test-connection  | Probe an LLM provider (1-token, temp=0)    |
 | POST   | /api/chat             | Synchronous text-only chat completion      |
+| WS     | /ws/chat              | Streaming chat over WebSocket (Checkpoint 3) |
 | GET    | /docs                 | Auto-generated OpenAPI / Swagger UI        |
+
+### WebSocket protocol (`/ws/chat`)
+
+JSON-over-text frames. One active generation per connection.
+
+```
+client -> server:
+  {"type": "chat",  "request": ChatRequest}
+  {"type": "cancel"}
+
+server -> client:
+  {"type": "token", "content": "你"}
+  {"type": "done",  "usage": {...} | null}
+  {"type": "error", "code": "auth", "message": "..."}
+```
+
+```python
+import websockets, asyncio, json
+
+async def main():
+    async with websockets.connect("ws://localhost:8000/ws/chat") as ws:
+        await ws.send(json.dumps({
+            "type": "chat",
+            "request": {
+                "config": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+                           "api_key": "sk-xxx", "model": "qwen3-max"},
+                "messages": [{"role": "user", "content": "你好"}],
+            },
+        }))
+        async for raw in ws:
+            msg = json.loads(raw)
+            if msg["type"] == "token":
+                print(msg["content"], end="", flush=True)
+            elif msg["type"] == "done":
+                break
+            elif msg["type"] == "error":
+                raise RuntimeError(f"{msg['code']}: {msg['message']}")
+
+asyncio.run(main())
+```
 
 ### LLM error → HTTP status mapping
 
