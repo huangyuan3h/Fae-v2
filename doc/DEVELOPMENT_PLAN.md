@@ -113,7 +113,7 @@
 - [x] `LettaMemoryService`（浏览器 WS / HTTP + Daily 已接）
 - [x] 接到 Daily：`seed_daily_memory` + `MemoryTurnProcessor`（同一 `recall_context` / `persist_turn`）
 - [x] 每次 LLM 调用前注入相关记忆（含 `[recent_turns]` + facts；top-k=10）
-- [x] 每轮结束 `append_recall` + 启发式事实 + utterance 索引（按 `session_id` 分桶）
+- [x] 每轮结束 `append_recall` + 启发式身份事实（按 `session_id` 分桶；话题靠 recent_turns）
 - [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）— 见 2.3
 
 > **冒烟测试**（M2-2）：连续聊多个话题后问"我刚才提到 Python 那个项目怎么样"。
