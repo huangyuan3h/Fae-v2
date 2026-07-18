@@ -10,6 +10,7 @@ from fae.config import Settings
 from fae.memory.archival import ArchivalBackend, create_archival
 from fae.memory.compaction import MemoryCompactor
 from fae.memory.embedded import EmbeddedMemoryClient
+from fae.memory.episodic import EpisodicStore
 from fae.memory.letta_client import LettaMemoryClient
 from fae.memory.protocol import MemoryClient
 from fae.memory.recall_store import RecallStore
@@ -27,11 +28,13 @@ class MemoryStack:
     recall: RecallStore | None = None
     archival: ArchivalBackend | None = None
     compactor: MemoryCompactor | None = None
+    episodic: EpisodicStore | None = None
 
     async def close(self) -> None:
         client, self.client = self.client, None
         archival, self.archival = self.archival, None
         recall, self.recall = self.recall, None
+        episodic, self.episodic = self.episodic, None
         self.compactor = None
         if client is not None:
             closer = getattr(client, "_raw_close", client.close)
@@ -49,6 +52,11 @@ class MemoryStack:
                 recall.close()
             except Exception:  # noqa: BLE001
                 logger.exception("recall.close failed")
+        if episodic is not None:
+            try:
+                episodic.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("episodic.close failed")
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -69,12 +77,15 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
 
     recall: RecallStore | None = None
     archival: ArchivalBackend | None = None
+    episodic: EpisodicStore | None = None
     client: MemoryClient | None = None
     try:
         recall = RecallStore(_resolve_path(settings.recall_db_path))
+        episodic = EpisodicStore(_resolve_path(settings.episodic_db_path))
         archival = await create_archival(
             qdrant_url=settings.qdrant_url,
             prefer_stub=settings.archival_prefer_stub,
+            decay_days=settings.archival_decay_days,
         )
 
         if mode == "embedded":
@@ -106,6 +117,7 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
                 await remote.close()
                 await archival.close()
                 recall.close()
+                episodic.close()
                 return MemoryStack()
             try:
                 await remote.ensure_agent()
@@ -114,6 +126,7 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
                 await remote.close()
                 await archival.close()
                 recall.close()
+                episodic.close()
                 return MemoryStack()
             client = remote
             logger.info(
@@ -135,9 +148,12 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
             recall=recall,
             archival=archival,
             compactor=compactor,
+            episodic=episodic,
         )
     except Exception:
-        partial = MemoryStack(client=client, recall=recall, archival=archival)
+        partial = MemoryStack(
+            client=client, recall=recall, archival=archival, episodic=episodic
+        )
         await partial.close()
         raise
 

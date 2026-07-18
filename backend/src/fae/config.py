@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     core_current_char_limit: int = Field(default=2000, ge=200)
     # Force stub archival even if Qdrant is up (tests / offline)
     archival_prefer_stub: bool = False
+    # Down-weight archival hits unused for this many days
+    archival_decay_days: int = Field(default=180, ge=0)
+    episodic_db_path: str = ".data/fae-episodic.db"
 
     # Sleeptime consolidation (Phase 2.4)
     sleeptime_enabled: bool = True

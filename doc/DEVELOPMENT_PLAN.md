@@ -124,10 +124,10 @@
 - [x] Core Memory：persona / human / current；`GET /api/memory/stats` + current 字数预算
 - [x] Recall Memory：共享 SQLite `RecallStore` + session 分桶（hot window）
 - [x] Archival Memory：Qdrant 集合 `fae_archival`（不可用时 stub）；超 N 轮 compact
-- [ ] **Episodic Memory 扩展**：实现 `backend/src/fae/memory/episodic.py`
-  - [ ] 关键事件检测（"用户搬家"/"换了工作"等 LLM 标记）
-  - [ ] 事件 ↔ 记忆的双向链接
-  - [ ] 6 个月未访问的 archival 记忆自动降权
+- [x] **Episodic Memory 扩展**：实现 `backend/src/fae/memory/episodic.py`
+  - [x] 关键事件检测（启发式："搬家"/"换了工作"等；LLM 标记后续可选）
+  - [x] 事件 ↔ 记忆的双向链接（fact / archival）+ `GET /api/memory/events`
+  - [x] 6 个月未访问的 archival 记忆自动降权（`ARCHIVAL_DECAY_DAYS`）
 
 ### 2.4 sleeptime 整理
 
@@ -353,6 +353,6 @@
 
 ---
 
-**最后更新**：2026-07-18（Phase 2.4 sleeptime）
+**最后更新**：2026-07-19（Phase 2.3b Episodic）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

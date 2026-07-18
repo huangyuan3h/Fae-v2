@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
             app.state.memory_stack = stack
             app.state.recall_store = stack.recall
             app.state.archival = stack.archival
+            app.state.episodic = stack.episodic
             scheduler = _build_sleeptime(settings, stack)
             app.state.sleeptime = scheduler
             if stack.client is not None:
@@ -97,6 +98,7 @@ async def lifespan(app: FastAPI):
                     stack.client,
                     archival=stack.archival,
                     compactor=stack.compactor,
+                    episodic=stack.episodic,
                     on_persist=scheduler.touch if scheduler else None,
                 )
                 app.state.memory_client = stack.client
@@ -113,6 +115,7 @@ async def lifespan(app: FastAPI):
             app.state.memory_stack = MemoryStack()
             app.state.recall_store = None
             app.state.archival = None
+            app.state.episodic = None
             app.state.sleeptime = None
 
     yield
@@ -186,6 +189,7 @@ def create_app(
       app.state.memory_stack   — MemoryStack
       app.state.recall_store   — RecallStore | None
       app.state.archival       — ArchivalBackend | None
+      app.state.episodic       — EpisodicStore | None
       app.state.sleeptime      — SleeptimeScheduler | None
     """
     settings = settings or get_settings()
@@ -205,6 +209,7 @@ def create_app(
     app.state.memory_stack = MemoryStack()
     app.state.recall_store = None
     app.state.archival = None
+    app.state.episodic = None
     app.state.sleeptime = None
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
@@ -350,15 +355,53 @@ def create_app(
                 archival_status = await archival.health()
             except Exception:  # noqa: BLE001
                 archival_status = "down"
+        episodic = getattr(request.app.state, "episodic", None)
         return {
             "recall_turns": recall.total_hot() if recall is not None else 0,
             "core": core,
             "archival": archival_status,
+            "events": episodic.count() if episodic is not None else 0,
             "sleeptime": (
                 "on"
                 if getattr(request.app.state, "sleeptime", None) is not None
                 else "off"
             ),
+        }
+
+    @app.get("/api/memory/events")
+    async def memory_events(
+        request: Request,
+        session_id: str | None = None,
+        limit: int = 50,
+        q: str | None = None,
+    ) -> dict:
+        """List episodic life events (optional session / text filter)."""
+        episodic = getattr(request.app.state, "episodic", None)
+        if episodic is None:
+            raise HTTPException(status_code=503, detail="episodic memory unavailable")
+        events = episodic.list_events(
+            session_id=session_id, limit=limit, query=q
+        )
+        return {
+            "events": [
+                {
+                    "id": e.id,
+                    "session_id": e.session_id,
+                    "kind": e.kind,
+                    "summary": e.summary,
+                    "raw_text": e.raw_text,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                    "links": [
+                        {
+                            "event_id": lk.event_id,
+                            "target_kind": lk.target_kind,
+                            "target_id": lk.target_id,
+                        }
+                        for lk in e.links
+                    ],
+                }
+                for e in events
+            ]
         }
 
     @app.post("/api/memory/consolidate")

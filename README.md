@@ -24,6 +24,7 @@
 | 会话 Recall + Daily 记忆注入 | ✅ Phase 2.2 · M2-2 |
 | 统一 Recall + Archival 压缩 | ✅ Phase 2.3（超 N 轮 → Qdrant/`fae_archival`；`GET /api/memory/stats`） |
 | sleeptime 闲时整理 | ✅ Phase 2.4（idle/daily + `POST /api/memory/consolidate`） |
+| Episodic 事件 + archival 降权 | ✅ Phase 2.3b（`GET /api/memory/events`；180 天未访问降权） |
 
 ## 快速开始
 

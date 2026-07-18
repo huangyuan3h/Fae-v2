@@ -39,3 +39,23 @@ class RecallTurn(BaseModel):
     user_text: str
     assistant_text: str
     created_at: datetime | None = None
+
+
+class EpisodeLink(BaseModel):
+    """Bidirectional link: event ↔ fact / archival / recall turn."""
+
+    event_id: str
+    target_kind: str  # fact | archival | recall
+    target_id: str
+
+
+class EpisodeEvent(BaseModel):
+    """Life-event marker in episodic memory."""
+
+    id: str
+    session_id: str
+    kind: str
+    summary: str
+    raw_text: str = ""
+    created_at: datetime | None = None
+    links: list[EpisodeLink] = Field(default_factory=list)
