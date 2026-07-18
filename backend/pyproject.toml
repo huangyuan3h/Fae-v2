@@ -17,13 +17,9 @@ dependencies = [
     "openai>=1.60",          # OpenAI-compatible client; used for Qwen3 / DeepSeek
     "httpx>=0.28",           # LLM HTTP client
     "websockets>=14.0",      # WS client for tests + explicit uvicorn peer
-    # Pipecat + voice stack — added in later checkpoints
-    # "pipecat-ai[daily,openai,silero,sentence]>=0.0.50",
-    # "letta>=0.50",
-    # "dashscope>=1.20",
-    # "apscheduler>=3.10",
-    # "qdrant-client>=1.12",
-    # "redis>=5.2",
+    # Voice stack (Daily bot + Silero/SmartTurn + DashScope TTS)
+    "pipecat-ai[daily,silero,soundfile]>=0.0.92",
+    "dashscope>=1.20",
 ]
 
 [project.optional-dependencies]

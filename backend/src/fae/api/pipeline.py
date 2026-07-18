@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from fae.api.deps import get_llm_client
 from fae.llm import LLMClient, LLMConfig
-from fae.pipecat import TextPipelineBot
+from fae.pipecat.bot import TextPipelineBot
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 

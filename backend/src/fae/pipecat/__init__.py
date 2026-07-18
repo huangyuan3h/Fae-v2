@@ -1,20 +1,10 @@
 """Voice / text pipeline package.
 
-Layouts:
-  - Text smoke: `TextPipelineBot` (LLM → SentenceAggregator → TTS stub)
-  - Daily WebRTC: `daily_bot.run_daily_bot` (Silero + SmartTurn + STT/LLM/TTS)
-  - Phase 2: inject `LettaMemoryService` upstream of the LLM on both paths
+Import submodules directly (e.g. ``fae.pipecat.bot``) — this package root
+stays import-light so FastAPI can boot without pulling Daily/TTS stacks
+until those paths are used.
 """
 
-from fae.pipecat.barge_in import BargeInController
-from fae.pipecat.bot import PipelineEvent, TextPipelineBot
-from fae.pipecat.sentence import SentenceAggregator
-from fae.pipecat.vad import EnergyVAD
+from __future__ import annotations
 
-__all__ = [
-    "BargeInController",
-    "EnergyVAD",
-    "PipelineEvent",
-    "SentenceAggregator",
-    "TextPipelineBot",
-]
+__all__: list[str] = []

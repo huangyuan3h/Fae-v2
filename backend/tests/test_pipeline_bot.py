@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from fae.api import create_app
 from fae.llm import LLMClient, LLMConfig
 from fae.llm.provider import FakeProvider
-from fae.pipecat import TextPipelineBot
+from fae.pipecat.bot import TextPipelineBot
 from fae.pipecat.transport import LocalTransport
 
 
