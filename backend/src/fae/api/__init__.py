@@ -32,6 +32,7 @@ from fae.llm import (
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.core_budget import core_stats_from_client
 from fae.memory.factory import MemoryStack, create_memory_stack
+from fae.memory.schemas import FactIn
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
@@ -403,6 +404,179 @@ def create_app(
                 for e in events
             ]
         }
+
+    @app.get("/api/memory/facts")
+    async def memory_list_facts(
+        request: Request,
+        limit: int = 50,
+        q: str | None = None,
+    ) -> dict:
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        facts = await memory.client.list_facts(limit=limit, query=q)
+        return {
+            "facts": [
+                {
+                    "id": f.id,
+                    "content": f.content,
+                    "tags": f.tags,
+                    "session_id": f.session_id,
+                    "created_at": f.created_at.isoformat() if f.created_at else None,
+                }
+                for f in facts
+            ]
+        }
+
+    @app.post("/api/memory/facts")
+    async def memory_create_fact(body: FactIn, request: Request) -> dict:
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        fact = await memory.client.save_fact(body)
+        return {
+            "id": fact.id,
+            "content": fact.content,
+            "tags": fact.tags,
+            "session_id": fact.session_id,
+            "created_at": fact.created_at.isoformat() if fact.created_at else None,
+        }
+
+    @app.patch("/api/memory/facts/{fact_id}")
+    async def memory_update_fact(
+        fact_id: str, body: FactIn, request: Request
+    ) -> dict:
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        try:
+            fact = await memory.client.update_fact(fact_id, body)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="fact not found") from e
+        return {
+            "id": fact.id,
+            "content": fact.content,
+            "tags": fact.tags,
+            "session_id": fact.session_id,
+            "created_at": fact.created_at.isoformat() if fact.created_at else None,
+        }
+
+    @app.delete("/api/memory/facts/{fact_id}")
+    async def memory_delete_fact(fact_id: str, request: Request) -> dict:
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        ok = await memory.client.delete_fact(fact_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="fact not found")
+        return {"ok": True, "id": fact_id}
+
+    @app.get("/api/memory/search")
+    async def memory_search(
+        request: Request,
+        q: str,
+        top_k: int = 10,
+        session_id: str | None = None,
+    ) -> dict:
+        """Unified search across facts, archival, and episodic events."""
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        query = (q or "").strip()
+        if not query:
+            raise HTTPException(status_code=400, detail="q is required")
+        facts = await memory.client.search(query, top_k=top_k)
+        archival_hits = []
+        if memory.archival is not None:
+            archival_hits = await memory.archival.search(
+                query, top_k=top_k, session_id=session_id
+            )
+        events = []
+        episodic = getattr(request.app.state, "episodic", None)
+        if episodic is not None:
+            events = episodic.list_events(
+                session_id=session_id, limit=top_k, query=query
+            )
+        return {
+            "query": query,
+            "facts": [
+                {
+                    "id": f.id,
+                    "content": f.content,
+                    "tags": f.tags,
+                    "source": "fact",
+                }
+                for f in facts
+            ],
+            "archival": [
+                {
+                    "id": f.id,
+                    "content": f.content,
+                    "tags": f.tags,
+                    "source": "archival",
+                }
+                for f in archival_hits
+            ],
+            "events": [
+                {
+                    "id": e.id,
+                    "content": e.summary,
+                    "kind": e.kind,
+                    "source": "event",
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in events
+            ],
+        }
+
+    @app.get("/api/memory/timeline")
+    async def memory_timeline(
+        request: Request,
+        limit: int = 40,
+        session_id: str | None = None,
+    ) -> dict:
+        """Merged timeline points for the memory browser chart."""
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        if memory is None or memory.client is None:
+            raise HTTPException(status_code=503, detail="memory unavailable")
+        points: list[dict] = []
+        facts = await memory.client.list_facts(limit=limit)
+        for f in facts:
+            points.append(
+                {
+                    "id": f.id,
+                    "kind": "fact",
+                    "label": f.content[:80],
+                    "at": f.created_at.isoformat() if f.created_at else None,
+                    "tags": f.tags,
+                }
+            )
+        episodic = getattr(request.app.state, "episodic", None)
+        if episodic is not None:
+            for e in episodic.list_events(session_id=session_id, limit=limit):
+                points.append(
+                    {
+                        "id": e.id,
+                        "kind": "event",
+                        "label": e.summary[:80],
+                        "at": e.created_at.isoformat() if e.created_at else None,
+                        "tags": [e.kind],
+                    }
+                )
+        points.sort(key=lambda p: p.get("at") or "", reverse=True)
+        return {"points": points[:limit]}
 
     @app.post("/api/memory/consolidate")
     async def memory_consolidate(

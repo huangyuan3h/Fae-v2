@@ -752,9 +752,9 @@ evals/
 ### Phase 2: 记忆深化（第 3-4 周）
 
 - [ ] 三层记忆架构（core/recall/archival）
-- [ ] Episodic memory 事件日志
-- [ ] 记忆浏览器 UI
-- [ ] sleeptime 整理任务
+- [x] Episodic memory 事件日志
+- [x] 记忆浏览器 UI
+- [x] sleeptime 整理任务
 
 ### Phase 3: Skills 体系（第 5-6 周）
 

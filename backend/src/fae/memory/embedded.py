@@ -165,6 +165,15 @@ class EmbeddedMemoryClient:
             created_at=datetime.fromisoformat(created),
         )
 
+    def _fact_from_row(self, row: sqlite3.Row) -> FactOut:
+        return FactOut(
+            id=row["id"],
+            content=row["content"],
+            tags=json.loads(row["tags"] or "[]"),
+            session_id=row["session_id"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
     async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
         agent_id = self._require_agent()
         q = (query or "").strip().lower()
@@ -191,18 +200,52 @@ class EmbeddedMemoryClient:
             if score > 0:
                 scored.append((score, row))
         scored.sort(key=lambda x: x[0], reverse=True)
-        out: list[FactOut] = []
-        for _, row in scored[:top_k]:
-            out.append(
-                FactOut(
-                    id=row["id"],
-                    content=row["content"],
-                    tags=json.loads(row["tags"] or "[]"),
-                    session_id=row["session_id"],
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                )
-            )
-        return out
+        return [self._fact_from_row(row) for _, row in scored[:top_k]]
+
+    async def list_facts(
+        self, *, limit: int = 50, query: str | None = None
+    ) -> list[FactOut]:
+        return await self.search(query or "", top_k=max(1, limit))
+
+    async def update_fact(self, fact_id: str, fact: FactIn) -> FactOut:
+        agent_id = self._require_agent()
+        row = self._conn.execute(
+            "SELECT id FROM facts WHERE agent_id = ? AND id = ?",
+            (agent_id, fact_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(fact_id)
+        self._conn.execute(
+            """
+            UPDATE facts SET content = ?, tags = ?, session_id = ?
+            WHERE agent_id = ? AND id = ?
+            """,
+            (
+                fact.content,
+                json.dumps(fact.tags),
+                fact.session_id,
+                agent_id,
+                fact_id,
+            ),
+        )
+        self._conn.commit()
+        updated = self._conn.execute(
+            """
+            SELECT id, content, tags, session_id, created_at
+            FROM facts WHERE id = ?
+            """,
+            (fact_id,),
+        ).fetchone()
+        return self._fact_from_row(updated)
+
+    async def delete_fact(self, fact_id: str) -> bool:
+        agent_id = self._require_agent()
+        cur = self._conn.execute(
+            "DELETE FROM facts WHERE agent_id = ? AND id = ?",
+            (agent_id, fact_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
 
     async def update_user(self, profile: UserProfile) -> UserProfile:
         lines: list[str] = []

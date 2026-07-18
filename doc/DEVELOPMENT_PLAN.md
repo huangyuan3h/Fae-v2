@@ -138,13 +138,14 @@
 
 ### 2.5 记忆浏览器 UI
 
-- [ ] 路由 `src/app/memory/page.tsx`：按时间线展示（Recharts 时间轴）
-- [ ] 路由 `src/app/memory/facts/page.tsx`：结构化事实列表 + 增删改
-- [ ] 路由 `src/app/memory/search/page.tsx`：语义搜索框 + 命中高亮
-- [ ] 组件 `MemoryTimeline.tsx` + `MemorySearch.tsx`
-- [ ] 数据请求：TanStack Query + 乐观更新
+- [x] 路由 `ui/src/app/memory/page.tsx`：按时间线展示（Recharts）
+- [x] 路由 `ui/src/app/memory/facts/page.tsx`：结构化事实列表 + 增删改
+- [x] 路由 `ui/src/app/memory/search/page.tsx`：语义搜索框 + 命中高亮
+- [x] 组件 `MemoryTimeline.tsx` + `MemorySearch.tsx`
+- [x] 数据请求：TanStack Query + 乐观更新（facts CRUD）
+- [x] Backend：`/api/memory/facts` CRUD、`/api/memory/search`、`/api/memory/timeline`
 
-> **Phase 2 收尾验收**：演示"跨天记忆"——昨天告诉 FAE 喜欢的咖啡，今天它主动提起。
+> **Phase 2 收尾验收**：演示"跨天记忆"——昨天告诉 FAE 喜欢的咖啡，今天它主动提起；可在 `/memory` 浏览事实与时间线。
 
 ---
 
@@ -346,13 +347,13 @@
 > 每个 Phase 收尾时更新本节，给团队一目了然的进度。
 
 - [x] Phase 1 完成（M1-2 通过；浏览器默认 + Daily 增强可选）
-- [ ] Phase 2 完成（M2-2 通过）
+- [x] Phase 2 完成（M2-1/M2-2 + 记忆浏览器 UI）
 - [ ] Phase 3 完成（M3-2 通过）
 - [ ] Phase 4 完成（M4-2 通过）
 - [ ] Phase 5 持续推进
 
 ---
 
-**最后更新**：2026-07-19（Phase 2.3b Episodic）
+**最后更新**：2026-07-19（Phase 2 complete · 2.5 memory browser）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

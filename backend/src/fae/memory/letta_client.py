@@ -221,6 +221,30 @@ class LettaMemoryClient:
             created_at=datetime.now(UTC),
         )
 
+    async def list_facts(
+        self, *, limit: int = 50, query: str | None = None
+    ) -> list[FactOut]:
+        return await self.search(query or "", top_k=max(1, limit))
+
+    async def update_fact(self, fact_id: str, fact: FactIn) -> FactOut:
+        # Best-effort: delete then re-insert (Letta passage PATCH varies by version).
+        await self.delete_fact(fact_id)
+        return await self.save_fact(fact)
+
+    async def delete_fact(self, fact_id: str) -> bool:
+        agent_id = self._require_agent()
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory/{fact_id}",
+            f"/v1/agents/{agent_id}/passages/{fact_id}",
+        ):
+            try:
+                resp = await self._http.delete(path)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code < 400 or resp.status_code == 404:
+                return resp.status_code < 400
+        return False
+
     async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
         agent_id = self._require_agent()
         params = {"query": query, "top_k": top_k}

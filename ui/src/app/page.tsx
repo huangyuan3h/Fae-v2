@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 import { AgentSettings } from "@/components/voice/AgentSettings";
@@ -48,6 +49,12 @@ export default function HomePage() {
         <p className="mt-2 max-w-md text-sm text-[var(--ink-soft)]">
           说话或打字。浏览器语音识别 + 流式回复 + 语音播报。
         </p>
+        <Link
+          href="/memory"
+          className="mt-3 inline-block text-sm font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+        >
+          记忆浏览器 →
+        </Link>
       </header>
 
       <VoiceOrb state={orb} />
