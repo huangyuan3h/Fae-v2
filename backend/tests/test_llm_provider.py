@@ -109,7 +109,7 @@ async def test_openai_provider_maps_auth_error() -> None:
     """Auth error code path: we monkey-patch the OpenAI client to raise."""
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             raise AuthenticationError(
                 message="bad key",
                 response=httpx.Response(
@@ -124,19 +124,22 @@ async def test_openai_provider_maps_auth_error() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     provider = OpenAICompatibleProvider()
     # Inject the stub via the provider's internal client slot.
     # The provider builds a new client per request, so we monkey-patch
     # the OpenAI class itself.
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         with pytest.raises(LLMError) as ei:
             await provider.chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert ei.value.code == "auth"
 
@@ -170,7 +173,7 @@ async def test_openai_provider_maps_known_errors(
     exc = exc_factory()
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             raise exc
 
     class _StubChat:
@@ -179,22 +182,25 @@ async def test_openai_provider_maps_known_errors(
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         with pytest.raises(LLMError) as ei:
             await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert ei.value.code == expected_code
 
 
 async def test_openai_provider_maps_unknown_error() -> None:
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             raise RuntimeError("kaboom")
 
     class _StubChat:
@@ -203,15 +209,18 @@ async def test_openai_provider_maps_unknown_error() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         with pytest.raises(LLMError) as ei:
             await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert ei.value.code == "unknown"
     assert "kaboom" in ei.value.message
@@ -230,7 +239,7 @@ async def test_openai_provider_empty_choices_raises() -> None:
         usage = None
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             return _StubResp()
 
     class _StubChat:
@@ -239,15 +248,18 @@ async def test_openai_provider_empty_choices_raises() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         with pytest.raises(LLMError) as ei:
             await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert ei.value.code == "empty_response"
 
@@ -272,7 +284,7 @@ async def test_openai_provider_returns_usage_when_present() -> None:
         usage = _StubUsage()
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             return _StubResp()
 
     class _StubChat:
@@ -281,14 +293,17 @@ async def test_openai_provider_returns_usage_when_present() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         resp = await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert resp.content == "hi back"
     assert resp.model == "qwen3-test"
@@ -412,6 +427,9 @@ async def test_openai_provider_stream_maps_auth_error() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
     original = provider_mod.AsyncOpenAI
@@ -437,6 +455,9 @@ async def test_openai_provider_stream_maps_timeout_error() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
     original = provider_mod.AsyncOpenAI
@@ -461,6 +482,9 @@ async def test_openai_provider_stream_maps_unknown_error() -> None:
 
     class _StubClient:
         chat = _StubChat()
+
+        async def close(self) -> None:
+            pass
 
     import fae.llm.provider as provider_mod
 
@@ -531,6 +555,9 @@ def _stub_async_client(streaming_response: _StubStreamResponse) -> object:
 
     class _StubClient:
         chat = _StubChat()
+
+        async def close(self) -> None:
+            pass
 
     return _StubClient()
 
@@ -629,7 +656,7 @@ async def test_openai_provider_maps_unclassified_api_error() -> None:
     from openai import APIError
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             raise APIError(
                 message="some other failure",
                 request=httpx.Request("POST", "http://test"),
@@ -642,15 +669,18 @@ async def test_openai_provider_maps_unclassified_api_error() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         with pytest.raises(LLMError) as ei:
             await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert ei.value.code == "connection"
 
@@ -670,7 +700,7 @@ async def test_openai_provider_handles_null_content() -> None:
         usage = None
 
     class _StubCompletions:
-        def create(self, **_kw):  # noqa: ANN001
+        async def create(self, **_kw):  # noqa: ANN001
             return _StubResp()
 
     class _StubChat:
@@ -679,14 +709,17 @@ async def test_openai_provider_handles_null_content() -> None:
     class _StubClient:
         chat = _StubChat()
 
+        async def close(self) -> None:
+            pass
+
     import fae.llm.provider as provider_mod
 
-    original_openai = provider_mod.OpenAI
-    provider_mod.OpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
     try:
         resp = await OpenAICompatibleProvider().chat(_request())
     finally:
-        provider_mod.OpenAI = original_openai
+        provider_mod.AsyncOpenAI = original
 
     assert resp.content == ""
     assert resp.usage is None

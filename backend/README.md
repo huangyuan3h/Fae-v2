@@ -13,12 +13,13 @@ backend/
 │   ├── __init__.py
 │   ├── config.py           # pydantic-settings env loader
 │   ├── api/                # FastAPI app package
-│   │   ├── __init__.py     #   create_app() + HTTP endpoints
+│   │   ├── __init__.py     #   create_app() + HTTP endpoints (app.state DI)
+│   │   ├── deps.py         #   shared get_llm_client (HTTP + WS)
 │   │   └── ws.py           #   /ws/chat WebSocket streaming
 │   └── llm/                # LLM abstraction layer
 │       ├── errors.py       #   normalised LLMError (code + message)
 │       ├── types.py        #   LLMConfig, ChatMessage, ChatRequest, ChatResponse
-│       ├── provider.py     #   LLMProvider Protocol + OpenAI + Fake + stream()
+│       ├── provider.py     #   AsyncOpenAI chat/stream + FakeProvider
 │       └── client.py       #   LLMClient wrapper (chat, stream, test_connection)
 └── tests/
     ├── test_api.py
@@ -94,6 +95,9 @@ below 80%, the test run fails until more tests are added.
 | POST   | /api/test-connection  | Probe an LLM provider (1-token, temp=0)    |
 | POST   | /api/chat             | Synchronous text-only chat completion      |
 | WS     | /ws/chat              | Streaming chat over WebSocket (Checkpoint 3) |
+| POST   | /api/sessions         | Create in-memory session                     |
+| GET    | /api/sessions         | List sessions                                |
+| POST   | /api/pipeline/text    | Phase 1.3 text pipeline smoke                |
 | GET    | /docs                 | Auto-generated OpenAPI / Swagger UI        |
 
 ### WebSocket protocol (`/ws/chat`)

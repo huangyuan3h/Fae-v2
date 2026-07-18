@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
+from starlette.websockets import WebSocketState
 
+from fae.api.deps import get_llm_client
 from fae.llm import ChatRequest, LLMClient, LLMError
 
 logger = logging.getLogger("fae.ws")
@@ -33,11 +35,24 @@ router = APIRouter()
 
 async def _send(ws: WebSocket, payload: dict[str, Any]) -> None:
     """Send a JSON message, ignoring the rare client-gone-mid-send case."""
+    if ws.client_state != WebSocketState.CONNECTED:
+        return
     try:
         await ws.send_json(payload)
     except (WebSocketDisconnect, RuntimeError):
         # Client already gone — nothing to do. The cancellation will
         # propagate through the stream task and clean up the provider.
+        pass
+
+
+async def _cancel_active(active: asyncio.Task[None] | None) -> None:
+    """Cancel an in-flight stream task and wait for it to finish cleanup."""
+    if active is None or active.done():
+        return
+    active.cancel()
+    try:
+        await active
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
         pass
 
 
@@ -63,20 +78,10 @@ async def _run_stream(
         )
 
 
-def get_llm_client() -> LLMClient:  # type: ignore[no-redef]
-    """Placeholder — overridden in fae.api.__init__.create_app via
-    dependency_overrides. Kept as a module-level symbol so the override
-    key is stable across reloads and tests.
-    """
-    raise RuntimeError(
-        "get_llm_client must be overridden via app.dependency_overrides"
-    )
-
-
 @router.websocket("/ws/chat")
 async def ws_chat(
     websocket: WebSocket,
-    client: LLMClient = Depends(get_llm_client),
+    client: Annotated[LLMClient, Depends(get_llm_client)],
 ) -> None:
     """Streaming chat over WebSocket.
 
@@ -92,24 +97,44 @@ async def ws_chat(
     active: asyncio.Task[None] | None = None
     try:
         while True:
-            raw = await websocket.receive_json()
+            try:
+                raw = await websocket.receive_json()
+            except WebSocketDisconnect:
+                raise
+            except Exception as e:  # noqa: BLE001 — malformed frame
+                await _send(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "bad_request",
+                        "message": f"Invalid JSON frame: {e}",
+                    },
+                )
+                continue
+
+            if not isinstance(raw, dict):
+                await _send(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "bad_request",
+                        "message": "Frame must be a JSON object",
+                    },
+                )
+                continue
+
             msg_type = raw.get("type")
 
             if msg_type == "cancel":
-                if active is not None and not active.done():
-                    active.cancel()
+                await _cancel_active(active)
+                active = None
                 continue
 
             if msg_type == "chat":
                 # Cancel any in-flight stream — one generation per connection.
-                if active is not None and not active.done():
-                    active.cancel()
-                    try:
-                        await active
-                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                        pass
+                await _cancel_active(active)
+                active = None
 
-                # Parse and validate the request.
                 try:
                     request = ChatRequest.model_validate(raw.get("request", {}))
                 except ValidationError as e:
@@ -118,12 +143,16 @@ async def ws_chat(
                         {
                             "type": "error",
                             "code": "bad_request",
-                            "message": f"Invalid ChatRequest: {e.errors()[0]['msg']}",
+                            "message": (
+                                f"Invalid ChatRequest: {e.errors()[0]['msg']}"
+                            ),
                         },
                     )
                     continue
 
-                active = asyncio.create_task(_run_stream(websocket, client, request))
+                active = asyncio.create_task(
+                    _run_stream(websocket, client, request)
+                )
                 continue
 
             # Unknown message type — be lenient, don't disconnect.
@@ -138,9 +167,4 @@ async def ws_chat(
     except WebSocketDisconnect:
         logger.debug("Client disconnected")
     finally:
-        if active is not None and not active.done():
-            active.cancel()
-            try:
-                await active
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+        await _cancel_active(active)

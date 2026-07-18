@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "openai>=1.60",          # OpenAI-compatible client; used for Qwen3 / DeepSeek
     "httpx>=0.28",           # LLM HTTP client
+    "websockets>=14.0",      # WS client for tests + explicit uvicorn peer
     # Pipecat + voice stack — added in later checkpoints
     # "pipecat-ai[daily,openai,silero,sentence]>=0.0.50",
     # "letta>=0.50",
@@ -65,8 +66,14 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["src/fae"]
+# WS integration tests run uvicorn in a background thread — without this,
+# coverage misses everything executed inside that thread.
+concurrency = ["thread"]
 omit = [
-    "*/__init__.py",
+    # Re-export-only package roots. Do NOT omit api/__init__.py — it holds
+    # the FastAPI app factory and all HTTP routes.
+    "src/fae/__init__.py",
+    "src/fae/llm/__init__.py",
     "*/tests/*",
 ]
 
@@ -93,7 +100,13 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
 
 [dependency-groups]
+# Keep in sync with [project.optional-dependencies].dev — `uv sync` installs
+# dependency-groups by default; optional-dependencies need `--extra dev`.
 dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
     "coverage<7.10",
 ]
 # ruff is disabled until the install issue is resolved; see pyproject.toml comment.

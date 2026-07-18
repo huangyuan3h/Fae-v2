@@ -3,17 +3,20 @@
 Checkpoint 1: /health, /ready.
 Checkpoint 2: /api/test-connection, /api/chat (text-only LLM).
 Checkpoint 3: /ws/chat (streaming WebSocket chat).
-Voice / Pipecat transport lands in later checkpoints.
+Phase 1.2/1.3: /api/sessions, /api/pipeline/text (text pipeline smoke).
 """
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel
 
+from fae.api.deps import get_llm_client
+from fae.api.pipeline import router as pipeline_router
 from fae.api.ws import router as ws_router
 from fae.config import Settings, get_settings
 from fae.llm import (
@@ -24,38 +27,19 @@ from fae.llm import (
     LLMError,
     OpenAICompatibleProvider,
 )
+from fae.sessions import SessionStore
 
 logger = logging.getLogger("fae")
-
-
-# ── Provider singletons ───────────────────────────────────────────────
-# The client is stateless (a new OpenAI client is built per request from
-# the user-supplied config), so it's safe to keep a single instance for
-# the app's lifetime. Tests can override `get_llm_client` to inject fakes.
-
-_default_client: LLMClient | None = None
-
-
-def get_llm_client() -> LLMClient:
-    """FastAPI dependency: returns the singleton LLM client.
-
-    Replace the underlying provider here when wiring up the full voice
-    pipeline in a later checkpoint.
-    """
-    global _default_client
-    if _default_client is None:
-        _default_client = LLMClient(provider=OpenAICompatibleProvider())
-    return _default_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown hooks.
 
-    - Validate config at startup so misconfig fails loudly, not on first request.
+    - Log the settings bound on app.state (set by create_app).
     - Place to wire up Pipecat transport, Letta client, scheduler, etc. later.
     """
-    settings = get_settings()
+    settings: Settings = app.state.settings
     logging.basicConfig(
         level=settings.log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -88,23 +72,38 @@ def _llm_error_to_http(err: LLMError) -> HTTPException:
     )
 
 
+class SessionCreate(BaseModel):
+    mode: Literal["text", "voice"] = "text"
+
+
+class SessionOut(BaseModel):
+    id: str
+    created_at: str
+    mode: str
+
+
 # ── App factory ───────────────────────────────────────────────────────
 def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
 ) -> FastAPI:
-    """App factory — keeps imports side-effect free for tests."""
+    """App factory — keeps imports side-effect free for tests.
+
+    Per-app state (no module-level mutable singleton):
+      app.state.settings    — Settings used by lifespan + /ready
+      app.state.llm_client  — LLMClient shared by HTTP + WebSocket
+    """
     settings = settings or get_settings()
     app = FastAPI(
         title="FAE-v2 Backend",
         version="0.1.0",
         lifespan=lifespan,
     )
-
-    # Override the default client if the caller injected one (tests do this).
-    if llm_client is not None:
-        global _default_client
-        _default_client = llm_client
+    app.state.settings = settings
+    app.state.llm_client = llm_client or LLMClient(
+        provider=OpenAICompatibleProvider()
+    )
+    app.state.sessions = SessionStore()
 
     # ── Checkpoint 1 endpoints ────────────────────────────────────────
     @app.get("/health")
@@ -113,9 +112,10 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/ready")
-    async def ready() -> dict[str, str]:
+    async def ready(request: Request) -> dict[str, str]:
         """Readiness probe: config loaded and (later) downstream deps reachable."""
-        return {"status": "ready", "app": settings.app_name}
+        app_settings: Settings = request.app.state.settings
+        return {"status": "ready", "app": app_settings.app_name}
 
     # ── Checkpoint 2 endpoints ────────────────────────────────────────
     @app.post("/api/test-connection", response_model=dict[str, str])
@@ -151,14 +151,41 @@ def create_app(
         except LLMError as e:
             raise _llm_error_to_http(e) from e
 
-    # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
-    # The WS router has its own get_llm_client placeholder; we override it
-    # to point at the same singleton so injecting `llm_client=...` here
-    # also routes the WS path through the same fake / real client.
-    from fae.api.ws import get_llm_client as _ws_get_llm_client  # noqa: PLC0415
+    # ── Phase 1.2: sessions stub ───────────────────────────────────────
+    @app.post("/api/sessions", response_model=SessionOut)
+    async def create_session(
+        payload: SessionCreate,
+        request: Request,
+    ) -> SessionOut:
+        store: SessionStore = request.app.state.sessions
+        session = store.create(mode=payload.mode)
+        return SessionOut(
+            id=session.id, created_at=session.created_at, mode=session.mode
+        )
 
-    app.dependency_overrides[_ws_get_llm_client] = get_llm_client
+    @app.get("/api/sessions", response_model=list[SessionOut])
+    async def list_sessions(request: Request) -> list[SessionOut]:
+        store: SessionStore = request.app.state.sessions
+        return [
+            SessionOut(id=s.id, created_at=s.created_at, mode=s.mode)
+            for s in store.list()
+        ]
+
+    @app.get("/api/sessions/{session_id}", response_model=SessionOut)
+    async def get_session(session_id: str, request: Request) -> SessionOut:
+        store: SessionStore = request.app.state.sessions
+        session = store.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return SessionOut(
+            id=session.id, created_at=session.created_at, mode=session.mode
+        )
+
+    # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
+
+    # ── Phase 1.3: text pipeline smoke ─────────────────────────────────
+    app.include_router(pipeline_router)
 
     return app
 

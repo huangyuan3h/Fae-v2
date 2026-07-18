@@ -6,47 +6,52 @@
 ## 文档
 
 - 📐 **[ARCHITECTURE.md](./ARCHITECTURE.md)** — 完整架构文档（必读）
-- 即将推出：`docs/design/`、`docs/api/`、`examples/`
+- ✅ **[doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)** — 分阶段 checklist
 
-## 核心能力
+## 当前进度
 
-- 🎙️ **实时语音对话**（Qwen3-ASR + Qwen3-TTS，Apache 2.0）
-- 🧠 **长期记忆**（Letta + 多层记忆架构）
-- 🎯 **主动 loop**（APScheduler + 心跳）
-- 🛠️ **Skills / Tools**（Markdown 编写，参考 Vercel Eve 风格）
-- 🎨 **美观 UI**（Next.js 15 + shadcn/ui）
+| 阶段 | 状态 |
+|---|---|
+| 1.1 基础设施 + Compose | 脚手架就绪（ASR/Letta/UI 为 stub） |
+| 1.2 FastAPI + sessions + CI | 就绪 |
+| 1.3 文本 pipeline 最小尝试 | 就绪（非浏览器语音） |
+| 1.4 Minimal UI / VoiceOrb | 未开始 |
+| 1.5 真模型一键演示 | 未开始 |
 
-## 快速开始（Checkpoint 1：后端骨架）
+## 快速开始
 
-> 当前阶段：后端 FastAPI 骨架已就绪，前端 / 语音管道 / 长期记忆在后续 Checkpoint 接入。
-> 详见 [`doc/DEVELOPMENT_PLAN.md`](./doc/DEVELOPMENT_PLAN.md)。
+### A. 本地后端开发（uv）
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/huangyuan3h/Fae-v2.git
-cd FAE-v2
-
-# 2. 安装 uv（如果还没装）
-# macOS / Linux:  curl -LsSf https://astral.sh/uv/install.sh | sh
-# Homebrew:      brew install uv
-
-# 3. 复制环境变量模板（先不用改，Checkpoint 1 还用不到 Key）
+cd Fae-v2
 cp .env.example .env
-
-# 4. 启动后端
 ./start.sh
-# → Uvicorn running on http://localhost:8000
+# → http://localhost:8000
 
-# 5. 验证
 curl http://localhost:8000/health
-# → {"status":"ok"}
-
-# 6. 跑测试
 cd backend && uv run pytest
-# → 2 passed
 ```
 
-> ⚠️ 项目仍在早期阶段，详见 [ARCHITECTURE.md](./ARCHITECTURE.md) 和 [`doc/DEVELOPMENT_PLAN.md`](./doc/DEVELOPMENT_PLAN.md)。
+### B. Docker 全栈（6 服务）
+
+```bash
+./deploy/scripts/setup.sh
+./deploy/scripts/start.sh
+# UI:      http://localhost:3000
+# Backend: http://localhost:8000
+```
+
+### 关键端点
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/health` | 存活 |
+| GET | `/ready` | 就绪 |
+| POST | `/api/sessions` | 创建会话 |
+| POST | `/api/chat` | 同步文本 chat |
+| WS | `/ws/chat` | 流式 token |
+| POST | `/api/pipeline/text` | 1.3 文本管道冒烟（LLM→句子→TTS stub） |
 
 ## 许可证
 

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, init]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync and test
+        run: |
+          uv sync --group dev
+          uv run pytest
+
+  ui-package:
+    name: UI package.json present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate ui package manifest
+        run: |
+          test -f ui/package.json
+          node -e "const p=require('./ui/package.json'); if(!p.name) process.exit(1)"

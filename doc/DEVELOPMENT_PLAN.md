@@ -24,37 +24,39 @@
 
 ### 1.1 基础设施脚手架
 
-- [ ] 初始化仓库结构：`backend/` + `ui/` + `deploy/` + `docs/`
-- [ ] 创建 `backend/pyproject.toml`（含 `pipecat-ai` / `fastapi` / `letta` / `uvicorn` 等依赖，参考附录 A）
-- [ ] 创建 `ui/package.json`（含 `next@15` / `react@19` / `tailwindcss@4` / `shadcn` 基础）
-- [ ] 创建 `docker-compose.yml`：服务 = `backend` / `ui` / `letta` / `vllm-asr` / `qdrant` / `redis`
-- [ ] 写 `backend/src/fae/config.py`：基于 `pydantic-settings` 加载 `.env`
-- [ ] 写 `.env.example`：DashScope Key / Letta URL / vLLM URL / Qdrant / Redis
-- [ ] 写 `deploy/scripts/setup.sh` + `start.sh`
+- [x] 初始化仓库结构：`backend/` + `ui/` + `deploy/` + `docs/`（文档在 `doc/`）
+- [x] 创建 `backend/pyproject.toml`（fastapi/uvicorn/openai；`pipecat-ai` / `letta` 仍为后续依赖）
+- [x] 创建 `ui/package.json`（依赖清单就绪；真实 Next.js app 见 1.4）
+- [x] 创建 `docker-compose.yml`：服务 = `backend` / `ui` / `letta` / `vllm-asr` / `qdrant` / `redis`（ASR/Letta/UI 现为 stub，便于无 GPU 起栈）
+- [x] 写 `backend/src/fae/config.py`：基于 `pydantic-settings` 加载 `.env`
+- [x] 写 `.env.example`：DashScope Key / Letta URL / vLLM URL / Qdrant / Redis
+- [x] 写 `deploy/scripts/setup.sh` + `start.sh`
 
 > **验收**：`./deploy/scripts/start.sh` 起来后，6 个容器全部 `healthy`。
+> （ASR/Letta/UI 使用 stub 镜像；GPU 真模型与正式 Letta 后续替换。）
 
 ### 1.2 FastAPI 入口 + 健康检查
 
-- [ ] 实现 `backend/src/fae/api.py`：暴露 `/health` `/ready` `/api/sessions`
-- [ ] 把 uvicorn 启动命令固化到 `backend.Dockerfile`
-- [ ] 写最小 pytest：访问 `/health` 断言 200
-- [ ] CI 占位：`.github/workflows/ci.yml` 跑 `pytest` + `pnpm lint`
+- [x] 实现 `backend/src/fae/api/`：暴露 `/health` `/ready` `/api/sessions`
+- [x] 把 uvicorn 启动命令固化到 `deploy/docker/backend.Dockerfile`
+- [x] 写最小 pytest：访问 `/health` 断言 200
+- [x] CI 占位：`.github/workflows/ci.yml` 跑 `pytest` + UI package 校验
 
 > **验收**：`curl http://localhost:8000/health` 返回 `{"status":"ok"}`。
 
 ### 1.3 Pipecat 最小 Pipeline
 
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（先打 vLLM-Omni HTTP 占位，再切正式 SDK）
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py`（DashScope Realtime WebSocket）
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（OpenAI 兼容协议指向 Qwen3-Max）
-- [ ] 实现 `backend/src/fae/pipecat/transport.py`（Daily / LiveKit 任选其一，先 Daily）
-- [ ] 实现 `backend/src/fae/pipecat/bot.py`：组装 pipeline `麦克风 → VAD → ASR → LLM → TTS → 扬声器`
+- [x] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（HTTP 占位，对接 compose ASR stub / 未来 vLLM）
+- [x] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py`（silent PCM stub；DashScope Realtime 后续）
+- [x] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（复用 `fae.llm` OpenAI 兼容客户端）
+- [x] 实现 `backend/src/fae/pipecat/transport.py`（LocalTransport；Daily/LiveKit 后续）
+- [x] 实现 `backend/src/fae/pipecat/bot.py`：文本模式 `user text → LLM → SentenceAggregator → TTS stub`
 - [ ] 接入 Silero VAD + SmartTurn v3
-- [ ] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列
-- [ ] 实现 SentenceAggregator，把流式 token 攒句
+- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列
+- [x] 实现 SentenceAggregator，把流式 token 攒句
 
 > **冒烟测试**（M1-1）：浏览器说"你好"，2.5s 内听到 FAE 回放"你好"。
+> **当前文本冒烟**：`POST /api/pipeline/text`（假 LLM）可跑通 token→sentence→audio stub。
 
 ### 1.4 最小 UI
 

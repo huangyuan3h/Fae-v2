@@ -1,8 +1,8 @@
 """LLM provider implementations.
 
-`LLMProvider` is a minimal Protocol — anything with an async `chat` method
-that returns a `ChatResponse` qualifies. This keeps the rest of the codebase
-provider-agnostic and makes hermetic tests trivial (see `FakeProvider`).
+`LLMProvider` is a minimal Protocol — anything with async `chat` / `stream`
+methods qualifies. Production uses `OpenAICompatibleProvider`; tests use
+`FakeProvider` for hermetic, deterministic behaviour.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from openai import (
     AuthenticationError,
     BadRequestError,
     NotFoundError,
-    OpenAI,
     PermissionDeniedError,
     RateLimitError,
 )
@@ -39,30 +38,82 @@ from fae.llm.types import ChatRequest, ChatResponse
 logger = logging.getLogger("fae.llm")
 
 
-def _close_stream(response: object) -> None:
-    """Best-effort close of an openai streaming response.
+async def _aclose(resource: object) -> None:
+    """Best-effort close of an openai client or streaming response.
 
-    The SDK ships `close()` as a sync method, but tests and custom
-    transports may expose it as a coroutine. Handle both.
+    The SDK's Stream.close() is sync; AsyncOpenAI.close() is a coroutine.
+    Handle both shapes so callers never leak HTTP connections.
     """
-    close = getattr(response, "close", None)
+    close = getattr(resource, "close", None)
     if close is None:
         return
     try:
         result = close()
+        if asyncio.iscoroutine(result):
+            await result
     except Exception:  # noqa: BLE001 — best-effort cleanup
-        logger.debug("Stream close() raised", exc_info=True)
-        return
-    if asyncio.iscoroutine(result):
-        # We're in an async context; schedule and let the loop drain it.
-        # Using `get_event_loop().create_task` rather than awaiting keeps
-        # the close non-blocking during cancellation cleanup.
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            return
-        if loop.is_running():
-            loop.create_task(result)  # type: ignore[arg-type]
+        logger.debug("resource close() raised", exc_info=True)
+
+
+def _map_openai_error(
+    e: BaseException,
+    *,
+    model: str,
+    base_url: str,
+    timeout_s: float,
+) -> LLMError:
+    """Normalise an openai SDK exception into a stable LLMError."""
+    if isinstance(e, AuthenticationError):
+        return LLMError(
+            code="auth",
+            message=f"Authentication failed for model '{model}': {e}",
+        )
+    if isinstance(e, PermissionDeniedError):
+        return LLMError(
+            code="forbidden",
+            message=f"Permission denied for model '{model}': {e}",
+        )
+    if isinstance(e, NotFoundError):
+        return LLMError(
+            code="not_found",
+            message=f"Model '{model}' not found at {base_url}: {e}",
+        )
+    if isinstance(e, RateLimitError):
+        return LLMError(
+            code="rate_limited",
+            message=f"Rate limited by provider: {e}",
+        )
+    if isinstance(e, APITimeoutError):
+        return LLMError(
+            code="timeout",
+            message=f"LLM request timed out after {timeout_s}s",
+        )
+    if isinstance(e, APIConnectionError):
+        return LLMError(
+            code="connection",
+            message=f"Cannot reach LLM endpoint {base_url}: {e}",
+        )
+    if isinstance(e, BadRequestError):
+        return LLMError(
+            code="bad_request",
+            message=f"LLM rejected request: {e}",
+        )
+    if LengthFinishReasonError is not None and isinstance(e, LengthFinishReasonError):
+        return LLMError(
+            code="length",
+            message=f"LLM hit max_tokens limit: {e}",
+        )
+    if isinstance(e, APIError):
+        logger.warning("Unclassified openai SDK error: %s", e)
+        return LLMError(
+            code="connection",
+            message=f"LLM provider error: {e}",
+        )
+    logger.exception("Unexpected LLM error")
+    return LLMError(
+        code="unknown",
+        message=f"Unexpected LLM error: {e}",
+    )
 
 
 @runtime_checkable
@@ -71,9 +122,7 @@ class LLMProvider(Protocol):
 
     async def chat(self, request: ChatRequest) -> ChatResponse: ...
 
-    def stream(
-        self, request: ChatRequest
-    ) -> AsyncIterator[str]:
+    def stream(self, request: ChatRequest) -> AsyncIterator[str]:
         """Yield content tokens as they arrive.
 
         Implementations MUST honour asyncio cancellation: if the consumer
@@ -84,217 +133,114 @@ class LLMProvider(Protocol):
 
 
 class OpenAICompatibleProvider:
-    """Real provider. Works with any server speaking OpenAI's chat completions
-    protocol — Qwen3 (DashScope compatible-mode), DeepSeek, vLLM, etc.
+    """Real provider for any OpenAI-compatible chat completions server
+    (Qwen3 / DashScope compatible-mode, DeepSeek, vLLM, OpenAI, …).
 
-    A new `openai.OpenAI` client is built per call so we never hold a
-    reference to a key longer than the request. (Async client is created
-    inside `chat` to keep construction site-agnostic.)
+    Both `chat` and `stream` use `AsyncOpenAI` so the FastAPI event loop
+    is never blocked. A fresh client is built per call so we never hold a
+    reference to a key longer than the request, and every path closes the
+    client (and stream response) in a `finally` block.
     """
 
     def __init__(self, default_timeout_s: float = 10.0) -> None:
         self._default_timeout_s = default_timeout_s
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
+    def _client_for(self, request: ChatRequest) -> AsyncOpenAI:
         cfg = request.config
-        client = OpenAI(
+        return AsyncOpenAI(
             base_url=cfg.base_url,
             api_key=cfg.api_key,
             timeout=self._default_timeout_s,
         )
-        try:
-            resp = client.chat.completions.create(
-                model=cfg.model,
-                messages=[m.model_dump() for m in request.messages],
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-            )
-        except AuthenticationError as e:
-            # 401 — bad / missing key.
-            raise LLMError(
-                code="auth",
-                message=f"Authentication failed for model '{cfg.model}': {e}",
-            ) from e
-        except PermissionDeniedError as e:
-            # 403 — key valid but not authorized for this model.
-            raise LLMError(
-                code="forbidden",
-                message=f"Permission denied for model '{cfg.model}': {e}",
-            ) from e
-        except NotFoundError as e:
-            # 404 — model name wrong or endpoint path wrong.
-            raise LLMError(
-                code="not_found",
-                message=f"Model '{cfg.model}' not found at {cfg.base_url}: {e}",
-            ) from e
-        except RateLimitError as e:
-            # 429 — back off and retry is the caller's job.
-            raise LLMError(
-                code="rate_limited",
-                message=f"Rate limited by provider: {e}",
-            ) from e
-        except APITimeoutError as e:
-            raise LLMError(
-                code="timeout",
-                message=f"LLM request timed out after {self._default_timeout_s}s",
-            ) from e
-        except APIConnectionError as e:
-            raise LLMError(
-                code="connection",
-                message=f"Cannot reach LLM endpoint {cfg.base_url}: {e}",
-            ) from e
-        except BadRequestError as e:
-            raise LLMError(
-                code="bad_request",
-                message=f"LLM rejected request: {e}",
-            ) from e
-        except Exception as e:
-            # LengthFinishReasonError (max_tokens hit) lands here in openai
-            # versions that expose it. We special-case on class name so the
-            # version-dependent import above doesn't break control flow.
-            if LengthFinishReasonError is not None and isinstance(
-                e, LengthFinishReasonError  # pragma: no cover — hard to construct
-            ):
-                raise LLMError(
-                    code="length",
-                    message=f"LLM hit max_tokens limit: {e}",
-                ) from e
-            # Any other openai SDK error that wasn't caught above (e.g. raw
-            # APIError subclasses, transport-level errors not classified as
-            # connection / timeout). Normalise to "connection" so the UI
-            # surfaces a useful message instead of an opaque 500.
-            if isinstance(e, APIError):
-                logger.warning("Unclassified openai SDK error: %s", e)
-                raise LLMError(
-                    code="connection",
-                    message=f"LLM provider error: {e}",
-                ) from e
-            # Last-resort normalisation.
-            logger.exception("Unexpected LLM error")
-            raise LLMError(
-                code="unknown",
-                message=f"Unexpected LLM error: {e}",
-            ) from e
 
-        # Defensive parsing — providers sometimes return empty choices.
-        if not resp.choices:
-            raise LLMError(
-                code="empty_response",
-                message="LLM returned no choices",
-            )
-        content = resp.choices[0].message.content or ""
-        usage: dict[str, int] | None = None
-        if resp.usage is not None:
-            usage = {
-                "prompt_tokens": resp.usage.prompt_tokens,
-                "completion_tokens": resp.usage.completion_tokens,
-                "total_tokens": resp.usage.total_tokens,
-            }
-        return ChatResponse(content=content, model=resp.model, usage=usage)
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        cfg = request.config
+        client = self._client_for(request)
+        try:
+            try:
+                resp = await client.chat.completions.create(
+                    model=cfg.model,
+                    messages=[m.model_dump() for m in request.messages],
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                )
+            except Exception as e:  # noqa: BLE001 — normalised below
+                raise _map_openai_error(
+                    e,
+                    model=cfg.model,
+                    base_url=cfg.base_url,
+                    timeout_s=self._default_timeout_s,
+                ) from e
+
+            if not resp.choices:
+                raise LLMError(
+                    code="empty_response",
+                    message="LLM returned no choices",
+                )
+            content = resp.choices[0].message.content or ""
+            usage: dict[str, int] | None = None
+            if resp.usage is not None:
+                usage = {
+                    "prompt_tokens": resp.usage.prompt_tokens,
+                    "completion_tokens": resp.usage.completion_tokens,
+                    "total_tokens": resp.usage.total_tokens,
+                }
+            return ChatResponse(content=content, model=resp.model, usage=usage)
+        finally:
+            await _aclose(client)
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
         """Stream completion tokens via the OpenAI async streaming API.
 
-        Yields the assistant content piece by piece. The caller can
-        cancel mid-stream by closing the iterator; the openai SDK's
-        `stream()` context manager will then close the underlying
-        HTTP connection.
+        Yields assistant content piece by piece. Cancellation closes both
+        the streaming response and the underlying AsyncOpenAI client.
         """
         cfg = request.config
-        client = AsyncOpenAI(
-            base_url=cfg.base_url,
-            api_key=cfg.api_key,
-            timeout=self._default_timeout_s,
-        )
+        client = self._client_for(request)
+        response: object | None = None
         try:
-            response = await client.chat.completions.create(
-                model=cfg.model,
-                messages=[m.model_dump() for m in request.messages],
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stream=True,
-            )
-        except AuthenticationError as e:
-            raise LLMError(
-                code="auth",
-                message=f"Authentication failed for model '{cfg.model}': {e}",
-            ) from e
-        except PermissionDeniedError as e:
-            raise LLMError(
-                code="forbidden",
-                message=f"Permission denied for model '{cfg.model}': {e}",
-            ) from e
-        except NotFoundError as e:
-            raise LLMError(
-                code="not_found",
-                message=f"Model '{cfg.model}' not found at {cfg.base_url}: {e}",
-            ) from e
-        except RateLimitError as e:
-            raise LLMError(
-                code="rate_limited",
-                message=f"Rate limited by provider: {e}",
-            ) from e
-        except APITimeoutError as e:
-            raise LLMError(
-                code="timeout",
-                message=f"LLM request timed out after {self._default_timeout_s}s",
-            ) from e
-        except APIConnectionError as e:
-            raise LLMError(
-                code="connection",
-                message=f"Cannot reach LLM endpoint {cfg.base_url}: {e}",
-            ) from e
-        except BadRequestError as e:
-            raise LLMError(
-                code="bad_request",
-                message=f"LLM rejected request: {e}",
-            ) from e
-        except APIError as e:
-            logger.warning("Unclassified openai SDK streaming error: %s", e)
-            raise LLMError(
-                code="connection",
-                message=f"LLM provider error: {e}",
-            ) from e
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Unexpected streaming error")
-            raise LLMError(
-                code="unknown",
-                message=f"Unexpected LLM error: {e}",
-            ) from e
+            try:
+                response = await client.chat.completions.create(
+                    model=cfg.model,
+                    messages=[m.model_dump() for m in request.messages],
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    stream=True,
+                )
+            except Exception as e:  # noqa: BLE001 — normalised below
+                raise _map_openai_error(
+                    e,
+                    model=cfg.model,
+                    base_url=cfg.base_url,
+                    timeout_s=self._default_timeout_s,
+                ) from e
 
-        # Consume the async iterator. openai's `stream=True` returns a
-        # ResponseStream whose __aiter__ yields ChatCompletionChunk.
-        # Cancellation propagates as CancelledError through the `async for`.
-        try:
-            async for chunk in response:
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    piece = delta.content if delta and delta.content else None
-                    if piece:
-                        yield piece
-        except asyncio.CancelledError:
-            # Caller dropped the stream. Close the openai response so the
-            # HTTP connection is released back to the pool. The SDK's
-            # Stream.close() is sync (returns None), not a coroutine — be
-            # tolerant of either shape.
-            logger.debug("Stream cancelled by caller")
-            _close_stream(response)
-            raise
-        except APIError as e:
-            # Mid-stream errors (e.g. connection drop) surface here.
-            logger.warning("Stream interrupted by openai error: %s", e)
-            _close_stream(response)
-            raise LLMError(
-                code="connection",
-                message=f"Stream interrupted: {e}",
-            ) from e
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Unexpected error during streaming")
-            _close_stream(response)
-            raise LLMError(
-                code="unknown",
-                message=f"Unexpected streaming error: {e}",
-            ) from e
+            try:
+                async for chunk in response:  # type: ignore[union-attr]
+                    if chunk.choices:
+                        delta = chunk.choices[0].delta
+                        piece = delta.content if delta and delta.content else None
+                        if piece:
+                            yield piece
+            except asyncio.CancelledError:
+                logger.debug("Stream cancelled by caller")
+                raise
+            except APIError as e:
+                logger.warning("Stream interrupted by openai error: %s", e)
+                raise LLMError(
+                    code="connection",
+                    message=f"Stream interrupted: {e}",
+                ) from e
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Unexpected error during streaming")
+                raise LLMError(
+                    code="unknown",
+                    message=f"Unexpected streaming error: {e}",
+                ) from e
+        finally:
+            if response is not None:
+                await _aclose(response)
+            await _aclose(client)
 
 
 class FakeProvider:
