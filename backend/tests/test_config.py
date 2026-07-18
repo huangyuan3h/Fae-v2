@@ -19,14 +19,22 @@ def _reset_settings_cache() -> None:
 
 
 def test_defaults_when_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Point env_file at a path that does not exist so the loader doesn't
-    # accidentally read the repo-root .env.
-    monkeypatch.setattr(config_module, "_ENV_FILE", tmp_path / "missing.env")
-    # Clear any inherited env vars for the fields we assert on.
+    # Settings freezes env_file at class definition — subclass with a missing
+    # file so the repo-root .env cannot leak into default assertions.
+    from pydantic_settings import SettingsConfigDict
+
     for field in ("APP_ENV", "LOG_LEVEL", "DASHSCOPE_API_KEY", "LETTA_MODE"):
         monkeypatch.delenv(field, raising=False)
 
-    s = Settings()
+    class CleanSettings(Settings):
+        model_config = SettingsConfigDict(
+            env_file=str(tmp_path / "missing.env"),
+            env_file_encoding="utf-8",
+            case_sensitive=False,
+            extra="ignore",
+        )
+
+    s = CleanSettings()
     assert s.app_name == "fae-v2"
     assert s.app_env == "development"
     assert s.log_level == "INFO"
