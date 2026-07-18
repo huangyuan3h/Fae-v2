@@ -5,19 +5,21 @@
 
 ## 文档
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — 架构
-- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — 分阶段 checklist
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)
 
-## Phase 1 状态
+## Phase 1（完整）
 
-| 项 | 状态 |
+| 能力 | 状态 |
 |---|---|
-| Docker Compose 6 服务 | ✅（ASR/Letta 仍为 stub，可无 GPU 起栈） |
+| Docker Compose 6 服务 | ✅（ASR/Letta stub 可无 GPU） |
 | FastAPI + sessions + CI | ✅ |
-| 文本 pipeline + barge-in + Energy VAD | ✅ |
+| 文本 pipeline + barge-in + SentenceAggregator | ✅ |
+| Silero VAD + SmartTurn v3（Daily bot） | ✅ |
 | Next.js UI（VoiceOrb / Mic / 文字回退） | ✅ |
-| 浏览器语音对话（Web Speech STT/TTS + `/ws/chat`） | ✅ |
-| Daily / Silero / 真 ASR GPU | 预留接口，需 Key / GPU 后替换 |
+| 浏览器语音（Web Speech + `/ws/chat`） | ✅ 默认 |
+| Daily + Pipecat 全链路（可选） | ✅ 需 `DAILY_API_KEY` |
+| DashScope Qwen3-TTS | ✅ 需 `DASHSCOPE_API_KEY` |
 
 ## 快速开始
 
@@ -25,40 +27,37 @@
 git clone https://github.com/huangyuan3h/Fae-v2.git
 cd Fae-v2
 cp .env.example .env
-# 填入 DASHSCOPE_API_KEY（或在 UI「Agent 设置」里填 API Key）
+# 至少填 DASHSCOPE_API_KEY；Daily 增强再填 DAILY_API_KEY
 
-# 方式 A：本地开发
-./start.sh                  # backend :8000
-cd ui && pnpm install && pnpm dev   # UI :3000
+# 开发
+./start.sh
+cd ui && pnpm install && pnpm dev
+open http://localhost:3000
 
-# 方式 B：Docker 一键起
+# 或 Docker
 ./deploy/scripts/setup.sh
 ./deploy/scripts/start.sh
-open http://localhost:3000
 ```
 
-### 演示路径（M1）
+### 演示
 
-1. 打开 http://localhost:3000  
-2. 在「Agent 设置」填入 OpenAI-compatible `base_url` / `api_key` / `model`（如 DashScope）  
-3. 点击「开始说话」（Chrome）或使用文字输入  
-4. 听到 / 看到流式回复；可点「打断」做 barge-in  
+1. 打开 http://localhost:3000，在 Agent 设置填 API Key  
+2. **默认路径**：点「开始说话」（Chrome）或文字输入 → 流式回复 + 浏览器播报  
+3. **Daily 增强**：勾选「优先 Daily / Pipecat」→ 点开始 → 加入 WebRTC 房间（服务端跑 Silero + SmartTurn + LLM + DashScope TTS）  
 
-### 常用端点
+### 环境变量
 
-| Method | Path | 说明 |
-|---|---|---|
-| GET | `/health` | 存活 |
-| POST | `/api/sessions` | 会话 |
-| POST | `/api/voice/session` | 语音会话 bootstrap |
-| POST | `/api/chat` | 同步 chat |
-| WS | `/ws/chat` | 流式 token |
-| POST | `/api/pipeline/text` | 文本管道冒烟 |
+| 变量 | 用途 |
+|---|---|
+| `DASHSCOPE_API_KEY` | LLM / TTS |
+| `DAILY_API_KEY` | 可选，启用 Pipecat Daily 路径 |
+| `VLLM_ASR_URL` | OpenAI-compatible STT（compose stub 默认 `:8001`） |
+| `CORS_ORIGINS` | UI 源 |
 
 ## 测试
 
 ```bash
-cd backend && uv run pytest
+cd backend && UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync --group dev && uv run pytest
 cd ui && pnpm lint && pnpm build
 ```
 

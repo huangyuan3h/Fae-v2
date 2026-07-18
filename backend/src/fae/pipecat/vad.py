@@ -1,19 +1,10 @@
-"""VAD helpers for Phase 1.3.
-
-Silero VAD ships with `pipecat-ai[silero]` — optional. Until that dependency
-is pinned in the default install, we expose:
-
-1. `EnergyVAD` — lightweight RMS gate for unit tests / local stubs
-2. `try_silero_vad()` — import Silero when pipecat is available
-
-SmartTurn v3 remains a follow-up once the Daily transport path is live.
-"""
+"""VAD helpers — EnergyVAD fallback + Silero when pipecat-ai[silero] is present."""
 
 from __future__ import annotations
 
 import logging
 import struct
-from typing import Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger("fae.pipecat.vad")
 
@@ -23,7 +14,6 @@ class VADAnalyzer(Protocol):
 
 
 def _pcm16_rms(pcm16_mono: bytes) -> float:
-    """RMS of little-endian PCM16 samples (avoids deprecated audioop)."""
     if len(pcm16_mono) < 2:
         return 0.0
     n = len(pcm16_mono) // 2
@@ -33,7 +23,7 @@ def _pcm16_rms(pcm16_mono: bytes) -> float:
 
 
 class EnergyVAD:
-    """Simple energy-based VAD used by the minimal pipeline / tests."""
+    """Simple energy-based VAD used by tests and offline stubs."""
 
     def __init__(self, threshold: int = 500) -> None:
         self._threshold = threshold
@@ -44,13 +34,21 @@ class EnergyVAD:
         return _pcm16_rms(pcm16_mono) >= self._threshold
 
 
-def try_silero_vad() -> VADAnalyzer | None:
-    """Return a Silero analyzer if pipecat is installed, else None."""
+def try_silero_vad(**kwargs: Any) -> Any | None:
+    """Return a Pipecat SileroVADAnalyzer, or None if unavailable."""
     try:
-        from pipecat.audio.vad.silero import SileroVADAnalyzer  # type: ignore
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
 
-        logger.info("Silero VAD available via pipecat")
-        return SileroVADAnalyzer()  # type: ignore[return-value]
+        params = kwargs.pop("params", VADParams(stop_secs=0.2))
+        analyzer = SileroVADAnalyzer(params=params, **kwargs)
+        logger.info("Silero VAD ready")
+        return analyzer
     except Exception:  # noqa: BLE001
-        logger.debug("Silero VAD not available — using EnergyVAD fallback")
+        logger.debug("Silero VAD unavailable", exc_info=True)
         return None
+
+
+def default_vad() -> Any:
+    """Prefer Silero; fall back to EnergyVAD."""
+    return try_silero_vad() or EnergyVAD()

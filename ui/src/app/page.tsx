@@ -17,6 +17,10 @@ export default function HomePage() {
     partial,
     error,
     sessionId,
+    mode,
+    preferDaily,
+    setPreferDaily,
+    dailyConnected,
     support,
     sendText,
     startListening,
@@ -50,7 +54,7 @@ export default function HomePage() {
 
       <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
         <MicButton
-          active={orb === "listening"}
+          active={orb === "listening" || dailyConnected}
           onStart={startListening}
           onStop={stopListening}
         />
@@ -102,8 +106,15 @@ export default function HomePage() {
         <summary className="cursor-pointer px-4 text-sm text-[var(--ink-soft)]">
           Agent 设置
           {sessionId ? ` · session ${sessionId.slice(0, 8)}` : ""}
+          {` · ${mode}`}
         </summary>
-        <AgentSettings config={config} onChange={setConfig} />
+        <AgentSettings
+          config={config}
+          onChange={setConfig}
+          preferDaily={preferDaily}
+          onPreferDailyChange={setPreferDaily}
+          mode={mode}
+        />
       </details>
     </main>
   );

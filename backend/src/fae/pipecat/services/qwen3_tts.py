@@ -1,12 +1,12 @@
-"""Qwen3-TTS service stub.
+"""Qwen3-TTS service (standalone + DashScope).
 
-Phase 1.3 returns silent PCM for sentence boundaries so the pipeline can
-exercise barge-in / aggregator wiring without DashScope credentials.
-Realtime WebSocket synthesis lands in a later checkpoint.
+Used by TextPipelineBot. When `api_key` is set, synthesizes via DashScope
+qwen3-tts-flash; otherwise returns short silent PCM for offline tests.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 import struct
 
@@ -14,27 +14,54 @@ logger = logging.getLogger("fae.pipecat.tts")
 
 
 class Qwen3TTSService:
-    def __init__(self, api_key: str = "", sample_rate: int = 24000) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        sample_rate: int = 24000,
+        model: str = "qwen3-tts-flash",
+        voice: str = "Cherry",
+        language_type: str = "Chinese",
+    ) -> None:
         self._api_key = api_key
         self._sample_rate = sample_rate
+        self._model = model
+        self._voice = voice
+        self._language_type = language_type
 
     @property
     def configured(self) -> bool:
         return bool(self._api_key)
 
     async def synthesize(self, text: str) -> bytes:
-        """Return a short silent PCM16 mono buffer sized by text length.
-
-        Placeholder keeps the bot event loop honest without external I/O.
-        """
         if not text.strip():
             return b""
-        # ~40ms of silence per character — enough for tests to observe audio frames.
-        frames = max(1, len(text) * int(self._sample_rate * 0.04))
-        logger.debug(
-            "TTS stub synthesize text=%r frames=%d configured=%s",
-            text[:40],
-            frames,
-            self.configured,
-        )
-        return struct.pack(f"<{frames}h", *([0] * frames))
+        if not self._api_key:
+            frames = max(1, len(text) * int(self._sample_rate * 0.04))
+            return struct.pack(f"<{frames}h", *([0] * frames))
+
+        try:
+            import dashscope
+
+            chunks: list[bytes] = []
+            response = dashscope.MultiModalConversation.call(
+                api_key=self._api_key,
+                model=self._model,
+                text=text,
+                voice=self._voice,
+                language_type=self._language_type,
+                stream=True,
+            )
+            for chunk in response:
+                if chunk is None or getattr(chunk, "output", None) is None:
+                    continue
+                audio = chunk.output.audio
+                data_b64 = getattr(audio, "data", None) if audio else None
+                if data_b64:
+                    chunks.append(base64.b64decode(data_b64))
+            pcm = b"".join(chunks)
+            logger.debug("DashScope TTS bytes=%d text=%r", len(pcm), text[:40])
+            return pcm
+        except Exception:  # noqa: BLE001
+            logger.exception("DashScope TTS failed — returning silence")
+            frames = max(1, int(self._sample_rate * 0.1))
+            return struct.pack(f"<{frames}h", *([0] * frames))

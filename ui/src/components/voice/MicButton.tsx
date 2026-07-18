@@ -20,7 +20,7 @@ export function MicButton({ active, disabled, onStart, onStop }: Props) {
       }}
       aria-pressed={active}
     >
-      {active ? "停止聆听" : "开始说话"}
+      {active ? "结束通话 / 停止" : "开始说话"}
     </button>
   );
 }

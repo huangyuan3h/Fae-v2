@@ -1,5 +1,6 @@
 "use client";
 
+import type { DailyCall } from "@daily-co/daily-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -7,6 +8,7 @@ import {
   loadConfig,
   saveConfig,
 } from "@/lib/config";
+import { joinDailyRoom, leaveDailyRoom } from "@/lib/daily-session";
 import { createVoiceSession } from "@/lib/pipecat-client";
 import {
   BrowserSTT,
@@ -17,6 +19,7 @@ import {
 import { WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
+export type TransportMode = "browser" | "daily";
 
 export type ChatLine = {
   id: string;
@@ -31,17 +34,24 @@ export function useVoiceSession() {
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [mode, setMode] = useState<TransportMode>("browser");
+  const [preferDaily, setPreferDaily] = useState(false);
+  const [dailyConnected, setDailyConnected] = useState(false);
   const [support, setSupport] = useState({ stt: false, tts: false });
 
   const wsRef = useRef(new WsChatClient());
   const sttRef = useRef(new BrowserSTT());
+  const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
 
   useEffect(() => {
     setConfigState(loadConfig());
     setSupport(speechSupported());
-    createVoiceSession()
-      .then((s) => setSessionId(s.sessionId))
+    createVoiceSession({ preferDaily: false })
+      .then((s) => {
+        setSessionId(s.sessionId);
+        setMode(s.mode);
+      })
       .catch(() => {
         /* backend optional at first paint */
       });
@@ -51,12 +61,58 @@ export function useVoiceSession() {
       stt.stop();
       stopSpeaking();
       ws.close();
+      void leaveDailyRoom(dailyRef.current);
+      dailyRef.current = null;
     };
   }, []);
 
   const setConfig = useCallback((next: AgentConfig) => {
     setConfigState(next);
     saveConfig(next);
+  }, []);
+
+  const connectDaily = useCallback(async () => {
+    if (!config.apiKey.trim()) {
+      setError("Daily 模式仍需要 LLM API Key（DashScope / OpenAI-compatible）");
+      return;
+    }
+    setError(null);
+    setOrb("thinking");
+    try {
+      const session = await createVoiceSession({
+        preferDaily: true,
+        config,
+      });
+      setSessionId(session.sessionId);
+      setMode(session.mode);
+      if (session.mode !== "daily" || !session.roomUrl || !session.token) {
+        setError(session.detail || "服务端未启用 Daily，已保持浏览器模式");
+        setOrb("idle");
+        return;
+      }
+      const call = await joinDailyRoom(session.roomUrl, session.token);
+      dailyRef.current = call;
+      setDailyConnected(true);
+      setOrb("listening");
+      call.on("participant-updated", () => {
+        /* orb stays listening while in Daily call */
+      });
+      call.on("left-meeting", () => {
+        setDailyConnected(false);
+        setOrb("idle");
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setOrb("idle");
+    }
+  }, [config]);
+
+  const disconnectDaily = useCallback(async () => {
+    await leaveDailyRoom(dailyRef.current);
+    dailyRef.current = null;
+    setDailyConnected(false);
+    setOrb("idle");
+    setMode("browser");
   }, []);
 
   const appendLine = useCallback((role: ChatLine["role"], content: string) => {
@@ -116,13 +172,25 @@ export function useVoiceSession() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      if (mode === "daily" && dailyConnected) {
+        appendLine("user", trimmed);
+        appendLine(
+          "assistant",
+          "（Daily 模式：请直接对着麦克风说话，Pipecat 管线会处理语音。）",
+        );
+        return;
+      }
       appendLine("user", trimmed);
       await runAssistant(trimmed);
     },
-    [appendLine, runAssistant],
+    [appendLine, dailyConnected, mode, runAssistant],
   );
 
   const startListening = useCallback(() => {
+    if (preferDaily || mode === "daily") {
+      void connectDaily();
+      return;
+    }
     if (!support.stt) {
       setError("当前浏览器不支持语音识别，请用 Chrome，或改用文字输入");
       return;
@@ -130,7 +198,6 @@ export function useVoiceSession() {
     setError(null);
     setPartial("");
     setOrb("listening");
-    // Barge-in: stop any in-flight speech + generation.
     stopSpeaking();
     wsRef.current.cancel();
 
@@ -148,19 +215,23 @@ export function useVoiceSession() {
         setOrb("idle");
       },
     );
-  }, [sendText, support.stt]);
+  }, [connectDaily, mode, preferDaily, sendText, support.stt]);
 
   const stopListening = useCallback(() => {
+    if (dailyConnected) {
+      void disconnectDaily();
+      return;
+    }
     sttRef.current.stop();
     if (orb === "listening") setOrb("idle");
-  }, [orb]);
+  }, [dailyConnected, disconnectDaily, orb]);
 
   const interrupt = useCallback(() => {
     stopSpeaking();
     wsRef.current.cancel();
     sttRef.current.stop();
-    setOrb("idle");
-  }, []);
+    setOrb(dailyConnected ? "listening" : "idle");
+  }, [dailyConnected]);
 
   return {
     config,
@@ -170,6 +241,10 @@ export function useVoiceSession() {
     partial,
     error,
     sessionId,
+    mode,
+    preferDaily,
+    setPreferDaily,
+    dailyConnected,
     support,
     sendText,
     startListening,

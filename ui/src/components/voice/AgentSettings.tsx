@@ -5,9 +5,18 @@ import type { AgentConfig } from "@/lib/config";
 type Props = {
   config: AgentConfig;
   onChange: (next: AgentConfig) => void;
+  preferDaily: boolean;
+  onPreferDailyChange: (v: boolean) => void;
+  mode: string;
 };
 
-export function AgentSettings({ config, onChange }: Props) {
+export function AgentSettings({
+  config,
+  onChange,
+  preferDaily,
+  onPreferDailyChange,
+  mode,
+}: Props) {
   return (
     <div className="mx-auto grid w-full max-w-xl gap-2 px-4 pb-8 pt-2">
       <label className="grid gap-1 text-xs text-[var(--ink-soft)]">
@@ -37,6 +46,15 @@ export function AgentSettings({ config, onChange }: Props) {
           onChange={(e) => onChange({ ...config, model: e.target.value })}
         />
       </label>
+      <label className="mt-2 flex items-center gap-2 text-sm text-[var(--ink)]">
+        <input
+          type="checkbox"
+          checked={preferDaily}
+          onChange={(e) => onPreferDailyChange(e.target.checked)}
+        />
+        优先使用 Daily / Pipecat（需服务端 DAILY_API_KEY）
+      </label>
+      <p className="text-xs text-[var(--ink-soft)]">当前传输模式：{mode}</p>
     </div>
   );
 }

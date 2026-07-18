@@ -25,11 +25,11 @@
 ### 1.1 基础设施脚手架
 
 - [x] 初始化仓库结构：`backend/` + `ui/` + `deploy/` + `docs/`（文档在 `doc/`）
-- [x] 创建 `backend/pyproject.toml`（fastapi/uvicorn/openai；`pipecat-ai` / `letta` 仍为后续依赖）
-- [x] 创建 `ui/package.json`（依赖清单就绪；真实 Next.js app 见 1.4）
+- [x] 创建 `backend/pyproject.toml`（fastapi/uvicorn/openai/`pipecat-ai[daily,openai,sentence,silero]`/dashscope；`letta` 后续）
+- [x] 创建 `ui/package.json`（Next.js 15 + `@daily-co/daily-js`）
 - [x] 创建 `docker-compose.yml`：服务 = `backend` / `ui` / `letta` / `vllm-asr` / `qdrant` / `redis`（ASR/Letta/UI 现为 stub，便于无 GPU 起栈）
 - [x] 写 `backend/src/fae/config.py`：基于 `pydantic-settings` 加载 `.env`
-- [x] 写 `.env.example`：DashScope Key / Letta URL / vLLM URL / Qdrant / Redis
+- [x] 写 `.env.example`：DashScope / Daily / Letta / vLLM / Qdrant / Redis
 - [x] 写 `deploy/scripts/setup.sh` + `start.sh`
 
 > **验收**：`./deploy/scripts/start.sh` 起来后，6 个容器全部 `healthy`。
@@ -37,36 +37,39 @@
 
 ### 1.2 FastAPI 入口 + 健康检查
 
-- [x] 实现 `backend/src/fae/api/`：暴露 `/health` `/ready` `/api/sessions`
+- [x] 实现 `backend/src/fae/api/`：暴露 `/health` `/ready` `/api/sessions` + voice/pipeline/chat/ws
 - [x] 把 uvicorn 启动命令固化到 `deploy/docker/backend.Dockerfile`
-- [x] 写最小 pytest：访问 `/health` 断言 200
-- [x] CI 占位：`.github/workflows/ci.yml` 跑 `pytest` + UI package 校验
+- [x] 写最小 pytest：访问 `/health` 断言 200（全量 coverage ≥ 80%）
+- [x] CI：`.github/workflows/ci.yml` 跑 `pytest` + UI lint/build
 
 > **验收**：`curl http://localhost:8000/health` 返回 `{"status":"ok"}`。
 
 ### 1.3 Pipecat 最小 Pipeline
 
-- [x] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（HTTP 占位，对接 compose ASR stub / 未来 vLLM）
-- [x] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py`（silent PCM stub；DashScope Realtime 后续）
+- [x] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（HTTP，对接 compose ASR stub / 未来 vLLM）
+- [x] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py` + `dashscope_tts.py`（有 Key 真实合成，否则静音）
 - [x] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（复用 `fae.llm` OpenAI 兼容客户端）
-- [x] 实现 `backend/src/fae/pipecat/transport.py`（LocalTransport；Daily/LiveKit 后续）
-- [x] 实现 `backend/src/fae/pipecat/bot.py`：文本模式 `user text → LLM → SentenceAggregator → TTS stub`
-- [x] 接入 VAD：`EnergyVAD` 默认可用；`try_silero_vad()` 在安装 `pipecat-ai[silero]` 后启用 Silero
-- [ ] SmartTurn v3（依赖完整 Pipecat Daily 路径，后续替换）
-- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列；UI「打断」取消 WS + TTS
+- [x] 实现 `backend/src/fae/pipecat/transport.py`（LocalTransport）+ `daily_rooms.py` / `daily_bot.py`（Daily）
+- [x] 实现 `backend/src/fae/pipecat/bot.py`：文本模式 `user text → LLM → SentenceAggregator → TTS`
+- [x] 接入 VAD：`EnergyVAD` + `SileroVADAnalyzer`（`pipecat-ai[silero]`）
+- [x] SmartTurn v3：Daily bot 使用默认 `UserTurnStrategies`（stop = LocalSmartTurnAnalyzerV3）
+- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()`；UI「打断」；`/api/voice/barge-in`
 - [x] 实现 SentenceAggregator，把流式 token 攒句
+- [x] Daily / Pipecat 全链路 bot：STT→LLM→DashScope TTS→Daily out
 
-> **冒烟测试**（M1-1）：浏览器说"你好"，听到 FAE 语音回放（Web Speech STT/TTS + `/ws/chat`；需 Chrome + 有效 LLM Key）。
-> **文本冒烟**：`POST /api/pipeline/text` 可跑通 token→sentence→audio stub。
+> **冒烟测试**（M1-1）：
+> - 浏览器路径：Web Speech STT/TTS + `/ws/chat`（默认）
+> - Daily 路径：UI 勾选「优先 Daily」+ 服务端 `DAILY_API_KEY` + `DASHSCOPE_API_KEY`
+> **文本冒烟**：`POST /api/pipeline/text`。
 
 ### 1.4 最小 UI
 
 - [x] `create-next-app@15` 初始化 `ui/`（App Router + Tailwind 4）
 - [x] 视觉体系：自定义 token + Syne/DM Sans（未锁 shadcn，避免模板感）
 - [x] 实现 `src/components/voice/VoiceOrb.tsx`：idle / listening / thinking / speaking 动效
-- [x] 实现 `src/components/voice/MicButton.tsx`：申请麦克风 / 启动 Web Speech
-- [x] 语音客户端：浏览器 Web Speech 路径（Daily SDK 预留在 `pipecat-client.ts`）
-- [x] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts`
+- [x] 实现 `src/components/voice/MicButton.tsx`：申请麦克风 / 启动 Web Speech / Daily 通话
+- [x] 语音客户端：浏览器 Web Speech + `@daily-co/daily-js` Daily 路径
+- [x] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts` + `daily-session.ts`
 - [x] 主对话页 `src/app/page.tsx`：VoiceOrb + 文本回退输入框 + Agent 设置
 
 > **冒烟测试**（M1-2）：浏览器完整对话 ≥ 3 轮（语音或文字回退均可）。
@@ -75,10 +78,10 @@
 
 - [x] `ui.Dockerfile` 多阶段构建（pnpm install → build → standalone output）
 - [x] `backend.Dockerfile` 多阶段构建（uv lock → 精简 runtime）
-- [x] `vllm-asr.Dockerfile`：Phase 1 使用 ASR stub（真 `Qwen3-ASR` GPU 镜像后续替换）
+- [x] `vllm-asr.Dockerfile`：Phase 1 使用 OpenAI-compatible ASR stub（真 GPU 镜像可替换同一接口）
 - [x] README 写启动流程：clone → cp .env → setup.sh → start.sh → open :3000
 
-> **Phase 1 收尾验收**：本地 `pnpm dev` + `./start.sh` 可演示；Docker 一键起（网络可拉镜像时）。
+> **Phase 1 收尾验收**：本地 `pnpm dev` + `./start.sh` 可演示；可选 Daily 增强路径；Docker 一键起。 **Phase 1 完成。**
 
 ---
 
@@ -331,7 +334,7 @@
 
 > 每个 Phase 收尾时更新本节，给团队一目了然的进度。
 
-- [ ] Phase 1 完成（M1-2 通过）
+- [x] Phase 1 完成（M1-2 通过；浏览器默认 + Daily 增强可选）
 - [ ] Phase 2 完成（M2-2 通过）
 - [ ] Phase 3 完成（M3-2 通过）
 - [ ] Phase 4 完成（M4-2 通过）
@@ -339,6 +342,6 @@
 
 ---
 
-**最后更新**：2026-07-12
+**最后更新**：2026-07-18
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR
