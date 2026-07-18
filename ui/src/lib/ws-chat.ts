@@ -3,7 +3,7 @@ import { backendWsBase } from "./config";
 
 export type WsServerMessage =
   | { type: "token"; content: string }
-  | { type: "done"; usage: unknown }
+  | { type: "done"; usage: unknown; session_id?: string }
   | { type: "error"; code: string; message: string };
 
 export type StreamHandlers = {

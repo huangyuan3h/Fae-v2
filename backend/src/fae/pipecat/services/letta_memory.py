@@ -7,7 +7,6 @@ import logging
 from fae.llm.types import ChatMessage, ChatRequest
 from fae.memory.fact_extract import facts_from_turn
 from fae.memory.protocol import MemoryClient
-from fae.memory.schemas import FactIn
 
 logger = logging.getLogger("fae.memory.service")
 
@@ -110,16 +109,7 @@ class LettaMemoryService:
                 await self._client.update_user(profile)
             for fact in facts:
                 await self._client.save_fact(fact)
-            # Index user utterance for keyword recall (M2-2).
-            trimmed = (user_text or "").strip()
-            if trimmed and len(trimmed) >= 2:
-                await self._client.save_fact(
-                    FactIn(
-                        content=trimmed,
-                        tags=["utterance"],
-                        session_id=session_id or None,
-                    )
-                )
+            # Topic recall uses append_recall / [recent_turns], not fact spam.
         except Exception:  # noqa: BLE001
             logger.exception("persist_turn failed session=%s", session_id)
 

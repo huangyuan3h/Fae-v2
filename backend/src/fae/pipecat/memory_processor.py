@@ -65,6 +65,7 @@ def build_memory_turn_processor(
 
     from pipecat.frames.frames import (
         Frame,
+        InterimTranscriptionFrame,
         LLMFullResponseEndFrame,
         LLMFullResponseStartFrame,
         LLMTextFrame,
@@ -82,8 +83,12 @@ def build_memory_turn_processor(
             await super().process_frame(frame, direction)
             if isinstance(frame, TranscriptionFrame):
                 text = (frame.text or "").strip()
-                if text and (frame.finalized or not self._user):
+                # Prefer finalized transcripts; allow first non-empty as bootstrap.
+                if text and (getattr(frame, "finalized", False) or not self._user):
                     self._user = text
+            elif isinstance(frame, InterimTranscriptionFrame):
+                # Ignore interim — wait for final TranscriptionFrame.
+                pass
             elif isinstance(frame, LLMFullResponseStartFrame):
                 self._assistant_parts = []
             elif isinstance(frame, LLMTextFrame):
@@ -92,7 +97,9 @@ def build_memory_turn_processor(
             elif isinstance(frame, LLMFullResponseEndFrame):
                 assistant = "".join(self._assistant_parts).strip()
                 user = self._user
+                # Clear turn state so the next user utterance cannot reuse this one.
                 self._assistant_parts = []
+                self._user = ""
                 if user:
                     await persist_daily_turn(
                         memory=memory,

@@ -105,17 +105,23 @@ async def run_daily_bot(
     )
 
     mem_proc = build_memory_turn_processor(memory, sid)
+    # Place memory processor right after LLM so TranscriptionFrame + LLMTextFrame
+    # are observed before TTS/output sinks can drop them.
     stages: list = [
         transport.input(),
         stt,
         user_agg,
         llm,
-        tts,
-        transport.output(),
-        assistant_agg,
     ]
     if mem_proc is not None:
         stages.append(mem_proc)
+    stages.extend(
+        [
+            tts,
+            transport.output(),
+            assistant_agg,
+        ]
+    )
 
     pipeline = Pipeline(stages)
 

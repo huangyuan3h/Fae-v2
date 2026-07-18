@@ -29,13 +29,22 @@ export type ChatLine = {
   content: string;
 };
 
+function makeClientSessionId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export function useVoiceSession() {
   const [config, setConfigState] = useState<AgentConfig>(DEFAULT_CONFIG);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // Stable client id for memory recall buckets (available before /api/voice/session).
+  const [sessionId] = useState(makeClientSessionId);
+  const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
   const [preferDaily, setPreferDaily] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
@@ -46,18 +55,23 @@ export function useVoiceSession() {
   const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
   const connectingDaily = useRef(false);
-  const sessionIdRef = useRef<string | null>(null);
+  const memorySessionRef = useRef(sessionId);
+  const voiceSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
-    sessionIdRef.current = sessionId;
+    memorySessionRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    voiceSessionRef.current = voiceSessionId;
+  }, [voiceSessionId]);
 
   useEffect(() => {
     setConfigState(loadConfig());
     setSupport(speechSupported());
     createVoiceSession({ preferDaily: false })
       .then((s) => {
-        setSessionId(s.sessionId);
+        setVoiceSessionId(s.sessionId);
         setMode(s.mode);
       })
       .catch(() => {
@@ -106,7 +120,7 @@ export function useVoiceSession() {
         preferDaily: true,
         config,
       });
-      setSessionId(session.sessionId);
+      setVoiceSessionId(session.sessionId);
       setMode(session.mode);
       if (session.mode !== "daily" || !session.roomUrl || !session.token) {
         setError(session.detail || "服务端未启用 Daily，已保持浏览器模式");
@@ -178,7 +192,7 @@ export function useVoiceSession() {
               setError(`${code}: ${message}`);
             },
           },
-          sessionIdRef.current,
+          memorySessionRef.current,
         );
 
         const reply = assistantBuf.current.trim();
@@ -261,7 +275,8 @@ export function useVoiceSession() {
     stopSpeaking();
     wsRef.current.cancel();
     sttRef.current.stop();
-    void postBargeIn(sessionIdRef.current);
+    // Barge-in hits VoiceRuntime registry keyed by server voice session id.
+    void postBargeIn(voiceSessionRef.current ?? memorySessionRef.current);
     setOrb(dailyConnected ? "listening" : "idle");
   }, [dailyConnected, postBargeIn]);
 
@@ -273,6 +288,7 @@ export function useVoiceSession() {
     partial,
     error,
     sessionId,
+    voiceSessionId,
     mode,
     preferDaily,
     setPreferDaily,

@@ -45,4 +45,19 @@ async def test_memory_turn_processor_persists_on_llm_end(tmp_path: Path) -> None
     assert turns
     assert "Python" in turns[0].user_text
     assert "好的" in turns[0].assistant_text
+
+    # Second turn must not reuse the previous user text after clear.
+    await proc.process_frame(
+        TranscriptionFrame(
+            text="周末爬山", user_id="u", timestamp="2", finalized=True
+        ),
+        FrameDirection.DOWNSTREAM,
+    )
+    await proc.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+    await proc.process_frame(LLMTextFrame(text="去吧"), FrameDirection.DOWNSTREAM)
+    await proc.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+    turns2 = await client.list_recall("p1")
+    assert len(turns2) == 2
+    assert turns2[-1].user_text == "周末爬山"
+    assert "Python" not in turns2[-1].user_text
     await client.close()
