@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
 from fae.memory.letta_client import LettaMemoryClient
+from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, UserProfile
 
 
@@ -59,50 +62,25 @@ async def test_ensure_agent_create_and_recall() -> None:
 
 
 @pytest.mark.asyncio
-async def test_append_recall_falls_back_to_current_block() -> None:
-    state = {"current": ""}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/v1/health"):
-            return httpx.Response(200, json={"status": "ok"})
-        if path.rstrip("/").endswith("/v1/agents") and request.method == "GET":
-            return httpx.Response(
-                200, json=[{"id": "agent-1", "name": "fae-main"}]
-            )
-        if path.endswith("/archival-memory") and request.method == "POST":
-            return httpx.Response(500, json={"error": "no archival"})
-        if path.endswith("/passages") and request.method == "POST":
-            return httpx.Response(500, json={"error": "no passages"})
-        if "/core-memory/blocks/current" in path and request.method == "GET":
-            return httpx.Response(
-                200, json={"label": "current", "value": state["current"]}
-            )
-        if "/core-memory/blocks/current" in path and request.method == "PATCH":
-            body = request.read()
-            import json
-
-            state["current"] = json.loads(body)["value"]
-            return httpx.Response(200, json={"label": "current", "value": state["current"]})
-        if "/core-memory/blocks/human" in path and request.method == "GET":
-            return httpx.Response(200, json={"label": "human", "value": ""})
-        if "archival-memory" in path and request.method == "GET":
-            return httpx.Response(200, json=[])
-        return httpx.Response(404, json={"error": path})
-
-    client = LettaMemoryClient("http://letta.test")
+async def test_append_recall_uses_shared_store(tmp_path: Path) -> None:
+    recall = RecallStore(tmp_path / "letta-recall.db")
+    client = LettaMemoryClient(
+        "http://letta.test",
+        recall_store=recall,
+    )
     await client._http.aclose()
     client._http = httpx.AsyncClient(
         base_url="http://letta.test",
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(_handler),
         timeout=3.0,
     )
     await client.ensure_agent()
     await client.append_recall("s1", "Python 项目", "嗯")
-    assert "Python" in state["current"]
     turns = await client.list_recall("s1")
     assert turns and "Python" in turns[0].user_text
+    assert recall.count_hot("s1") == 1
     await client.close()
+    recall.close()
 
 
 @pytest.mark.asyncio

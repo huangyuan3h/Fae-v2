@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     letta_server_password: str = ""
     # Relative to repo root unless absolute
     letta_embedded_path: str = ".data/fae-memory.db"
+    recall_db_path: str = ".data/fae-recall.db"
+    recall_max_turns: int = Field(default=30, ge=2, description="Hot recall window")
+    recall_compact_batch: int = Field(default=10, ge=1)
+    core_current_char_limit: int = Field(default=2000, ge=200)
+    # Force stub archival even if Qdrant is up (tests / offline)
+    archival_prefer_stub: bool = False
 
     # vLLM self-hosted (optional)
     vllm_asr_url: str = "http://localhost:8001"

@@ -22,6 +22,10 @@ class MemoryClient(Protocol):
 
     async def update_user(self, profile: UserProfile) -> UserProfile: ...
 
+    async def get_block(self, label: str) -> str: ...
+
+    async def set_block(self, label: str, value: str) -> None: ...
+
     async def append_recall(
         self,
         session_id: str,

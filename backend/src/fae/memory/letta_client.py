@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import httpx
 
+from fae.memory.core_budget import truncate_current
+from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.letta")
@@ -59,12 +61,16 @@ class LettaMemoryClient:
         model: str = "openai/gpt-4o-mini",
         embedding: str = "openai/text-embedding-3-small",
         timeout_s: float = 15.0,
+        recall_store: RecallStore | None = None,
+        current_char_limit: int = 2000,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.agent_name = agent_name
         self.model = model
         self.embedding = embedding
         self._agent_id: str | None = None
+        self._recall = recall_store
+        self._current_char_limit = current_char_limit
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -155,11 +161,20 @@ class LettaMemoryClient:
 
     async def _set_block(self, label: str, value: str) -> None:
         agent_id = self._require_agent()
+        text = value
+        if label == "current":
+            text = truncate_current(value, char_limit=self._current_char_limit)
         resp = await self._http.patch(
             f"/v1/agents/{agent_id}/core-memory/blocks/{label}",
-            json={"value": value},
+            json={"value": text},
         )
         resp.raise_for_status()
+
+    async def get_block(self, label: str) -> str:
+        return await self._get_block(label)
+
+    async def set_block(self, label: str, value: str) -> None:
+        await self._set_block(label, value)
 
     async def save_fact(self, fact: FactIn) -> FactOut:
         agent_id = self._require_agent()
@@ -283,37 +298,18 @@ class LettaMemoryClient:
         await self._set_block("human", text)
         return profile
 
+    def _require_recall(self) -> RecallStore:
+        if self._recall is None:
+            raise RuntimeError("RecallStore not configured on LettaMemoryClient")
+        return self._recall
+
     async def append_recall(
         self,
         session_id: str,
         user_text: str,
         assistant_text: str,
     ) -> None:
-        sid = (session_id or "").strip() or "default"
-        text = f"User: {user_text}\nAssistant: {assistant_text}"
-        agent_id = self._require_agent()
-        payload = {
-            "text": text,
-            "tags": ["recall", sid],
-            "metadata": {"session_id": sid, "kind": "recall"},
-        }
-        for path in (
-            f"/v1/agents/{agent_id}/archival-memory",
-            f"/v1/agents/{agent_id}/passages",
-        ):
-            try:
-                resp = await self._http.post(path, json=payload)
-            except httpx.HTTPError:
-                continue
-            if resp.status_code < 400:
-                return
-        # Fallback: rolling summary on current block.
-        current = await self._get_block("current")
-        entry = f"[{sid}] {text}"
-        merged = f"{current.rstrip()}\n{entry}".strip() if current else entry
-        if len(merged) > 4000:
-            merged = merged[-4000:]
-        await self._set_block("current", merged)
+        self._require_recall().append(session_id, user_text, assistant_text)
 
     async def list_recall(
         self,
@@ -321,42 +317,7 @@ class LettaMemoryClient:
         *,
         limit: int = 20,
     ) -> list[RecallTurn]:
-        """Best-effort: search archival tagged with session; else parse current."""
-        sid = (session_id or "").strip() or "default"
-        hits = await self.search(sid, top_k=limit)
-        turns: list[RecallTurn] = []
-        for hit in hits:
-            if "recall" not in (hit.tags or []) and hit.session_id != sid:
-                # Keep lines that look like recall transcripts.
-                if not hit.content.startswith("User:"):
-                    continue
-            user_text, assistant_text = _split_recall_text(hit.content)
-            turns.append(
-                RecallTurn(
-                    id=hit.id,
-                    session_id=sid,
-                    user_text=user_text,
-                    assistant_text=assistant_text,
-                    created_at=hit.created_at,
-                )
-            )
-        if turns:
-            return turns[-limit:]
-        current = await self._get_block("current")
-        for line in current.splitlines():
-            if f"[{sid}]" not in line:
-                continue
-            body = line.split(f"[{sid}]", 1)[-1].strip()
-            user_text, assistant_text = _split_recall_text(body)
-            turns.append(
-                RecallTurn(
-                    id=str(uuid4()),
-                    session_id=sid,
-                    user_text=user_text,
-                    assistant_text=assistant_text,
-                )
-            )
-        return turns[-limit:]
+        return self._require_recall().list_hot(session_id, limit=limit)
 
     async def recall_for_prompt(
         self,
@@ -374,11 +335,7 @@ class LettaMemoryClient:
         if current:
             parts.append(f"[current]\n{current}")
         if session_id:
-            try:
-                turns = await self.list_recall(session_id, limit=recent_limit)
-            except Exception:  # noqa: BLE001
-                logger.exception("list_recall failed")
-                turns = []
+            turns = await self.list_recall(session_id, limit=recent_limit)
             if turns:
                 lines = [
                     f"User: {t.user_text}\nAssistant: {t.assistant_text}"
@@ -405,14 +362,3 @@ class LettaMemoryClient:
     async def close(self) -> None:
         await self._http.aclose()
         logger.debug("LettaMemoryClient.close base_url=%s", self.base_url)
-
-
-def _split_recall_text(text: str) -> tuple[str, str]:
-    raw = (text or "").strip()
-    if "\nAssistant:" in raw:
-        user_part, asst_part = raw.split("\nAssistant:", 1)
-        user_text = user_part.replace("User:", "", 1).strip()
-        return user_text, asst_part.strip()
-    if raw.startswith("User:"):
-        return raw.replace("User:", "", 1).strip(), ""
-    return raw, ""

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from fae.llm.types import ChatMessage, ChatRequest
 from fae.memory.fact_extract import facts_from_turn
 from fae.memory.protocol import MemoryClient
+
+if TYPE_CHECKING:
+    from fae.memory.archival import ArchivalBackend
+    from fae.memory.compaction import MemoryCompactor
 
 logger = logging.getLogger("fae.memory.service")
 
@@ -17,8 +22,16 @@ _MEMORY_TAG_CLOSE = "</fae_memory>"
 class LettaMemoryService:
     """Fetch / persist memories around an LLM turn."""
 
-    def __init__(self, client: MemoryClient | None = None) -> None:
+    def __init__(
+        self,
+        client: MemoryClient | None = None,
+        *,
+        archival: ArchivalBackend | None = None,
+        compactor: MemoryCompactor | None = None,
+    ) -> None:
         self._client = client
+        self._archival = archival
+        self._compactor = compactor
 
     @property
     def enabled(self) -> bool:
@@ -27,6 +40,14 @@ class LettaMemoryService:
     @property
     def client(self) -> MemoryClient | None:
         return self._client
+
+    @property
+    def archival(self) -> ArchivalBackend | None:
+        return self._archival
+
+    @property
+    def compactor(self) -> MemoryCompactor | None:
+        return self._compactor
 
     async def recall_context(
         self,
@@ -38,7 +59,7 @@ class LettaMemoryService:
         if self._client is None:
             return ""
         try:
-            return await self._client.recall_for_prompt(
+            base = await self._client.recall_for_prompt(
                 query,
                 session_id=session_id,
                 top_k=top_k,
@@ -47,6 +68,35 @@ class LettaMemoryService:
         except Exception:  # noqa: BLE001
             logger.exception("recall_context failed")
             return ""
+        return await self._merge_archival(
+            base, query, session_id=session_id, top_k=top_k
+        )
+
+    async def _merge_archival(
+        self,
+        base: str,
+        query: str,
+        *,
+        session_id: str | None,
+        top_k: int,
+    ) -> str:
+        if self._archival is None:
+            return base
+        if not (query or "").strip():
+            return base
+        try:
+            hits = await self._archival.search(
+                query, top_k=top_k, session_id=session_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("archival search failed")
+            return base
+        if not hits:
+            return base
+        lines = "\n".join(f"- {h.content}" for h in hits)
+        if "[facts]" in base:
+            return f"{base}\n{lines}"
+        return f"{base}\n\n[facts]\n{lines}".strip()
 
     def inject_into_request(self, request: ChatRequest, memory_text: str) -> ChatRequest:
         """Return a copy of request with memory as a leading system message."""
@@ -109,7 +159,8 @@ class LettaMemoryService:
                 await self._client.update_user(profile)
             for fact in facts:
                 await self._client.save_fact(fact)
-            # Topic recall uses append_recall / [recent_turns], not fact spam.
+            if self._compactor is not None:
+                await self._compactor.maybe_compact(session_id)
         except Exception:  # noqa: BLE001
             logger.exception("persist_turn failed session=%s", session_id)
 

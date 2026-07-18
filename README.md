@@ -22,6 +22,7 @@
 | DashScope Qwen3-TTS | ✅ 需 `DASHSCOPE_API_KEY` |
 | 长期记忆（Letta remote / embedded SQLite） | ✅ Phase 2.1 · M2-1 |
 | 会话 Recall + Daily 记忆注入 | ✅ Phase 2.2 · M2-2 |
+| 统一 Recall + Archival 压缩 | ✅ Phase 2.3（超 N 轮 → Qdrant/`fae_archival`；`GET /api/memory/stats`） |
 
 ## 快速开始
 

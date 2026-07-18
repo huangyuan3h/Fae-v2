@@ -6,15 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from fae.memory.embedded import EmbeddedMemoryClient
-from fae.memory.schemas import FactIn, UserProfile
-from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.llm.types import ChatMessage, ChatRequest, LLMConfig
+from fae.memory.schemas import FactIn, UserProfile
+from memory_helpers import make_embedded
 
 
 @pytest.mark.asyncio
 async def test_embedded_roundtrip(tmp_path: Path) -> None:
-    client = EmbeddedMemoryClient(tmp_path / "m.db", agent_name="fae-main")
+    client, _recall, _service = make_embedded(tmp_path, name="m.db")
     await client.ensure_agent()
     assert client.agent_id
 
@@ -42,9 +41,8 @@ async def test_embedded_roundtrip(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_service_inject_and_persist(tmp_path: Path) -> None:
-    client = EmbeddedMemoryClient(tmp_path / "m2.db")
+    client, _recall, service = make_embedded(tmp_path, name="m2.db")
     await client.ensure_agent()
-    service = LettaMemoryService(client)
 
     await service.persist_turn(
         session_id="s",

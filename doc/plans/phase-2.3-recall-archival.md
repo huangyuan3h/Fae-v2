@@ -1,6 +1,6 @@
 # Phase 2.3 · 统一 Recall + 首版 Archival
 
-> Status: ready to implement  
+> Status: implemented  
 > Base: `init` @ `e8fa7a0` (clean, pushed)
 
 ## Review (current HEAD)

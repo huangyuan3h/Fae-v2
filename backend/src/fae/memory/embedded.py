@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fae.memory.core_budget import truncate_current
+from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.embedded")
@@ -26,12 +28,21 @@ _DEFAULT_CURRENT = ""
 
 
 class EmbeddedMemoryClient:
-    """Local persistence for core blocks + facts."""
+    """Local persistence for core blocks + facts; recall via shared RecallStore."""
 
-    def __init__(self, db_path: str | Path, *, agent_name: str = "fae-main") -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        agent_name: str = "fae-main",
+        recall_store: RecallStore | None = None,
+        current_char_limit: int = 2000,
+    ) -> None:
         self.db_path = Path(db_path)
         self.agent_name = agent_name
         self._agent_id: str | None = None
+        self._recall = recall_store
+        self._current_char_limit = current_char_limit
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -63,16 +74,6 @@ class EmbeddedMemoryClient:
               session_id TEXT,
               created_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS recall_turns (
-              id TEXT PRIMARY KEY,
-              agent_id TEXT NOT NULL,
-              session_id TEXT NOT NULL,
-              user_text TEXT NOT NULL,
-              assistant_text TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_recall_session
-              ON recall_turns (agent_id, session_id, created_at);
             """
         )
         self._conn.commit()
@@ -119,14 +120,23 @@ class EmbeddedMemoryClient:
 
     def _set_block(self, label: str, value: str) -> None:
         agent_id = self._require_agent()
+        text = value
+        if label == "current":
+            text = truncate_current(value, char_limit=self._current_char_limit)
         self._conn.execute(
             """
             INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)
             ON CONFLICT(agent_id, label) DO UPDATE SET value = excluded.value
             """,
-            (agent_id, label, value),
+            (agent_id, label, text),
         )
         self._conn.commit()
+
+    async def get_block(self, label: str) -> str:
+        return self._get_block(label)
+
+    async def set_block(self, label: str, value: str) -> None:
+        self._set_block(label, value)
 
     async def save_fact(self, fact: FactIn) -> FactOut:
         agent_id = self._require_agent()
@@ -222,30 +232,18 @@ class EmbeddedMemoryClient:
         self._set_block("human", text)
         return profile
 
+    def _require_recall(self) -> RecallStore:
+        if self._recall is None:
+            raise RuntimeError("RecallStore not configured on EmbeddedMemoryClient")
+        return self._recall
+
     async def append_recall(
         self,
         session_id: str,
         user_text: str,
         assistant_text: str,
     ) -> None:
-        agent_id = self._require_agent()
-        sid = (session_id or "").strip() or "default"
-        self._conn.execute(
-            """
-            INSERT INTO recall_turns
-              (id, agent_id, session_id, user_text, assistant_text, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(uuid.uuid4()),
-                agent_id,
-                sid,
-                user_text or "",
-                assistant_text or "",
-                datetime.now(UTC).isoformat(),
-            ),
-        )
-        self._conn.commit()
+        self._require_recall().append(session_id, user_text, assistant_text)
 
     async def list_recall(
         self,
@@ -253,30 +251,7 @@ class EmbeddedMemoryClient:
         *,
         limit: int = 20,
     ) -> list[RecallTurn]:
-        agent_id = self._require_agent()
-        sid = (session_id or "").strip() or "default"
-        rows = self._conn.execute(
-            """
-            SELECT id, session_id, user_text, assistant_text, created_at
-            FROM recall_turns
-            WHERE agent_id = ? AND session_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (agent_id, sid, max(1, limit)),
-        ).fetchall()
-        # Return chronological order for prompt readability.
-        turns = [
-            RecallTurn(
-                id=row["id"],
-                session_id=row["session_id"],
-                user_text=row["user_text"],
-                assistant_text=row["assistant_text"],
-                created_at=datetime.fromisoformat(row["created_at"]),
-            )
-            for row in reversed(rows)
-        ]
-        return turns
+        return self._require_recall().list_hot(session_id, limit=limit)
 
     async def recall_for_prompt(
         self,

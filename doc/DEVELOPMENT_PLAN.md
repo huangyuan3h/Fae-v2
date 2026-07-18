@@ -114,16 +114,16 @@
 - [x] 接到 Daily：`seed_daily_memory` + `MemoryTurnProcessor`（同一 `recall_context` / `persist_turn`）
 - [x] 每次 LLM 调用前注入相关记忆（含 `[recent_turns]` + facts；top-k=10）
 - [x] 每轮结束 `append_recall` + 启发式身份事实（按 `session_id` 分桶；话题靠 recent_turns）
-- [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）— 见 2.3
+- [x] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant / stub）— 见 2.3
 
 > **冒烟测试**（M2-2）：连续聊多个话题后问"我刚才提到 Python 那个项目怎么样"。
 > `LETTA_MODE=embedded` 即可本地验收。
 
 ### 2.3 三层记忆 + Episodic 扩展
 
-- [ ] Core Memory：persona / user / current 三个 block，监控 token 占用
-- [ ] Recall Memory：SQLite + session 分桶
-- [ ] Archival Memory：Qdrant 集合 `fae_archival`，embedding 用 `bge-m3` 或 `text-embedding-v3`
+- [x] Core Memory：persona / human / current；`GET /api/memory/stats` + current 字数预算
+- [x] Recall Memory：共享 SQLite `RecallStore` + session 分桶（hot window）
+- [x] Archival Memory：Qdrant 集合 `fae_archival`（不可用时 stub）；超 N 轮 compact
 - [ ] **Episodic Memory 扩展**：实现 `backend/src/fae/memory/episodic.py`
   - [ ] 关键事件检测（"用户搬家"/"换了工作"等 LLM 标记）
   - [ ] 事件 ↔ 记忆的双向链接

@@ -44,7 +44,7 @@ packages = ["src/fae"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
 addopts = [
     "--strict-markers",

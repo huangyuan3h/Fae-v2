@@ -97,6 +97,8 @@ async def test_ws_persists_name_and_injects_on_next_turn(tmp_path: Path) -> None
     settings = Settings(
         letta_mode="embedded",
         letta_embedded_path=str(tmp_path / "ws-mem.db"),
+        recall_db_path=str(tmp_path / "ws-mem-recall.db"),
+        archival_prefer_stub=True,
     )
     app = create_app(settings=settings, llm_client=LLMClient(provider=fake))
 
@@ -117,6 +119,8 @@ async def test_ws_multi_topic_recall_includes_prior_topic(tmp_path: Path) -> Non
     settings = Settings(
         letta_mode="embedded",
         letta_embedded_path=str(tmp_path / "ws-m22.db"),
+        recall_db_path=str(tmp_path / "ws-m22-recall.db"),
+        archival_prefer_stub=True,
     )
     app = create_app(settings=settings, llm_client=LLMClient(provider=fake))
     sid = "multi-topic"

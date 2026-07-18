@@ -29,7 +29,8 @@ from fae.llm import (
     LLMError,
     OpenAICompatibleProvider,
 )
-from fae.memory.factory import create_memory_client
+from fae.memory.core_budget import core_stats_from_client
+from fae.memory.factory import MemoryStack, create_memory_stack
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
@@ -54,29 +55,44 @@ async def lifespan(app: FastAPI):
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
         try:
-            mem_client = await create_memory_client(settings)
-            if mem_client is not None:
-                app.state.memory = LettaMemoryService(mem_client)
-                app.state.memory_client = mem_client
+            stack = await create_memory_stack(settings)
+            app.state.memory_stack = stack
+            app.state.recall_store = stack.recall
+            app.state.archival = stack.archival
+            if stack.client is not None:
+                app.state.memory = LettaMemoryService(
+                    stack.client,
+                    archival=stack.archival,
+                    compactor=stack.compactor,
+                )
+                app.state.memory_client = stack.client
             else:
                 app.state.memory = None
                 app.state.memory_client = None
         except Exception:  # noqa: BLE001
             logger.exception("Memory bootstrap failed — continuing without memory")
+            # create_memory_stack already closes partial resources on raise.
             app.state.memory = None
             app.state.memory_client = None
+            app.state.memory_stack = MemoryStack()
+            app.state.recall_store = None
+            app.state.archival = None
 
     yield
 
     runtime = getattr(app.state, "voice_runtime", None)
     if runtime is not None:
         await runtime.shutdown()
-    mem_client = getattr(app.state, "memory_client", None)
-    if mem_client is not None:
-        try:
-            await mem_client.close()
-        except Exception:  # noqa: BLE001
-            logger.exception("memory_client.close failed")
+    stack = getattr(app.state, "memory_stack", None)
+    if isinstance(stack, MemoryStack):
+        await stack.close()
+    else:
+        mem_client = getattr(app.state, "memory_client", None)
+        if mem_client is not None:
+            try:
+                await mem_client.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("memory_client.close failed")
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -127,6 +143,9 @@ def create_app(
       app.state.voice_runtime  — Daily bot + barge-in registry
       app.state.memory         — LettaMemoryService | None
       app.state.memory_client  — underlying MemoryClient | None
+      app.state.memory_stack   — MemoryStack
+      app.state.recall_store   — RecallStore | None
+      app.state.archival       — ArchivalBackend | None
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -142,6 +161,9 @@ def create_app(
     app.state.voice_runtime = VoiceRuntime()
     app.state.memory = None
     app.state.memory_client = None
+    app.state.memory_stack = MemoryStack()
+    app.state.recall_store = None
+    app.state.archival = None
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
@@ -269,6 +291,28 @@ def create_app(
         return SessionOut(
             id=session.id, created_at=session.created_at, mode=session.mode
         )
+
+    @app.get("/api/memory/stats")
+    async def memory_stats(request: Request) -> dict:
+        """Core block sizes, hot recall count, and archival health."""
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        client = memory.client if memory else None
+        recall = getattr(request.app.state, "recall_store", None)
+        archival = getattr(request.app.state, "archival", None)
+        core = await core_stats_from_client(client)
+        archival_status = "off"
+        if archival is not None:
+            try:
+                archival_status = await archival.health()
+            except Exception:  # noqa: BLE001
+                archival_status = "down"
+        return {
+            "recall_turns": recall.total_hot() if recall is not None else 0,
+            "core": core,
+            "archival": archival_status,
+        }
 
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)

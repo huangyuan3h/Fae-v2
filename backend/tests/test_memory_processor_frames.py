@@ -13,16 +13,14 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from fae.memory.embedded import EmbeddedMemoryClient
 from fae.pipecat.memory_processor import build_memory_turn_processor
-from fae.pipecat.services.letta_memory import LettaMemoryService
+from memory_helpers import make_embedded
 
 
 @pytest.mark.asyncio
 async def test_memory_turn_processor_persists_on_llm_end(tmp_path: Path) -> None:
-    client = EmbeddedMemoryClient(tmp_path / "proc.db")
+    client, _recall, service = make_embedded(tmp_path, name="proc.db")
     await client.ensure_agent()
-    service = LettaMemoryService(client)
     proc = build_memory_turn_processor(service, "p1")
     assert proc is not None
 
