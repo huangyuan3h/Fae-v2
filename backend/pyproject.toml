@@ -14,9 +14,9 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
     "python-dotenv>=1.0",
-    "openai>=1.60", # OpenAI-compatible client; used for Qwen3 / DeepSeek
-    "httpx>=0.28", # LLM HTTP client
-    "websockets>=14.0", # WS client for tests + explicit uvicorn peer
+    "openai>=1.60",          # OpenAI-compatible client; used for Qwen3 / DeepSeek
+    "httpx>=0.28",           # LLM HTTP client
+    "websockets>=14.0",      # WS client for tests + explicit uvicorn peer
     # Pipecat + voice stack — added in later checkpoints
     # "pipecat-ai[daily,openai,silero,sentence]>=0.0.50",
     # "letta>=0.50",
@@ -24,9 +24,6 @@ dependencies = [
     # "apscheduler>=3.10",
     # "qdrant-client>=1.12",
     # "redis>=5.2",
-    "pipecat-ai[daily,openai,sentence,silero]>=0.0.80",
-    "dashscope>=1.20",
-    "aiohttp>=3.10",
 ]
 
 [project.optional-dependencies]
@@ -77,9 +74,6 @@ omit = [
     # the FastAPI app factory and all HTTP routes.
     "src/fae/__init__.py",
     "src/fae/llm/__init__.py",
-    # Live Daily / Pipecat bot — covered by integration, not unit coverage.
-    "src/fae/pipecat/daily_bot.py",
-    "src/fae/pipecat/daily_rooms.py",
     "*/tests/*",
 ]
 

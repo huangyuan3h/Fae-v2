@@ -19,8 +19,8 @@ class LLMConfig(BaseModel):
     """
 
     base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode",
-        description="OpenAI-compatible chat completions endpoint.",
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        description="OpenAI-compatible base URL (include /v1).",
     )
     api_key: str = Field(min_length=1, description="Provider API key.")
     model: str = Field(default="qwen3-max", description="Model name to invoke.")

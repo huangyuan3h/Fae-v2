@@ -8,7 +8,7 @@
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)
 
-## Phase 1（完整）
+## Phase 1（完整）· Phase 2（脚手架就绪）
 
 | 能力 | 状态 |
 |---|---|
@@ -20,6 +20,7 @@
 | 浏览器语音（Web Speech + `/ws/chat`） | ✅ 默认 |
 | Daily + Pipecat 全链路（可选） | ✅ 需 `DAILY_API_KEY` |
 | DashScope Qwen3-TTS | ✅ 需 `DASHSCOPE_API_KEY` |
+| `fae.memory` + Letta client 脚手架 | ✅ Phase 2 起点 |
 
 ## 快速开始
 

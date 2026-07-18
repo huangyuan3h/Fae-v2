@@ -30,6 +30,7 @@ from fae.llm import (
     OpenAICompatibleProvider,
 )
 from fae.sessions import SessionStore
+from fae.voice_runtime import VoiceRuntime
 
 logger = logging.getLogger("fae")
 
@@ -39,7 +40,8 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown hooks.
 
     - Log the settings bound on app.state (set by create_app).
-    - Place to wire up Pipecat transport, Letta client, scheduler, etc. later.
+    - Cancel in-flight Daily bots on shutdown.
+    - Phase 2: wire Letta client / consolidation scheduler here.
     """
     settings: Settings = app.state.settings
     logging.basicConfig(
@@ -48,6 +50,9 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Starting %s (env=%s)", settings.app_name, settings.app_env)
     yield
+    runtime = getattr(app.state, "voice_runtime", None)
+    if runtime is not None:
+        await runtime.shutdown()
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -92,8 +97,11 @@ def create_app(
     """App factory — keeps imports side-effect free for tests.
 
     Per-app state (no module-level mutable singleton):
-      app.state.settings    — Settings used by lifespan + /ready
-      app.state.llm_client  — LLMClient shared by HTTP + WebSocket
+      app.state.settings       — Settings used by lifespan + /ready
+      app.state.llm_client     — LLMClient shared by HTTP + WebSocket
+      app.state.sessions       — SessionStore
+      app.state.voice_runtime  — Daily bot + barge-in registry
+      app.state.memory         — Phase 2 Letta client (None until wired)
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -106,6 +114,8 @@ def create_app(
         provider=OpenAICompatibleProvider()
     )
     app.state.sessions = SessionStore()
+    app.state.voice_runtime = VoiceRuntime()
+    app.state.memory = None
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(

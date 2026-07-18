@@ -1,14 +1,9 @@
-"""Voice pipeline scaffolding (Phase 1.3 minimal attempt).
+"""Voice / text pipeline package.
 
-This package mirrors the eventual Pipecat layout without pulling the full
-`pipecat-ai` dependency yet (heavy Daily/Silero wheels). Components here are
-plain async adapters that unit-test cleanly and can later wrap FrameProcessors.
-
-Pipeline shape (text-mode smoke):
-  user text → Qwen3LLM → SentenceAggregator → (TTS stub) → events
-
-Voice path (ASR / Daily transport / Silero VAD) is stubbed with clear
-interfaces for the next checkpoint.
+Layouts:
+  - Text smoke: `TextPipelineBot` (LLM → SentenceAggregator → TTS stub)
+  - Daily WebRTC: `daily_bot.run_daily_bot` (Silero + SmartTurn + STT/LLM/TTS)
+  - Phase 2: inject `LettaMemoryService` upstream of the LLM on both paths
 """
 
 from fae.pipecat.barge_in import BargeInController

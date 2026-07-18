@@ -89,19 +89,29 @@
 
 > 目标：让 FAE 真正"记得住"——三层记忆 + 事件日志 + 用户可见的记忆浏览器。
 
+### 准备（Phase 1 收尾已完成）
+
+- [x] `fae.memory` 包 + `FactIn` / `FactOut` / `UserProfile` schema
+- [x] `LettaMemoryClient` / `LettaMemoryService` 脚手架（方法待实现）
+- [x] `app.state.memory` 挂载点 + `VoiceRuntime`（session ↔ barge-in / Daily task）
+- [x] 统一 LLM `base_url` 默认含 `/v1`；打断路径接通 `/api/voice/barge-in`
+
+> **下一刀**：实现 `ensure_agent` + 三个 memory tools，把 `app.state.memory` 接到 lifespan。
+
 ### 2.1 Letta 接入
 
 - [ ] 启动 Letta server（SQLite 持久化到 `/data/letta.db`）
 - [ ] 创建首个 agent：`fae-main`，挂上 persona / user / current 三块 core memory
-- [ ] 实现 `backend/src/fae/memory/letta_client.py`：封装 Letta REST API
-- [ ] 写三个最基础工具：`memory_save_fact` / `memory_search` / `memory_update_user`
-- [ ] 写 Pydantic schema：`FactIn` / `FactOut` / `UserProfile`
+- [x] 脚手架 `backend/src/fae/memory/letta_client.py`（REST 封装待填）
+- [ ] 实现三个最基础工具：`memory_save_fact` / `memory_search` / `memory_update_user`
+- [x] Pydantic schema：`FactIn` / `FactOut` / `UserProfile`
 
 > **冒烟测试**（M2-1）：说"我叫小明"，关掉浏览器，重开，问"我叫什么" → 答"小明"。
 
 ### 2.2 Pipecat Memory Service
 
-- [ ] 实现 `backend/src/fae/pipecat/services/letta_memory.py`：注入到 LLM 上游
+- [x] 脚手架 `backend/src/fae/pipecat/services/letta_memory.py`（注入接口已定）
+- [ ] 接到浏览器 `Qwen3LLMService` + Daily `OpenAILLMService` 上游（同一 `recall_context`）
 - [ ] 每次 LLM 调用前自动注入 top-k=10 相关历史记忆
 - [ ] 每轮对话结束落库到 Recall Memory（带 session_id + 时间戳）
 - [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）

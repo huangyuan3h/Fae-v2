@@ -14,7 +14,7 @@ from fae.llm.types import (
 
 def test_llm_config_defaults() -> None:
     cfg = LLMConfig(api_key="sk-test")
-    assert cfg.base_url == "https://dashscope.aliyuncs.com/compatible-mode"
+    assert cfg.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert cfg.model == "qwen3-max"
 
 

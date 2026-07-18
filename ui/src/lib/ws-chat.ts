@@ -12,8 +12,17 @@ export type StreamHandlers = {
   onError: (code: string, message: string) => void;
 };
 
+export class ChatAbortedError extends Error {
+  constructor() {
+    super("chat aborted");
+    this.name = "ChatAbortedError";
+  }
+}
+
 export class WsChatClient {
   private ws: WebSocket | null = null;
+  private activeCleanup: (() => void) | null = null;
+  private activeReject: ((err: Error) => void) | null = null;
 
   constructor(private readonly url = `${backendWsBase()}/ws/chat`) {}
 
@@ -34,6 +43,8 @@ export class WsChatClient {
     config: AgentConfig,
     handlers: StreamHandlers,
   ): Promise<void> {
+    // One in-flight chat per client — cancel any previous turn first.
+    this.cancel();
     await this.connect();
     const ws = this.ws;
     if (!ws) throw new Error("WebSocket not connected");
@@ -61,8 +72,14 @@ export class WsChatClient {
 
       const cleanup = () => {
         ws.removeEventListener("message", onMessage);
+        if (this.activeCleanup === cleanup) {
+          this.activeCleanup = null;
+          this.activeReject = null;
+        }
       };
 
+      this.activeCleanup = cleanup;
+      this.activeReject = reject;
       ws.addEventListener("message", onMessage);
       ws.send(
         JSON.stringify({
@@ -81,12 +98,20 @@ export class WsChatClient {
   }
 
   cancel(): void {
+    const reject = this.activeReject;
+    if (this.activeCleanup) {
+      this.activeCleanup();
+    }
+    if (reject) {
+      reject(new ChatAbortedError());
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: "cancel" }));
     }
   }
 
   close(): void {
+    this.cancel();
     this.ws?.close();
     this.ws = null;
   }

@@ -5,8 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   type AgentConfig,
+  DEFAULT_CONFIG,
   loadConfig,
   saveConfig,
+  backendHttpBase,
 } from "@/lib/config";
 import { joinDailyRoom, leaveDailyRoom } from "@/lib/daily-session";
 import { createVoiceSession } from "@/lib/pipecat-client";
@@ -16,7 +18,7 @@ import {
   speechSupported,
   stopSpeaking,
 } from "@/lib/speech";
-import { WsChatClient } from "@/lib/ws-chat";
+import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
@@ -28,7 +30,7 @@ export type ChatLine = {
 };
 
 export function useVoiceSession() {
-  const [config, setConfigState] = useState<AgentConfig>(DEFAULT_SAFE);
+  const [config, setConfigState] = useState<AgentConfig>(DEFAULT_CONFIG);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [partial, setPartial] = useState("");
@@ -43,6 +45,12 @@ export function useVoiceSession() {
   const sttRef = useRef(new BrowserSTT());
   const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
+  const connectingDaily = useRef(false);
+  const sessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
     setConfigState(loadConfig());
@@ -71,11 +79,26 @@ export function useVoiceSession() {
     saveConfig(next);
   }, []);
 
+  const postBargeIn = useCallback(async (id: string | null) => {
+    if (!id) return;
+    try {
+      await fetch(`${backendHttpBase()}/api/voice/barge-in`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: id }),
+      });
+    } catch {
+      /* local stopSpeaking / WS cancel still applied */
+    }
+  }, []);
+
   const connectDaily = useCallback(async () => {
+    if (connectingDaily.current || dailyConnected) return;
     if (!config.apiKey.trim()) {
       setError("Daily 模式仍需要 LLM API Key（DashScope / OpenAI-compatible）");
       return;
     }
+    connectingDaily.current = true;
     setError(null);
     setOrb("thinking");
     try {
@@ -94,9 +117,6 @@ export function useVoiceSession() {
       dailyRef.current = call;
       setDailyConnected(true);
       setOrb("listening");
-      call.on("participant-updated", () => {
-        /* orb stays listening while in Daily call */
-      });
       call.on("left-meeting", () => {
         setDailyConnected(false);
         setOrb("idle");
@@ -104,8 +124,10 @@ export function useVoiceSession() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setOrb("idle");
+    } finally {
+      connectingDaily.current = false;
     }
-  }, [config]);
+  }, [config, dailyConnected]);
 
   const disconnectDaily = useCallback(async () => {
     await leaveDailyRoom(dailyRef.current);
@@ -161,6 +183,10 @@ export function useVoiceSession() {
         }
         setOrb("idle");
       } catch (e) {
+        if (e instanceof ChatAbortedError) {
+          setOrb("idle");
+          return;
+        }
         setError(e instanceof Error ? e.message : String(e));
         setOrb("idle");
       }
@@ -230,8 +256,9 @@ export function useVoiceSession() {
     stopSpeaking();
     wsRef.current.cancel();
     sttRef.current.stop();
+    void postBargeIn(sessionIdRef.current);
     setOrb(dailyConnected ? "listening" : "idle");
-  }, [dailyConnected]);
+  }, [dailyConnected, postBargeIn]);
 
   return {
     config,
@@ -252,9 +279,3 @@ export function useVoiceSession() {
     interrupt,
   };
 }
-
-const DEFAULT_SAFE: AgentConfig = {
-  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  apiKey: "",
-  model: "qwen3-max",
-};

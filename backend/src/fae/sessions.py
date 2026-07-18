@@ -1,6 +1,7 @@
-"""In-memory session registry (Phase 1.2 stub).
+"""In-memory session registry.
 
-Real session persistence (Redis / Letta) lands with the voice transport.
+Phase 2 will attach `agent_id` / transcript cursors in `meta` and optionally
+mirror sessions into Redis / Letta. No TTL yet — fine for single-process demo.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ class Session:
     id: str
     created_at: str
     mode: str = "text"  # text | voice
+    # transport, room_url, agent_id, etc.
     meta: dict[str, str] = field(default_factory=dict)
 
 

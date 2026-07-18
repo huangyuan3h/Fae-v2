@@ -8,10 +8,14 @@ Pipeline:
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from fae.config import Settings
 
 logger = logging.getLogger("fae.pipecat.daily_bot")
+
+InterruptFn = Callable[[], Awaitable[None]]
+ReadyFn = Callable[[InterruptFn], None]
 
 
 async def run_daily_bot(
@@ -22,11 +26,12 @@ async def run_daily_bot(
     llm_api_key: str | None = None,
     llm_base_url: str | None = None,
     llm_model: str | None = None,
+    on_ready: ReadyFn | None = None,
 ) -> None:
     """Join a Daily room and run the voice pipeline until the call ends."""
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.audio.vad.vad_analyzer import VADParams
-    from pipecat.frames.frames import EndFrame, LLMRunFrame
+    from pipecat.frames.frames import EndFrame, InterruptionFrame, LLMRunFrame
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.runner import PipelineRunner
     from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -104,6 +109,12 @@ async def run_daily_bot(
             enable_usage_metrics=True,
         ),
     )
+
+    async def interrupt_pipeline() -> None:
+        await task.queue_frame(InterruptionFrame())
+
+    if on_ready is not None:
+        on_ready(interrupt_pipeline)
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):  # noqa: ANN001
