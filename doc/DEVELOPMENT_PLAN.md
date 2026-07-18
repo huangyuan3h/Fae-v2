@@ -131,10 +131,10 @@
 
 ### 2.4 sleeptime 整理
 
-- [ ] 实现 `backend/src/fae/memory/consolidation.py`
-- [ ] 触发时机：每日凌晨 + 闲时（对话空闲 5min）
-- [ ] 工作流：归纳 Recall → 摘要 → 决定是否上提到 Core / 归档到 Archival
-- [ ] 加 rate limit：单次整理最长 30s，避免阻塞
+- [x] 实现 `backend/src/fae/memory/consolidation.py`（启发式摘要；LLM 摘要后续可选）
+- [x] 触发时机：每日定点小时 + 闲时（`SLEEPTIME_IDLE_SECONDS`，默认 5min）+ `POST /api/memory/consolidate`
+- [x] 工作流：归纳 Recall → 摘要写入 Core `current` / 偏好事实 → 可选 Archival + compact
+- [x] rate limit：单次最长 `SLEEPTIME_MAX_RUNTIME_S`（默认 30s）+ 会话最小间隔
 
 ### 2.5 记忆浏览器 UI
 
@@ -353,6 +353,6 @@
 
 ---
 
-**最后更新**：2026-07-18（Phase 2.2 M2-2）
+**最后更新**：2026-07-18（Phase 2.4 sleeptime）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

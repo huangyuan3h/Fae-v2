@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from fae.llm.types import ChatMessage, ChatRequest
@@ -28,10 +29,12 @@ class LettaMemoryService:
         *,
         archival: ArchivalBackend | None = None,
         compactor: MemoryCompactor | None = None,
+        on_persist: Callable[[str], None] | None = None,
     ) -> None:
         self._client = client
         self._archival = archival
         self._compactor = compactor
+        self._on_persist = on_persist
 
     @property
     def enabled(self) -> bool:
@@ -161,6 +164,8 @@ class LettaMemoryService:
                 await self._client.save_fact(fact)
             if self._compactor is not None:
                 await self._compactor.maybe_compact(session_id)
+            if self._on_persist is not None:
+                self._on_persist(session_id)
         except Exception:  # noqa: BLE001
             logger.exception("persist_turn failed session=%s", session_id)
 

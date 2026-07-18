@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     # Force stub archival even if Qdrant is up (tests / offline)
     archival_prefer_stub: bool = False
 
+    # Sleeptime consolidation (Phase 2.4)
+    sleeptime_enabled: bool = True
+    sleeptime_idle_seconds: int = Field(default=300, ge=5)
+    sleeptime_poll_seconds: int = Field(default=30, ge=1)
+    sleeptime_max_runtime_s: float = Field(default=30.0, ge=1.0)
+    sleeptime_min_interval_s: float = Field(default=60.0, ge=0.0)
+    # Local hour (0-23) for daily pass; None disables the daily trigger
+    sleeptime_daily_hour: int | None = 3
+
     # vLLM self-hosted (optional)
     vllm_asr_url: str = "http://localhost:8001"
     vllm_llm_url: str = "http://localhost:8002"

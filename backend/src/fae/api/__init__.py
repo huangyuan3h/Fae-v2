@@ -29,6 +29,7 @@ from fae.llm import (
     LLMError,
     OpenAICompatibleProvider,
 )
+from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.core_budget import core_stats_from_client
 from fae.memory.factory import MemoryStack, create_memory_stack
 from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -38,11 +39,38 @@ from fae.voice_runtime import VoiceRuntime
 logger = logging.getLogger("fae")
 
 
+def _build_sleeptime(
+    settings: Settings, stack: MemoryStack
+) -> SleeptimeScheduler | None:
+    if (
+        not settings.sleeptime_enabled
+        or stack.client is None
+        or stack.recall is None
+    ):
+        return None
+    consolidator = MemoryConsolidator(
+        stack.client,
+        stack.recall,
+        archival=stack.archival,
+        compactor=stack.compactor,
+        current_char_limit=settings.core_current_char_limit,
+        max_runtime_s=settings.sleeptime_max_runtime_s,
+    )
+    return SleeptimeScheduler(
+        consolidator,
+        idle_seconds=float(settings.sleeptime_idle_seconds),
+        poll_seconds=float(settings.sleeptime_poll_seconds),
+        min_interval_s=float(settings.sleeptime_min_interval_s),
+        daily_hour=settings.sleeptime_daily_hour,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown hooks.
 
     - Wire Letta / embedded memory into app.state.memory.
+    - Start sleeptime scheduler when memory is enabled.
     - Cancel in-flight Daily bots on shutdown.
     """
     settings: Settings = app.state.settings
@@ -52,6 +80,9 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Starting %s (env=%s)", settings.app_name, settings.app_env)
 
+    if getattr(app.state, "sleeptime", None) is None:
+        app.state.sleeptime = None
+
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
         try:
@@ -59,16 +90,21 @@ async def lifespan(app: FastAPI):
             app.state.memory_stack = stack
             app.state.recall_store = stack.recall
             app.state.archival = stack.archival
+            scheduler = _build_sleeptime(settings, stack)
+            app.state.sleeptime = scheduler
             if stack.client is not None:
                 app.state.memory = LettaMemoryService(
                     stack.client,
                     archival=stack.archival,
                     compactor=stack.compactor,
+                    on_persist=scheduler.touch if scheduler else None,
                 )
                 app.state.memory_client = stack.client
             else:
                 app.state.memory = None
                 app.state.memory_client = None
+            if scheduler is not None:
+                await scheduler.start()
         except Exception:  # noqa: BLE001
             logger.exception("Memory bootstrap failed — continuing without memory")
             # create_memory_stack already closes partial resources on raise.
@@ -77,12 +113,16 @@ async def lifespan(app: FastAPI):
             app.state.memory_stack = MemoryStack()
             app.state.recall_store = None
             app.state.archival = None
+            app.state.sleeptime = None
 
     yield
 
     runtime = getattr(app.state, "voice_runtime", None)
     if runtime is not None:
         await runtime.shutdown()
+    scheduler = getattr(app.state, "sleeptime", None)
+    if isinstance(scheduler, SleeptimeScheduler):
+        await scheduler.stop()
     stack = getattr(app.state, "memory_stack", None)
     if isinstance(stack, MemoryStack):
         await stack.close()
@@ -146,6 +186,7 @@ def create_app(
       app.state.memory_stack   — MemoryStack
       app.state.recall_store   — RecallStore | None
       app.state.archival       — ArchivalBackend | None
+      app.state.sleeptime      — SleeptimeScheduler | None
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -164,6 +205,7 @@ def create_app(
     app.state.memory_stack = MemoryStack()
     app.state.recall_store = None
     app.state.archival = None
+    app.state.sleeptime = None
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
@@ -312,6 +354,46 @@ def create_app(
             "recall_turns": recall.total_hot() if recall is not None else 0,
             "core": core,
             "archival": archival_status,
+            "sleeptime": (
+                "on"
+                if getattr(request.app.state, "sleeptime", None) is not None
+                else "off"
+            ),
+        }
+
+    @app.post("/api/memory/consolidate")
+    async def memory_consolidate(
+        request: Request,
+        session_id: str = "default",
+    ) -> dict:
+        """Trigger sleeptime consolidation for a session (smoke / ops)."""
+        scheduler = getattr(request.app.state, "sleeptime", None)
+        if not isinstance(scheduler, SleeptimeScheduler):
+            # Allow on-demand consolidate even if background scheduler is off.
+            stack: MemoryStack = getattr(
+                request.app.state, "memory_stack", MemoryStack()
+            )
+            if stack.client is None or stack.recall is None:
+                raise HTTPException(status_code=503, detail="memory unavailable")
+            consolidator = MemoryConsolidator(
+                stack.client,
+                stack.recall,
+                archival=stack.archival,
+                compactor=stack.compactor,
+                current_char_limit=request.app.state.settings.core_current_char_limit,
+                max_runtime_s=request.app.state.settings.sleeptime_max_runtime_s,
+            )
+            result = await consolidator.consolidate(session_id)
+        else:
+            result = await scheduler.consolidate_now(session_id)
+        return {
+            "session_id": result.session_id,
+            "summarized_turns": result.summarized_turns,
+            "facts_saved": result.facts_saved,
+            "current_updated": result.current_updated,
+            "compacted": result.compacted,
+            "skipped": result.skipped,
+            "elapsed_s": round(result.elapsed_s, 3),
         }
 
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
