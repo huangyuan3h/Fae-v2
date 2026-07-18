@@ -43,6 +43,8 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1)
+    # Optional memory bucket id (not sent to the LLM provider).
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):

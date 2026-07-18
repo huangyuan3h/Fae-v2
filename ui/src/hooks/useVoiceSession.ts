@@ -160,21 +160,26 @@ export function useVoiceSession() {
       ]);
 
       try {
-        await wsRef.current.chat(userText, config, {
-          onToken: (token) => {
-            assistantBuf.current += token;
-            const snapshot = assistantBuf.current;
-            setLines((prev) =>
-              prev.map((l) =>
-                l.id === assistantId ? { ...l, content: snapshot } : l,
-              ),
-            );
+        await wsRef.current.chat(
+          userText,
+          config,
+          {
+            onToken: (token) => {
+              assistantBuf.current += token;
+              const snapshot = assistantBuf.current;
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === assistantId ? { ...l, content: snapshot } : l,
+                ),
+              );
+            },
+            onDone: () => {},
+            onError: (code, message) => {
+              setError(`${code}: ${message}`);
+            },
           },
-          onDone: () => {},
-          onError: (code, message) => {
-            setError(`${code}: ${message}`);
-          },
-        });
+          sessionIdRef.current,
+        );
 
         const reply = assistantBuf.current.trim();
         if (reply && support.tts) {

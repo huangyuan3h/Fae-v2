@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fae.memory.schemas import FactIn, FactOut, UserProfile
+from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.embedded")
 
@@ -63,6 +63,16 @@ class EmbeddedMemoryClient:
               session_id TEXT,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS recall_turns (
+              id TEXT PRIMARY KEY,
+              agent_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              user_text TEXT NOT NULL,
+              assistant_text TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_recall_session
+              ON recall_turns (agent_id, session_id, created_at);
             """
         )
         self._conn.commit()
@@ -212,15 +222,86 @@ class EmbeddedMemoryClient:
         self._set_block("human", text)
         return profile
 
-    async def recall_for_prompt(self, query: str, *, top_k: int = 10) -> str:
+    async def append_recall(
+        self,
+        session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        agent_id = self._require_agent()
+        sid = (session_id or "").strip() or "default"
+        self._conn.execute(
+            """
+            INSERT INTO recall_turns
+              (id, agent_id, session_id, user_text, assistant_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                agent_id,
+                sid,
+                user_text or "",
+                assistant_text or "",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    async def list_recall(
+        self,
+        session_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[RecallTurn]:
+        agent_id = self._require_agent()
+        sid = (session_id or "").strip() or "default"
+        rows = self._conn.execute(
+            """
+            SELECT id, session_id, user_text, assistant_text, created_at
+            FROM recall_turns
+            WHERE agent_id = ? AND session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (agent_id, sid, max(1, limit)),
+        ).fetchall()
+        # Return chronological order for prompt readability.
+        turns = [
+            RecallTurn(
+                id=row["id"],
+                session_id=row["session_id"],
+                user_text=row["user_text"],
+                assistant_text=row["assistant_text"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in reversed(rows)
+        ]
+        return turns
+
+    async def recall_for_prompt(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        top_k: int = 10,
+        recent_limit: int = 10,
+    ) -> str:
         human = self._get_block("human").strip()
         current = self._get_block("current").strip()
-        facts = await self.search(query, top_k=top_k)
         parts: list[str] = []
         if human:
             parts.append(f"[human]\n{human}")
         if current:
             parts.append(f"[current]\n{current}")
+        if session_id:
+            turns = await self.list_recall(session_id, limit=recent_limit)
+            if turns:
+                lines = [
+                    f"User: {t.user_text}\nAssistant: {t.assistant_text}"
+                    for t in turns
+                ]
+                parts.append("[recent_turns]\n" + "\n---\n".join(lines))
+        facts = await self.search(query, top_k=top_k)
         if facts:
             lines = "\n".join(f"- {f.content}" for f in facts)
             parts.append(f"[facts]\n{lines}")

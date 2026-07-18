@@ -27,6 +27,16 @@ async def test_embedded_roundtrip(tmp_path: Path) -> None:
 
     prompt = await client.recall_for_prompt("我叫什么")
     assert "小明" in prompt
+
+    await client.append_recall("s1", "我在做 Python 项目", "听起来不错")
+    turns = await client.list_recall("s1", limit=5)
+    assert len(turns) == 1
+    assert "Python" in turns[0].user_text
+    with_turns = await client.recall_for_prompt(
+        "Python", session_id="s1", recent_limit=5
+    )
+    assert "[recent_turns]" in with_turns
+    assert "Python" in with_turns
     await client.close()
 
 

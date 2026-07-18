@@ -3,12 +3,12 @@
 Protocol (JSON over text frames):
 
   client -> server:
-    {"type": "chat",  "request": <ChatRequest>}
+    {"type": "chat",  "request": <ChatRequest>, "session_id": "<optional>"}
     {"type": "cancel"}
 
   server -> client:
     {"type": "token", "content": "你"}
-    {"type": "done",  "usage": {...} | null}
+    {"type": "done",  "usage": {...} | null, "session_id": "..."}
     {"type": "error", "code": "auth", "message": "..."}
 
 Only one active generation per connection. A new `chat` message cancels
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -60,11 +61,27 @@ def _memory_from_app(ws: WebSocket) -> LettaMemoryService | None:
     return memory if isinstance(memory, LettaMemoryService) else None
 
 
+def _resolve_session_id(
+    raw: dict[str, Any],
+    request: ChatRequest,
+    connection_session_id: str,
+) -> str:
+    for candidate in (
+        raw.get("session_id"),
+        request.session_id,
+        connection_session_id,
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return connection_session_id
+
+
 async def _run_stream(
     ws: WebSocket,
     client: LLMClient,
     request: ChatRequest,
     memory: LettaMemoryService | None,
+    session_id: str,
 ) -> None:
     """Pump tokens from the provider to the client until done or cancelled."""
     user_text = ""
@@ -75,7 +92,9 @@ async def _run_stream(
 
     stream_request = request
     if memory is not None and memory.enabled:
-        stream_request = await memory.prepare_request(request, session_id="ws")
+        stream_request = await memory.prepare_request(
+            request, session_id=session_id
+        )
 
     assistant_parts: list[str] = []
     try:
@@ -84,15 +103,19 @@ async def _run_stream(
             await _send(ws, {"type": "token", "content": token})
         if memory is not None and memory.enabled and user_text:
             await memory.persist_turn(
-                session_id="ws",
+                session_id=session_id,
                 user_text=user_text,
                 assistant_text="".join(assistant_parts),
             )
-        await _send(ws, {"type": "done", "usage": None})
+        await _send(
+            ws, {"type": "done", "usage": None, "session_id": session_id}
+        )
     except LLMError as e:
         await _send(ws, {"type": "error", "code": e.code, "message": e.message})
     except asyncio.CancelledError:
-        await _send(ws, {"type": "done", "usage": None})
+        await _send(
+            ws, {"type": "done", "usage": None, "session_id": session_id}
+        )
         raise
     except Exception as e:  # noqa: BLE001 — last-resort
         logger.exception("Unexpected stream error")
@@ -109,6 +132,7 @@ async def ws_chat(
     """Streaming chat over WebSocket."""
     await websocket.accept()
     active: asyncio.Task[None] | None = None
+    connection_session_id = str(uuid.uuid4())
     try:
         while True:
             try:
@@ -163,9 +187,14 @@ async def ws_chat(
                     )
                     continue
 
+                session_id = _resolve_session_id(
+                    raw, request, connection_session_id
+                )
                 memory = _memory_from_app(websocket)
                 active = asyncio.create_task(
-                    _run_stream(websocket, client, request, memory)
+                    _run_stream(
+                        websocket, client, request, memory, session_id
+                    )
                 )
                 continue
 

@@ -71,6 +71,7 @@ async def create_voice_session(
         def _bind_interrupt(interrupt_fn):  # noqa: ANN001
             handle.interrupt_pipeline = interrupt_fn
 
+        memory = getattr(request.app.state, "memory", None)
         runtime.spawn(
             session.id,
             run_daily_bot(
@@ -81,6 +82,8 @@ async def create_voice_session(
                 llm_base_url=body.llm_base_url,
                 llm_model=body.llm_model,
                 on_ready=_bind_interrupt,
+                memory=memory,
+                session_id=session.id,
             ),
         )
         return VoiceSessionOut(

@@ -21,6 +21,7 @@
 | Daily + Pipecat 全链路（可选） | ✅ 需 `DAILY_API_KEY` |
 | DashScope Qwen3-TTS | ✅ 需 `DASHSCOPE_API_KEY` |
 | 长期记忆（Letta remote / embedded SQLite） | ✅ Phase 2.1 · M2-1 |
+| 会话 Recall + Daily 记忆注入 | ✅ Phase 2.2 · M2-2 |
 
 ## 快速开始
 
@@ -46,7 +47,8 @@ open http://localhost:3000
 1. 打开 http://localhost:3000，在 Agent 设置填 API Key  
 2. **默认路径**：点「开始说话」（Chrome）或文字输入 → 流式回复 + 浏览器播报  
 3. **Daily 增强**：勾选「优先 Daily / Pipecat」→ 点开始 → 加入 WebRTC 房间  
-4. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」
+4. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
+5. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边
 
 ### 环境变量
 

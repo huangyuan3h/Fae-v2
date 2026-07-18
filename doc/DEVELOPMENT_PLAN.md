@@ -110,13 +110,14 @@
 
 ### 2.2 Pipecat Memory Service
 
-- [x] `LettaMemoryService`（浏览器 WS / HTTP 已接；Daily 待接）
-- [ ] 接到 Daily `OpenAILLMService` 上游（同一 `recall_context`）
-- [x] 每次 LLM 调用前注入相关记忆（WS/HTTP；top-k=10）
-- [x] 每轮结束 `persist_turn`（身份类事实；完整 Recall 会话分桶仍待深化）
-- [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）
+- [x] `LettaMemoryService`（浏览器 WS / HTTP + Daily 已接）
+- [x] 接到 Daily：`seed_daily_memory` + `MemoryTurnProcessor`（同一 `recall_context` / `persist_turn`）
+- [x] 每次 LLM 调用前注入相关记忆（含 `[recent_turns]` + facts；top-k=10）
+- [x] 每轮结束 `append_recall` + 启发式事实 + utterance 索引（按 `session_id` 分桶）
+- [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）— 见 2.3
 
-> **冒烟测试**（M2-2）：连续聊 5 个话题后问"我刚才提到 Python 那个项目怎么样"。
+> **冒烟测试**（M2-2）：连续聊多个话题后问"我刚才提到 Python 那个项目怎么样"。
+> `LETTA_MODE=embedded` 即可本地验收。
 
 ### 2.3 三层记忆 + Episodic 扩展
 
@@ -352,6 +353,6 @@
 
 ---
 
-**最后更新**：2026-07-18（Phase 2.1 M2-1）
+**最后更新**：2026-07-18（Phase 2.2 M2-2）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

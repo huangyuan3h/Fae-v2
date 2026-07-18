@@ -218,6 +218,7 @@ def create_app(
             request.app.state, "memory", None
         )
         prepared = body
+        session_id = (body.session_id or "").strip() or "http"
         user_text = ""
         for msg in reversed(body.messages):
             if msg.role == "user":
@@ -225,11 +226,13 @@ def create_app(
                 break
         try:
             if memory is not None and memory.enabled:
-                prepared = await memory.prepare_request(body, session_id="http")
+                prepared = await memory.prepare_request(
+                    body, session_id=session_id
+                )
             response = await client.chat(prepared)
             if memory is not None and memory.enabled and user_text:
                 await memory.persist_turn(
-                    session_id="http",
+                    session_id=session_id,
                     user_text=user_text,
                     assistant_text=response.content,
                 )

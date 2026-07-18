@@ -1,4 +1,4 @@
-"""Memory injector shared by browser WS (and later Daily / pipeline)."""
+"""Memory injector shared by browser WS, HTTP chat, and Daily."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import logging
 from fae.llm.types import ChatMessage, ChatRequest
 from fae.memory.fact_extract import facts_from_turn
 from fae.memory.protocol import MemoryClient
+from fae.memory.schemas import FactIn
 
 logger = logging.getLogger("fae.memory.service")
 
@@ -35,11 +36,15 @@ class LettaMemoryService:
         session_id: str | None = None,
         top_k: int = 10,
     ) -> str:
-        _ = session_id
         if self._client is None:
             return ""
         try:
-            return await self._client.recall_for_prompt(query, top_k=top_k)
+            return await self._client.recall_for_prompt(
+                query,
+                session_id=session_id,
+                top_k=top_k,
+                recent_limit=10,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("recall_context failed")
             return ""
@@ -51,13 +56,29 @@ class LettaMemoryService:
             return request
         block = (
             f"{_MEMORY_TAG_OPEN}\n"
-            "The following are durable memories about the user. "
-            "Use them when answering identity / preference questions.\n"
+            "The following are durable memories and recent conversation. "
+            "Use them when the user asks about prior topics or identity.\n"
             f"{text}\n"
             f"{_MEMORY_TAG_CLOSE}"
         )
         messages = [ChatMessage(role="system", content=block), *request.messages]
         return request.model_copy(update={"messages": messages})
+
+    def memory_system_message(self, memory_text: str) -> dict[str, str] | None:
+        """Build a system message dict for Daily LLMContext."""
+        text = (memory_text or "").strip()
+        if not text:
+            return None
+        return {
+            "role": "system",
+            "content": (
+                f"{_MEMORY_TAG_OPEN}\n"
+                "The following are durable memories and recent conversation. "
+                "Use them when the user asks about prior topics or identity.\n"
+                f"{text}\n"
+                f"{_MEMORY_TAG_CLOSE}"
+            ),
+        }
 
     async def prepare_request(
         self,
@@ -79,6 +100,7 @@ class LettaMemoryService:
         if self._client is None:
             return
         try:
+            await self._client.append_recall(session_id, user_text, assistant_text)
             profile, facts = facts_from_turn(
                 user_text=user_text,
                 assistant_text=assistant_text,
@@ -88,6 +110,16 @@ class LettaMemoryService:
                 await self._client.update_user(profile)
             for fact in facts:
                 await self._client.save_fact(fact)
+            # Index user utterance for keyword recall (M2-2).
+            trimmed = (user_text or "").strip()
+            if trimmed and len(trimmed) >= 2:
+                await self._client.save_fact(
+                    FactIn(
+                        content=trimmed,
+                        tags=["utterance"],
+                        session_id=session_id or None,
+                    )
+                )
         except Exception:  # noqa: BLE001
             logger.exception("persist_turn failed session=%s", session_id)
 

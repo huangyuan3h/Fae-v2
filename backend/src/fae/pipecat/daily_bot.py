@@ -11,6 +11,11 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from fae.config import Settings
+from fae.pipecat.memory_processor import (
+    build_memory_turn_processor,
+    seed_daily_memory,
+)
+from fae.pipecat.services.letta_memory import LettaMemoryService
 
 logger = logging.getLogger("fae.pipecat.daily_bot")
 
@@ -27,6 +32,8 @@ async def run_daily_bot(
     llm_base_url: str | None = None,
     llm_model: str | None = None,
     on_ready: ReadyFn | None = None,
+    memory: LettaMemoryService | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Join a Daily room and run the voice pipeline until the call ends."""
     from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -51,6 +58,7 @@ async def run_daily_bot(
     base_url = llm_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model = llm_model or "qwen3-max"
     asr_url = settings.vllm_asr_url.rstrip("/")
+    sid = session_id or "daily"
 
     transport = DailyTransport(
         room_url,
@@ -73,7 +81,7 @@ async def run_daily_bot(
         settings=OpenAILLMService.Settings(
             model=model,
             system_instruction=(
-                "You are FAE, a concise bilingual voice assistant. "
+                "You are FAE, a concise bilingual voice assistant with memory. "
                 "Keep replies short and conversational."
             ),
         ),
@@ -81,6 +89,12 @@ async def run_daily_bot(
     tts = DashScopeTTSService(api_key=settings.dashscope_api_key or api_key or "")
 
     context = LLMContext()
+    await seed_daily_memory(
+        memory=memory,
+        session_id=sid,
+        add_message=context.add_message,
+    )
+
     # Silero VAD + default UserTurnStrategies (stop uses LocalSmartTurnAnalyzerV3).
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
@@ -90,17 +104,20 @@ async def run_daily_bot(
         ),
     )
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            user_agg,
-            llm,
-            tts,
-            transport.output(),
-            assistant_agg,
-        ]
-    )
+    mem_proc = build_memory_turn_processor(memory, sid)
+    stages: list = [
+        transport.input(),
+        stt,
+        user_agg,
+        llm,
+        tts,
+        transport.output(),
+        assistant_agg,
+    ]
+    if mem_proc is not None:
+        stages.append(mem_proc)
+
+    pipeline = Pipeline(stages)
 
     task = PipelineTask(
         pipeline,

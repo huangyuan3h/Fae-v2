@@ -42,6 +42,7 @@ export class WsChatClient {
     text: string,
     config: AgentConfig,
     handlers: StreamHandlers,
+    sessionId?: string | null,
   ): Promise<void> {
     // One in-flight chat per client — cancel any previous turn first.
     this.cancel();
@@ -81,19 +82,22 @@ export class WsChatClient {
       this.activeCleanup = cleanup;
       this.activeReject = reject;
       ws.addEventListener("message", onMessage);
-      ws.send(
-        JSON.stringify({
-          type: "chat",
-          request: {
-            config: {
-              base_url: config.baseUrl,
-              api_key: config.apiKey,
-              model: config.model,
-            },
-            messages: [{ role: "user", content: text }],
+      const payload: Record<string, unknown> = {
+        type: "chat",
+        request: {
+          config: {
+            base_url: config.baseUrl,
+            api_key: config.apiKey,
+            model: config.model,
           },
-        }),
-      );
+          messages: [{ role: "user", content: text }],
+          session_id: sessionId || undefined,
+        },
+      };
+      if (sessionId) {
+        payload.session_id = sessionId;
+      }
+      ws.send(JSON.stringify(payload));
     });
   }
 

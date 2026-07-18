@@ -29,3 +29,13 @@ class UserProfile(BaseModel):
     display_name: str | None = None
     preferences: dict[str, str] = Field(default_factory=dict)
     notes: str | None = None
+
+
+class RecallTurn(BaseModel):
+    """One user/assistant exchange in session recall."""
+
+    id: str
+    session_id: str
+    user_text: str
+    assistant_text: str
+    created_at: datetime | None = None

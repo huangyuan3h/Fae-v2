@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from fae.memory.schemas import FactIn, FactOut, UserProfile
+from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 
 @runtime_checkable
@@ -22,6 +22,27 @@ class MemoryClient(Protocol):
 
     async def update_user(self, profile: UserProfile) -> UserProfile: ...
 
-    async def recall_for_prompt(self, query: str, *, top_k: int = 10) -> str: ...
+    async def append_recall(
+        self,
+        session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None: ...
+
+    async def list_recall(
+        self,
+        session_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[RecallTurn]: ...
+
+    async def recall_for_prompt(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        top_k: int = 10,
+        recent_limit: int = 10,
+    ) -> str: ...
 
     async def close(self) -> None: ...

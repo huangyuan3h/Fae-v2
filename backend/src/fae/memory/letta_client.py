@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 
-from fae.memory.schemas import FactIn, FactOut, UserProfile
+from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.letta")
 
@@ -283,19 +283,113 @@ class LettaMemoryClient:
         await self._set_block("human", text)
         return profile
 
-    async def recall_for_prompt(self, query: str, *, top_k: int = 10) -> str:
+    async def append_recall(
+        self,
+        session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        sid = (session_id or "").strip() or "default"
+        text = f"User: {user_text}\nAssistant: {assistant_text}"
+        agent_id = self._require_agent()
+        payload = {
+            "text": text,
+            "tags": ["recall", sid],
+            "metadata": {"session_id": sid, "kind": "recall"},
+        }
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory",
+            f"/v1/agents/{agent_id}/passages",
+        ):
+            try:
+                resp = await self._http.post(path, json=payload)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code < 400:
+                return
+        # Fallback: rolling summary on current block.
+        current = await self._get_block("current")
+        entry = f"[{sid}] {text}"
+        merged = f"{current.rstrip()}\n{entry}".strip() if current else entry
+        if len(merged) > 4000:
+            merged = merged[-4000:]
+        await self._set_block("current", merged)
+
+    async def list_recall(
+        self,
+        session_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[RecallTurn]:
+        """Best-effort: search archival tagged with session; else parse current."""
+        sid = (session_id or "").strip() or "default"
+        hits = await self.search(sid, top_k=limit)
+        turns: list[RecallTurn] = []
+        for hit in hits:
+            if "recall" not in (hit.tags or []) and hit.session_id != sid:
+                # Keep lines that look like recall transcripts.
+                if not hit.content.startswith("User:"):
+                    continue
+            user_text, assistant_text = _split_recall_text(hit.content)
+            turns.append(
+                RecallTurn(
+                    id=hit.id,
+                    session_id=sid,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    created_at=hit.created_at,
+                )
+            )
+        if turns:
+            return turns[-limit:]
+        current = await self._get_block("current")
+        for line in current.splitlines():
+            if f"[{sid}]" not in line:
+                continue
+            body = line.split(f"[{sid}]", 1)[-1].strip()
+            user_text, assistant_text = _split_recall_text(body)
+            turns.append(
+                RecallTurn(
+                    id=str(uuid4()),
+                    session_id=sid,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                )
+            )
+        return turns[-limit:]
+
+    async def recall_for_prompt(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        top_k: int = 10,
+        recent_limit: int = 10,
+    ) -> str:
         human = (await self._get_block("human")).strip()
         current = (await self._get_block("current")).strip()
-        try:
-            facts = await self.search(query, top_k=top_k)
-        except Exception:  # noqa: BLE001
-            logger.exception("Letta search failed during recall")
-            facts = []
         parts: list[str] = []
         if human:
             parts.append(f"[human]\n{human}")
         if current:
             parts.append(f"[current]\n{current}")
+        if session_id:
+            try:
+                turns = await self.list_recall(session_id, limit=recent_limit)
+            except Exception:  # noqa: BLE001
+                logger.exception("list_recall failed")
+                turns = []
+            if turns:
+                lines = [
+                    f"User: {t.user_text}\nAssistant: {t.assistant_text}"
+                    for t in turns
+                ]
+                parts.append("[recent_turns]\n" + "\n---\n".join(lines))
+        try:
+            facts = await self.search(query, top_k=top_k)
+        except Exception:  # noqa: BLE001
+            logger.exception("Letta search failed during recall")
+            facts = []
         if facts:
             lines = "\n".join(f"- {f.content}" for f in facts)
             parts.append(f"[facts]\n{lines}")
@@ -311,3 +405,14 @@ class LettaMemoryClient:
     async def close(self) -> None:
         await self._http.aclose()
         logger.debug("LettaMemoryClient.close base_url=%s", self.base_url)
+
+
+def _split_recall_text(text: str) -> tuple[str, str]:
+    raw = (text or "").strip()
+    if "\nAssistant:" in raw:
+        user_part, asst_part = raw.split("\nAssistant:", 1)
+        user_text = user_part.replace("User:", "", 1).strip()
+        return user_text, asst_part.strip()
+    if raw.startswith("User:"):
+        return raw.replace("User:", "", 1).strip(), ""
+    return raw, ""
