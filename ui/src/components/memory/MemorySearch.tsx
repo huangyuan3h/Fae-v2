@@ -68,9 +68,12 @@ export function MemorySearch() {
         </p>
       )}
 
-      {query && !result.isFetching && hits.length === 0 && (
-        <p className="text-sm text-[var(--ink-soft)]">没有命中「{query}」。</p>
-      )}
+      {query &&
+        !result.isFetching &&
+        !result.isError &&
+        hits.length === 0 && (
+          <p className="text-sm text-[var(--ink-soft)]">没有命中「{query}」。</p>
+        )}
 
       <ul className="space-y-3">
         {hits.map((hit) => (

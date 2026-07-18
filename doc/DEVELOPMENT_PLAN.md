@@ -354,6 +354,6 @@
 
 ---
 
-**最后更新**：2026-07-19（Phase 2 complete · 2.5 memory browser）
+**最后更新**：2026-07-19（Phase 2 stable · hardening pass）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -33,14 +34,27 @@ class MemoryCompactor:
         self.batch = max(1, batch)
         self.client = client
         self.current_char_limit = current_char_limit
+        self._session_locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, session_id: str) -> asyncio.Lock:
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_locks[session_id] = lock
+        return lock
 
     async def maybe_compact(self, session_id: str) -> int:
         """Archive oldest turns if hot count exceeds max. Returns archived count.
 
         Upserts to archival first; only then marks turns archived so a failed
-        write does not drop conversation history.
+        write does not drop conversation history. Per-session lock avoids
+        duplicate archival from concurrent persist/sleeptime.
         """
         sid = (session_id or "").strip() or "default"
+        async with self._lock_for(sid):
+            return await self._compact_unlocked(sid)
+
+    async def _compact_unlocked(self, sid: str) -> int:
         total = 0
         for _ in range(_MAX_COMPACT_ROUNDS):
             hot = self.recall.count_hot(sid)
@@ -48,6 +62,13 @@ class MemoryCompactor:
                 break
             n = min(self.batch, hot - self.max_turns)
             turns = self.recall.peek_oldest_hot(sid, n)
+            if not turns:
+                break
+            # Re-check ids still hot (another path may have archived them).
+            still_hot = {
+                t.id for t in self.recall.peek_oldest_hot(sid, max(n, hot))
+            }
+            turns = [t for t in turns if t.id in still_hot]
             if not turns:
                 break
             summary_lines = [

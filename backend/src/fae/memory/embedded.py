@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,9 +44,11 @@ class EmbeddedMemoryClient:
         self._agent_id: str | None = None
         self._recall = recall_store
         self._current_char_limit = current_char_limit
+        self._lock = threading.Lock()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout=3000")
         self._init_schema()
 
     @property
@@ -53,57 +56,63 @@ class EmbeddedMemoryClient:
         return self._agent_id
 
     def _init_schema(self) -> None:
-        cur = self._conn.cursor()
-        cur.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS agents (
-              id TEXT PRIMARY KEY,
-              name TEXT UNIQUE NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS blocks (
-              agent_id TEXT NOT NULL,
-              label TEXT NOT NULL,
-              value TEXT NOT NULL,
-              PRIMARY KEY (agent_id, label)
-            );
-            CREATE TABLE IF NOT EXISTS facts (
-              id TEXT PRIMARY KEY,
-              agent_id TEXT NOT NULL,
-              content TEXT NOT NULL,
-              tags TEXT NOT NULL,
-              session_id TEXT,
-              created_at TEXT NOT NULL
-            );
-            """
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                  id TEXT PRIMARY KEY,
+                  name TEXT UNIQUE NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS blocks (
+                  agent_id TEXT NOT NULL,
+                  label TEXT NOT NULL,
+                  value TEXT NOT NULL,
+                  PRIMARY KEY (agent_id, label)
+                );
+                CREATE TABLE IF NOT EXISTS facts (
+                  id TEXT PRIMARY KEY,
+                  agent_id TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  tags TEXT NOT NULL,
+                  session_id TEXT,
+                  created_at TEXT NOT NULL
+                );
+                """
+            )
+            self._conn.commit()
 
     async def ensure_agent(self) -> str:
-        cur = self._conn.cursor()
-        row = cur.execute(
-            "SELECT id FROM agents WHERE name = ?", (self.agent_name,)
-        ).fetchone()
-        if row:
-            self._agent_id = row["id"]
-        else:
-            agent_id = str(uuid.uuid4())
-            cur.execute(
-                "INSERT INTO agents (id, name) VALUES (?, ?)",
-                (agent_id, self.agent_name),
-            )
-            for label, value in (
-                ("persona", _DEFAULT_PERSONA),
-                ("human", _DEFAULT_HUMAN),
-                ("current", _DEFAULT_CURRENT),
-            ):
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(
+                "SELECT id FROM agents WHERE name = ?", (self.agent_name,)
+            ).fetchone()
+            if row:
+                self._agent_id = row["id"]
+            else:
+                agent_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)",
-                    (agent_id, label, value),
+                    "INSERT INTO agents (id, name) VALUES (?, ?)",
+                    (agent_id, self.agent_name),
                 )
-            self._conn.commit()
-            self._agent_id = agent_id
-            logger.info("Embedded agent created name=%s id=%s", self.agent_name, agent_id)
-        return self._agent_id
+                for label, value in (
+                    ("persona", _DEFAULT_PERSONA),
+                    ("human", _DEFAULT_HUMAN),
+                    ("current", _DEFAULT_CURRENT),
+                ):
+                    cur.execute(
+                        "INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)",
+                        (agent_id, label, value),
+                    )
+                self._conn.commit()
+                self._agent_id = agent_id
+                logger.info(
+                    "Embedded agent created name=%s id=%s",
+                    self.agent_name,
+                    agent_id,
+                )
+            return self._agent_id
 
     def _require_agent(self) -> str:
         if not self._agent_id:
@@ -112,10 +121,11 @@ class EmbeddedMemoryClient:
 
     def _get_block(self, label: str) -> str:
         agent_id = self._require_agent()
-        row = self._conn.execute(
-            "SELECT value FROM blocks WHERE agent_id = ? AND label = ?",
-            (agent_id, label),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM blocks WHERE agent_id = ? AND label = ?",
+                (agent_id, label),
+            ).fetchone()
         return row["value"] if row else ""
 
     def _set_block(self, label: str, value: str) -> None:
@@ -123,14 +133,15 @@ class EmbeddedMemoryClient:
         text = value
         if label == "current":
             text = truncate_current(value, char_limit=self._current_char_limit)
-        self._conn.execute(
-            """
-            INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)
-            ON CONFLICT(agent_id, label) DO UPDATE SET value = excluded.value
-            """,
-            (agent_id, label, text),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)
+                ON CONFLICT(agent_id, label) DO UPDATE SET value = excluded.value
+                """,
+                (agent_id, label, text),
+            )
+            self._conn.commit()
 
     async def get_block(self, label: str) -> str:
         return self._get_block(label)
@@ -142,21 +153,22 @@ class EmbeddedMemoryClient:
         agent_id = self._require_agent()
         fact_id = str(uuid.uuid4())
         created = datetime.now(UTC).isoformat()
-        self._conn.execute(
-            """
-            INSERT INTO facts (id, agent_id, content, tags, session_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                fact_id,
-                agent_id,
-                fact.content,
-                json.dumps(fact.tags),
-                fact.session_id,
-                created,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO facts (id, agent_id, content, tags, session_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    fact_id,
+                    agent_id,
+                    fact.content,
+                    json.dumps(fact.tags),
+                    fact.session_id,
+                    created,
+                ),
+            )
+            self._conn.commit()
         return FactOut(
             id=fact_id,
             content=fact.content,
@@ -177,14 +189,15 @@ class EmbeddedMemoryClient:
     async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
         agent_id = self._require_agent()
         q = (query or "").strip().lower()
-        rows = self._conn.execute(
-            """
-            SELECT id, content, tags, session_id, created_at
-            FROM facts WHERE agent_id = ?
-            ORDER BY created_at DESC
-            """,
-            (agent_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, content, tags, session_id, created_at
+                FROM facts WHERE agent_id = ?
+                ORDER BY created_at DESC
+                """,
+                (agent_id,),
+            ).fetchall()
         scored: list[tuple[int, sqlite3.Row]] = []
         for row in rows:
             content = row["content"].lower()
@@ -209,43 +222,45 @@ class EmbeddedMemoryClient:
 
     async def update_fact(self, fact_id: str, fact: FactIn) -> FactOut:
         agent_id = self._require_agent()
-        row = self._conn.execute(
-            "SELECT id FROM facts WHERE agent_id = ? AND id = ?",
-            (agent_id, fact_id),
-        ).fetchone()
-        if row is None:
-            raise KeyError(fact_id)
-        self._conn.execute(
-            """
-            UPDATE facts SET content = ?, tags = ?, session_id = ?
-            WHERE agent_id = ? AND id = ?
-            """,
-            (
-                fact.content,
-                json.dumps(fact.tags),
-                fact.session_id,
-                agent_id,
-                fact_id,
-            ),
-        )
-        self._conn.commit()
-        updated = self._conn.execute(
-            """
-            SELECT id, content, tags, session_id, created_at
-            FROM facts WHERE id = ?
-            """,
-            (fact_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM facts WHERE agent_id = ? AND id = ?",
+                (agent_id, fact_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(fact_id)
+            self._conn.execute(
+                """
+                UPDATE facts SET content = ?, tags = ?, session_id = ?
+                WHERE agent_id = ? AND id = ?
+                """,
+                (
+                    fact.content,
+                    json.dumps(fact.tags),
+                    fact.session_id,
+                    agent_id,
+                    fact_id,
+                ),
+            )
+            self._conn.commit()
+            updated = self._conn.execute(
+                """
+                SELECT id, content, tags, session_id, created_at
+                FROM facts WHERE id = ?
+                """,
+                (fact_id,),
+            ).fetchone()
         return self._fact_from_row(updated)
 
     async def delete_fact(self, fact_id: str) -> bool:
         agent_id = self._require_agent()
-        cur = self._conn.execute(
-            "DELETE FROM facts WHERE agent_id = ? AND id = ?",
-            (agent_id, fact_id),
-        )
-        self._conn.commit()
-        return cur.rowcount > 0
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM facts WHERE agent_id = ? AND id = ?",
+                (agent_id, fact_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     async def update_user(self, profile: UserProfile) -> UserProfile:
         lines: list[str] = []
@@ -326,5 +341,6 @@ class EmbeddedMemoryClient:
         return "\n\n".join(parts)
 
     async def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
         logger.debug("EmbeddedMemoryClient closed path=%s", self.db_path)

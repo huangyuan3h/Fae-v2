@@ -48,9 +48,19 @@ export function MemoryTimeline() {
         <Stat label="Sleeptime" value={stats.data?.sleeptime ?? "—"} />
       </div>
 
+      {(timeline.isError || stats.isError) && (
+        <p className="rounded-xl border border-[var(--danger)]/30 bg-white/60 px-3 py-2 text-sm text-[var(--danger)]">
+          {(timeline.error as Error | null)?.message ||
+            (stats.error as Error | null)?.message ||
+            "无法加载记忆数据"}
+        </p>
+      )}
+
       <div className="h-64 w-full rounded-2xl border border-black/10 bg-white/50 p-3">
         {timeline.isLoading ? (
           <p className="p-4 text-sm text-[var(--ink-soft)]">加载时间线…</p>
+        ) : timeline.isError ? (
+          <p className="p-4 text-sm text-[var(--ink-soft)]">时间线暂时不可用。</p>
         ) : chartData.length === 0 ? (
           <p className="p-4 text-sm text-[var(--ink-soft)]">
             还没有记忆点。先在主页聊几句（例如「我喜欢手冲咖啡」）。

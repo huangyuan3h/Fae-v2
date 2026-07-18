@@ -9,6 +9,7 @@ Phase 1.2/1.3: /api/sessions, /api/pipeline/text (text pipeline smoke).
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
@@ -86,6 +87,7 @@ async def lifespan(app: FastAPI):
 
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
+        stack: MemoryStack | None = None
         try:
             stack = await create_memory_stack(settings)
             app.state.memory_stack = stack
@@ -110,7 +112,11 @@ async def lifespan(app: FastAPI):
                 await scheduler.start()
         except Exception:  # noqa: BLE001
             logger.exception("Memory bootstrap failed — continuing without memory")
-            # create_memory_stack already closes partial resources on raise.
+            if stack is not None:
+                try:
+                    await stack.close()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to close partial memory stack")
             app.state.memory = None
             app.state.memory_client = None
             app.state.memory_stack = MemoryStack()
@@ -288,7 +294,8 @@ def create_app(
             request.app.state, "memory", None
         )
         prepared = body
-        session_id = (body.session_id or "").strip() or "http"
+        # Never share a global "http" bucket across anonymous callers.
+        session_id = (body.session_id or "").strip() or str(uuid.uuid4())
         user_text = ""
         for msg in reversed(body.messages):
             if msg.role == "user":
@@ -496,6 +503,13 @@ def create_app(
         if not query:
             raise HTTPException(status_code=400, detail="q is required")
         facts = await memory.client.search(query, top_k=top_k)
+        sid_filter = (session_id or "").strip() or None
+        if sid_filter:
+            facts = [
+                f
+                for f in facts
+                if not f.session_id or f.session_id == sid_filter
+            ]
         archival_hits = []
         if memory.archival is not None:
             archival_hits = await memory.archival.search(
@@ -553,7 +567,10 @@ def create_app(
             raise HTTPException(status_code=503, detail="memory unavailable")
         points: list[dict] = []
         facts = await memory.client.list_facts(limit=limit)
+        sid_filter = (session_id or "").strip() or None
         for f in facts:
+            if sid_filter and f.session_id and f.session_id != sid_filter:
+                continue
             points.append(
                 {
                     "id": f.id,

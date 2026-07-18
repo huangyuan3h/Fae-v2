@@ -84,6 +84,47 @@ async def test_append_recall_uses_shared_store(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_fact_missing_raises(tmp_path: Path) -> None:
+    from fae.memory.recall_store import RecallStore
+    from fae.memory.schemas import FactIn
+
+    recall = RecallStore(tmp_path / "u.db")
+    client = LettaMemoryClient("http://letta.test", recall_store=recall)
+    await client._http.aclose()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.rstrip("/").endswith("/v1/agents") and request.method == "GET":
+            return httpx.Response(
+                200, json=[{"id": "agent-1", "name": "fae-main"}]
+            )
+        if (
+            request.method == "GET"
+            and "/archival-memory/" in path
+            and not path.endswith("/archival-memory/")
+        ):
+            return httpx.Response(404, json={"error": "missing"})
+        if "archival-memory" in path and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("/passages/search") or path.endswith("/passages"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(404, json={"error": path})
+
+    client._http = httpx.AsyncClient(
+        base_url="http://letta.test",
+        transport=httpx.MockTransport(handler),
+        timeout=3.0,
+    )
+    await client.ensure_agent()
+    with pytest.raises(KeyError):
+        await client.update_fact(
+            "missing-id", FactIn(content="nope", tags=[])
+        )
+    await client.close()
+    recall.close()
+
+
+@pytest.mark.asyncio
 async def test_ensure_agent_finds_existing() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.rstrip("/").endswith("/v1/agents") and request.method == "GET":

@@ -227,9 +227,34 @@ class LettaMemoryClient:
         return await self.search(query or "", top_k=max(1, limit))
 
     async def update_fact(self, fact_id: str, fact: FactIn) -> FactOut:
-        # Best-effort: delete then re-insert (Letta passage PATCH varies by version).
+        """Insert replacement first, then delete old — avoids data loss on save fail."""
+        if not await self._passage_exists(fact_id):
+            raise KeyError(fact_id)
+        saved = await self.save_fact(fact)
+        # Best-effort cleanup of the previous passage (id may rotate on remote).
         await self.delete_fact(fact_id)
-        return await self.save_fact(fact)
+        return saved
+
+    async def _passage_exists(self, fact_id: str) -> bool:
+        agent_id = self._require_agent()
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory/{fact_id}",
+            f"/v1/agents/{agent_id}/passages/{fact_id}",
+        ):
+            try:
+                resp = await self._http.get(path)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code < 400:
+                return True
+            if resp.status_code == 404:
+                return False
+        # Fallback: scan recent search hits for the id.
+        try:
+            hits = await self.search("", top_k=50)
+        except Exception:  # noqa: BLE001
+            return False
+        return any(h.id == fact_id for h in hits)
 
     async def delete_fact(self, fact_id: str) -> bool:
         agent_id = self._require_agent()
@@ -241,8 +266,10 @@ class LettaMemoryClient:
                 resp = await self._http.delete(path)
             except httpx.HTTPError:
                 continue
-            if resp.status_code < 400 or resp.status_code == 404:
-                return resp.status_code < 400
+            if resp.status_code < 400:
+                return True
+            if resp.status_code == 404:
+                return False
         return False
 
     async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:

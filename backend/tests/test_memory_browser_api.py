@@ -45,6 +45,7 @@ def test_facts_crud_and_search(tmp_path: Path) -> None:
             json={"content": "User likes espresso", "tags": ["pref"]},
         )
         assert patched.status_code == 200
+        assert patched.json()["id"] == fact_id
         assert "espresso" in patched.json()["content"]
 
         search = http.get("/api/memory/search", params={"q": "espresso"})
@@ -59,3 +60,18 @@ def test_facts_crud_and_search(tmp_path: Path) -> None:
         deleted = http.delete(f"/api/memory/facts/{fact_id}")
         assert deleted.status_code == 200
         assert deleted.json()["ok"] is True
+
+
+def test_facts_404_and_search_requires_q(tmp_path: Path) -> None:
+    with _app(tmp_path) as http:
+        missing = http.patch(
+            "/api/memory/facts/does-not-exist",
+            json={"content": "x", "tags": []},
+        )
+        assert missing.status_code == 404
+
+        gone = http.delete("/api/memory/facts/does-not-exist")
+        assert gone.status_code == 404
+
+        bad = http.get("/api/memory/search", params={"q": ""})
+        assert bad.status_code == 400

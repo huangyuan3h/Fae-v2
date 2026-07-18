@@ -37,6 +37,9 @@ export default function MemoryFactsPage() {
       });
       return { prev };
     },
+    onSuccess: () => {
+      setDraft("");
+    },
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(["memory", "facts"], ctx.prev);
     },
@@ -47,8 +50,15 @@ export default function MemoryFactsPage() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, content }: { id: string; content: string }) =>
-      updateFact(id, content, ["manual"]),
+    mutationFn: ({
+      id,
+      content,
+      tags,
+    }: {
+      id: string;
+      content: string;
+      tags: string[];
+    }) => updateFact(id, content, tags),
     onMutate: async ({ id, content }) => {
       await qc.cancelQueries({ queryKey: ["memory", "facts"] });
       const prev = qc.getQueryData<{ facts: MemoryFact[] }>(["memory", "facts"]);
@@ -91,9 +101,13 @@ export default function MemoryFactsPage() {
     e.preventDefault();
     const content = draft.trim();
     if (!content) return;
-    setDraft("");
     createMut.mutate(content);
   };
+
+  const mutationError =
+    (createMut.error as Error | null)?.message ||
+    (updateMut.error as Error | null)?.message ||
+    (deleteMut.error as Error | null)?.message;
 
   return (
     <section className="space-y-5">
@@ -106,13 +120,17 @@ export default function MemoryFactsPage() {
         />
         <button
           type="submit"
-          className="rounded-full px-5 py-3 text-sm font-semibold text-white"
+          disabled={createMut.isPending}
+          className="rounded-full px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
           style={{ background: "var(--accent)" }}
         >
           添加
         </button>
       </form>
 
+      {mutationError && (
+        <p className="text-sm text-[var(--danger)]">{mutationError}</p>
+      )}
       {facts.isLoading && (
         <p className="text-sm text-[var(--ink-soft)]">加载事实…</p>
       )}
@@ -135,7 +153,11 @@ export default function MemoryFactsPage() {
                   e.preventDefault();
                   const content = editing.content.trim();
                   if (!content) return;
-                  updateMut.mutate({ id: fact.id, content });
+                  updateMut.mutate({
+                    id: fact.id,
+                    content,
+                    tags: fact.tags?.length ? fact.tags : ["manual"],
+                  });
                 }}
               >
                 <input

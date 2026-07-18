@@ -32,6 +32,24 @@ export type SearchResult = {
   events: SearchHit[];
 };
 
+function formatApiError(status: number, body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    const detail = parsed.detail;
+    if (typeof detail === "string") {
+      if (status === 503) return `记忆服务不可用：${detail}`;
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      return detail.map((d) => JSON.stringify(d)).join("; ");
+    }
+  } catch {
+    /* use raw */
+  }
+  if (status === 503) return "记忆服务不可用（503）";
+  return body || `HTTP ${status}`;
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${backendHttpBase()}${path}`, {
     ...init,
@@ -42,7 +60,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const detail = await res.text();
-    throw new Error(detail || `HTTP ${res.status}`);
+    throw new Error(formatApiError(res.status, detail));
   }
   return res.json() as Promise<T>;
 }
@@ -61,16 +79,20 @@ export function createFact(content: string, tags: string[] = []) {
 }
 
 export function updateFact(id: string, content: string, tags: string[] = []) {
-  return jsonFetch<MemoryFact>(`/api/memory/facts/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ content, tags }),
-  });
+  return jsonFetch<MemoryFact>(
+    `/api/memory/facts/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ content, tags }),
+    },
+  );
 }
 
 export function deleteFact(id: string) {
-  return jsonFetch<{ ok: boolean }>(`/api/memory/facts/${id}`, {
-    method: "DELETE",
-  });
+  return jsonFetch<{ ok: boolean }>(
+    `/api/memory/facts/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function searchMemory(q: string) {
