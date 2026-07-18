@@ -25,6 +25,7 @@ def test_ready_endpoint() -> None:
     body = resp.json()
     assert body["status"] == "ready"
     assert body["app"] == "fae-v2"
+    assert body.get("letta") == "off"
 
 
 def test_create_app_uses_provided_settings() -> None:

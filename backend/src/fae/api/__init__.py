@@ -29,6 +29,8 @@ from fae.llm import (
     LLMError,
     OpenAICompatibleProvider,
 )
+from fae.memory.factory import create_memory_client
+from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
 
@@ -39,9 +41,8 @@ logger = logging.getLogger("fae")
 async def lifespan(app: FastAPI):
     """Startup / shutdown hooks.
 
-    - Log the settings bound on app.state (set by create_app).
+    - Wire Letta / embedded memory into app.state.memory.
     - Cancel in-flight Daily bots on shutdown.
-    - Phase 2: wire Letta client / consolidation scheduler here.
     """
     settings: Settings = app.state.settings
     logging.basicConfig(
@@ -49,10 +50,33 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logger.info("Starting %s (env=%s)", settings.app_name, settings.app_env)
+
+    # Allow tests to pre-set app.state.memory before lifespan runs.
+    if getattr(app.state, "memory", None) is None:
+        try:
+            mem_client = await create_memory_client(settings)
+            if mem_client is not None:
+                app.state.memory = LettaMemoryService(mem_client)
+                app.state.memory_client = mem_client
+            else:
+                app.state.memory = None
+                app.state.memory_client = None
+        except Exception:  # noqa: BLE001
+            logger.exception("Memory bootstrap failed — continuing without memory")
+            app.state.memory = None
+            app.state.memory_client = None
+
     yield
+
     runtime = getattr(app.state, "voice_runtime", None)
     if runtime is not None:
         await runtime.shutdown()
+    mem_client = getattr(app.state, "memory_client", None)
+    if mem_client is not None:
+        try:
+            await mem_client.close()
+        except Exception:  # noqa: BLE001
+            logger.exception("memory_client.close failed")
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -101,7 +125,8 @@ def create_app(
       app.state.llm_client     — LLMClient shared by HTTP + WebSocket
       app.state.sessions       — SessionStore
       app.state.voice_runtime  — Daily bot + barge-in registry
-      app.state.memory         — Phase 2 Letta client (None until wired)
+      app.state.memory         — LettaMemoryService | None
+      app.state.memory_client  — underlying MemoryClient | None
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -116,6 +141,7 @@ def create_app(
     app.state.sessions = SessionStore()
     app.state.voice_runtime = VoiceRuntime()
     app.state.memory = None
+    app.state.memory_client = None
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
@@ -134,9 +160,29 @@ def create_app(
 
     @app.get("/ready")
     async def ready(request: Request) -> dict[str, str]:
-        """Readiness probe: config loaded and (later) downstream deps reachable."""
+        """Readiness probe: config loaded; Letta status is informational."""
         app_settings: Settings = request.app.state.settings
-        return {"status": "ready", "app": app_settings.app_name}
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        letta_status = "skipped"
+        if app_settings.letta_mode == "off":
+            letta_status = "off"
+        elif app_settings.letta_mode == "embedded":
+            letta_status = "ok" if memory and memory.enabled else "down"
+        else:
+            client = memory.client if memory else None
+            if client is not None and hasattr(client, "health"):
+                letta_status = "ok" if await client.health() else "down"  # type: ignore[misc]
+            elif memory and memory.enabled:
+                letta_status = "ok"
+            else:
+                letta_status = "down"
+        return {
+            "status": "ready",
+            "app": app_settings.app_name,
+            "letta": letta_status,
+        }
 
     # ── Checkpoint 2 endpoints ────────────────────────────────────────
     @app.post("/api/test-connection", response_model=dict[str, str])
@@ -159,6 +205,7 @@ def create_app(
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(
         body: ChatRequest,
+        request: Request,
         client: Annotated[LLMClient, Depends(get_llm_client)],
     ) -> ChatResponse:
         """Synchronous text-only chat completion. Used by the UI's
@@ -167,8 +214,26 @@ def create_app(
         For real-time streaming (the voice-orb chat panel), use the
         WebSocket endpoint /ws/chat instead.
         """
+        memory: LettaMemoryService | None = getattr(
+            request.app.state, "memory", None
+        )
+        prepared = body
+        user_text = ""
+        for msg in reversed(body.messages):
+            if msg.role == "user":
+                user_text = msg.content
+                break
         try:
-            return await client.chat(body)
+            if memory is not None and memory.enabled:
+                prepared = await memory.prepare_request(body, session_id="http")
+            response = await client.chat(prepared)
+            if memory is not None and memory.enabled and user_text:
+                await memory.persist_turn(
+                    session_id="http",
+                    user_text=user_text,
+                    assistant_text=response.content,
+                )
+            return response
         except LLMError as e:
             raise _llm_error_to_http(e) from e
 

@@ -1,11 +1,12 @@
-# FAE-v2 local stack (Phase 1.1 scaffold).
-# Heavy real models (GPU ASR / Letta) are stubbed so all 6 services can
-# become healthy without a GPU. Swap stub images for real ones later.
+# FAE-v2 local stack.
+# ASR remains a stub (no GPU). Letta uses the official image with Postgres volume.
 #
 # Usage:
 #   ./deploy/scripts/setup.sh
 #   ./deploy/scripts/start.sh
 #   curl http://localhost:8000/health
+#
+# Offline Letta fallback (no Docker pull): set backend LETTA_MODE=embedded
 
 services:
   backend:
@@ -19,7 +20,9 @@ services:
       - path: .env
         required: false
     environment:
+      LETTA_MODE: remote
       LETTA_SERVER_URL: http://letta:8283
+      LETTA_AGENT_NAME: fae-main
       VLLM_ASR_URL: http://vllm-asr:8000
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://redis:6379
@@ -72,6 +75,31 @@ services:
       start_period: 30s
 
   letta:
+    image: letta/letta:latest
+    ports:
+      - "8283:8283"
+    volumes:
+      # Official Letta Docker persists via Postgres (not SQLite).
+      - letta-data:/var/lib/postgresql/data
+    environment:
+      # Letta may use these for embeddings / internal tools; FAE chat still uses per-request keys.
+      OPENAI_API_KEY: ${DASHSCOPE_API_KEY:-${OPENAI_API_KEY:-}}
+      OPENAI_API_BASE: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8283/v1/health')\" || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
+  # Offline / CI fallback: `docker compose --profile stub-letta up`
+  # (does not satisfy M2-1 persistence — use official letta or LETTA_MODE=embedded)
+  letta-stub:
+    profiles: ["stub-letta"]
     build:
       context: .
       dockerfile: deploy/docker/letta.Dockerfile
@@ -105,3 +133,4 @@ services:
 
 volumes:
   qdrant-data:
+  letta-data:

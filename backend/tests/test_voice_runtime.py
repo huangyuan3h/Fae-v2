@@ -58,7 +58,8 @@ def test_barge_in_with_registered_session() -> None:
     assert resp.json()["action"] == "interrupted"
 
 
-def test_memory_schemas_importable() -> None:
+@pytest.mark.asyncio
+async def test_memory_schemas_importable() -> None:
     from fae.memory import FactIn, FactOut, UserProfile
     from fae.memory.letta_client import LettaMemoryClient, memory_tool_stubs
     from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -71,3 +72,4 @@ def test_memory_schemas_importable() -> None:
     assert client.agent_name == "fae-main"
     assert len(memory_tool_stubs()) == 3
     assert LettaMemoryService(None).enabled is False
+    await client.close()

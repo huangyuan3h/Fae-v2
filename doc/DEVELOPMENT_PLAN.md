@@ -92,28 +92,28 @@
 ### 准备（Phase 1 收尾已完成）
 
 - [x] `fae.memory` 包 + `FactIn` / `FactOut` / `UserProfile` schema
-- [x] `LettaMemoryClient` / `LettaMemoryService` 脚手架（方法待实现）
+- [x] `LettaMemoryClient` / `LettaMemoryService` + lifespan 接线
 - [x] `app.state.memory` 挂载点 + `VoiceRuntime`（session ↔ barge-in / Daily task）
 - [x] 统一 LLM `base_url` 默认含 `/v1`；打断路径接通 `/api/voice/barge-in`
 
-> **下一刀**：实现 `ensure_agent` + 三个 memory tools，把 `app.state.memory` 接到 lifespan。
-
 ### 2.1 Letta 接入
 
-- [ ] 启动 Letta server（SQLite 持久化到 `/data/letta.db`）
-- [ ] 创建首个 agent：`fae-main`，挂上 persona / user / current 三块 core memory
-- [x] 脚手架 `backend/src/fae/memory/letta_client.py`（REST 封装待填）
-- [ ] 实现三个最基础工具：`memory_save_fact` / `memory_search` / `memory_update_user`
+- [x] Compose 使用官方 `letta/letta:latest`（Postgres 卷 `letta-data`；离线可用 `LETTA_MODE=embedded` SQLite）
+- [x] 创建 / 解析 agent：`fae-main`，挂 persona / human / current 三块 core memory
+- [x] 实现 `backend/src/fae/memory/letta_client.py`（REST）+ `embedded.py`
+- [x] 三个工具表面：`save_fact` / `search` / `update_user`（+ `recall_for_prompt`）
 - [x] Pydantic schema：`FactIn` / `FactOut` / `UserProfile`
+- [x] `/ws/chat` + `/api/chat`：召回注入 + 回合写入（启发式「我叫X」→ M2-1）
 
 > **冒烟测试**（M2-1）：说"我叫小明"，关掉浏览器，重开，问"我叫什么" → 答"小明"。
+> 本地最快：`.env` 设 `LETTA_MODE=embedded`，或 `docker compose up letta` + `LETTA_MODE=remote`。
 
 ### 2.2 Pipecat Memory Service
 
-- [x] 脚手架 `backend/src/fae/pipecat/services/letta_memory.py`（注入接口已定）
-- [ ] 接到浏览器 `Qwen3LLMService` + Daily `OpenAILLMService` 上游（同一 `recall_context`）
-- [ ] 每次 LLM 调用前自动注入 top-k=10 相关历史记忆
-- [ ] 每轮对话结束落库到 Recall Memory（带 session_id + 时间戳）
+- [x] `LettaMemoryService`（浏览器 WS / HTTP 已接；Daily 待接）
+- [ ] 接到 Daily `OpenAILLMService` 上游（同一 `recall_context`）
+- [x] 每次 LLM 调用前注入相关记忆（WS/HTTP；top-k=10）
+- [x] 每轮结束 `persist_turn`（身份类事实；完整 Recall 会话分桶仍待深化）
 - [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）
 
 > **冒烟测试**（M2-2）：连续聊 5 个话题后问"我刚才提到 Python 那个项目怎么样"。
@@ -352,6 +352,6 @@
 
 ---
 
-**最后更新**：2026-07-18
+**最后更新**：2026-07-18（Phase 2.1 M2-1）
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 **反馈**：GitHub Issues / PR

@@ -1,5 +1,5 @@
-# Lightweight Letta API stub for compose healthchecks.
-# Real Letta server replaces this image in Phase 2.
+# Offline Letta API stub for compose profile `stub-letta`.
+# Default stack uses image `letta/letta:latest` (see docker-compose.yml).
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app

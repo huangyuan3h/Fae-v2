@@ -74,6 +74,9 @@ omit = [
     # the FastAPI app factory and all HTTP routes.
     "src/fae/__init__.py",
     "src/fae/llm/__init__.py",
+    # Live Daily / Pipecat bot — integration-only.
+    "src/fae/pipecat/daily_bot.py",
+    "src/fae/pipecat/daily_rooms.py",
     "*/tests/*",
 ]
 

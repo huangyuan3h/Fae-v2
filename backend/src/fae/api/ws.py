@@ -27,6 +27,7 @@ from starlette.websockets import WebSocketState
 
 from fae.api.deps import get_llm_client
 from fae.llm import ChatRequest, LLMClient, LLMError
+from fae.pipecat.services.letta_memory import LettaMemoryService
 
 logger = logging.getLogger("fae.ws")
 
@@ -40,8 +41,6 @@ async def _send(ws: WebSocket, payload: dict[str, Any]) -> None:
     try:
         await ws.send_json(payload)
     except (WebSocketDisconnect, RuntimeError):
-        # Client already gone — nothing to do. The cancellation will
-        # propagate through the stream task and clean up the provider.
         pass
 
 
@@ -56,19 +55,43 @@ async def _cancel_active(active: asyncio.Task[None] | None) -> None:
         pass
 
 
+def _memory_from_app(ws: WebSocket) -> LettaMemoryService | None:
+    memory = getattr(ws.app.state, "memory", None)
+    return memory if isinstance(memory, LettaMemoryService) else None
+
+
 async def _run_stream(
-    ws: WebSocket, client: LLMClient, request: ChatRequest
+    ws: WebSocket,
+    client: LLMClient,
+    request: ChatRequest,
+    memory: LettaMemoryService | None,
 ) -> None:
     """Pump tokens from the provider to the client until done or cancelled."""
+    user_text = ""
+    for msg in reversed(request.messages):
+        if msg.role == "user":
+            user_text = msg.content
+            break
+
+    stream_request = request
+    if memory is not None and memory.enabled:
+        stream_request = await memory.prepare_request(request, session_id="ws")
+
+    assistant_parts: list[str] = []
     try:
-        async for token in client.stream(request):
+        async for token in client.stream(stream_request):
+            assistant_parts.append(token)
             await _send(ws, {"type": "token", "content": token})
+        if memory is not None and memory.enabled and user_text:
+            await memory.persist_turn(
+                session_id="ws",
+                user_text=user_text,
+                assistant_text="".join(assistant_parts),
+            )
         await _send(ws, {"type": "done", "usage": None})
     except LLMError as e:
         await _send(ws, {"type": "error", "code": e.code, "message": e.message})
     except asyncio.CancelledError:
-        # Client sent `cancel` or disconnected. Let the wrapper send
-        # a `done` so the UI doesn't hang in "thinking...".
         await _send(ws, {"type": "done", "usage": None})
         raise
     except Exception as e:  # noqa: BLE001 — last-resort
@@ -83,16 +106,7 @@ async def ws_chat(
     websocket: WebSocket,
     client: Annotated[LLMClient, Depends(get_llm_client)],
 ) -> None:
-    """Streaming chat over WebSocket.
-
-    Connection lifecycle:
-      1. Client connects.
-      2. Client sends `{"type":"chat", "request": ChatRequest}`.
-      3. Server streams `token` messages.
-      4. Server sends `done` (or `error` on failure).
-      5. Client may send another `chat` or `cancel` (cancels in-flight stream).
-      6. Client closes the connection.
-    """
+    """Streaming chat over WebSocket."""
     await websocket.accept()
     active: asyncio.Task[None] | None = None
     try:
@@ -131,7 +145,6 @@ async def ws_chat(
                 continue
 
             if msg_type == "chat":
-                # Cancel any in-flight stream — one generation per connection.
                 await _cancel_active(active)
                 active = None
 
@@ -150,12 +163,12 @@ async def ws_chat(
                     )
                     continue
 
+                memory = _memory_from_app(websocket)
                 active = asyncio.create_task(
-                    _run_stream(websocket, client, request)
+                    _run_stream(websocket, client, request, memory)
                 )
                 continue
 
-            # Unknown message type — be lenient, don't disconnect.
             await _send(
                 websocket,
                 {

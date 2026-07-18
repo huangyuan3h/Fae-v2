@@ -1,0 +1,104 @@
+"""WS chat with embedded memory — recall inject + persist_turn."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import socket
+import threading
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+import pytest
+import uvicorn
+import websockets
+
+from fae.api import create_app
+from fae.config import Settings
+from fae.llm import FakeProvider, LLMClient
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@contextmanager
+def _running_server(app) -> Iterator[str]:
+    port = _free_port()
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        loop="asyncio",
+    )
+    server = uvicorn.Server(config)
+
+    def _serve() -> None:
+        asyncio.run(server.serve())
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.05)
+    else:
+        raise RuntimeError(f"server did not start on port {port}")
+    try:
+        yield f"ws://127.0.0.1:{port}/ws/chat"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=3.0)
+
+
+async def _chat_until_done(ws: websockets.ClientConnection, content: str) -> None:
+    await ws.send(
+        json.dumps(
+            {
+                "type": "chat",
+                "request": {
+                    "config": {
+                        "base_url": "http://x",
+                        "api_key": "k",
+                        "model": "m",
+                    },
+                    "messages": [{"role": "user", "content": content}],
+                },
+            }
+        )
+    )
+    for _ in range(30):
+        raw = await asyncio.wait_for(ws.recv(), timeout=3.0)
+        msg = json.loads(raw)
+        if msg["type"] == "done":
+            return
+        if msg["type"] == "error":
+            pytest.fail(f"error frame: {msg}")
+
+
+async def test_ws_persists_name_and_injects_on_next_turn(tmp_path: Path) -> None:
+    fake = FakeProvider(tokens=["好", "的"])
+    settings = Settings(
+        letta_mode="embedded",
+        letta_embedded_path=str(tmp_path / "ws-mem.db"),
+    )
+    app = create_app(settings=settings, llm_client=LLMClient(provider=fake))
+
+    with _running_server(app) as url:
+        async with websockets.connect(url) as ws:
+            await _chat_until_done(ws, "我叫小明")
+            await _chat_until_done(ws, "我叫什么")
+
+    assert len(fake.stream_calls) >= 2
+    second = fake.stream_calls[1]
+    assert second.messages[0].role == "system"
+    assert "<fae_memory>" in second.messages[0].content
+    assert "小明" in second.messages[0].content

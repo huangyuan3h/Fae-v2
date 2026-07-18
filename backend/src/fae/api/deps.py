@@ -12,6 +12,7 @@ from __future__ import annotations
 from starlette.requests import HTTPConnection
 
 from fae.llm import LLMClient
+from fae.pipecat.services.letta_memory import LettaMemoryService
 
 
 def get_llm_client(conn: HTTPConnection) -> LLMClient:
@@ -22,3 +23,13 @@ def get_llm_client(conn: HTTPConnection) -> LLMClient:
             "LLMClient not configured on app.state — create_app() must set it"
         )
     return client
+
+
+def get_memory_service(conn: HTTPConnection) -> LettaMemoryService | None:
+    """Optional memory service — None when Letta / embedded store is off."""
+    memory = getattr(conn.app.state, "memory", None)
+    if memory is None:
+        return None
+    if isinstance(memory, LettaMemoryService):
+        return memory
+    return None

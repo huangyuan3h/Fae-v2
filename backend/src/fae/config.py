@@ -43,7 +43,13 @@ class Settings(BaseSettings):
     dashscope_api_key: str = ""
 
     # Letta (long-term memory)
+    # remote | embedded | off
+    letta_mode: str = Field(default="remote", description="remote | embedded | off")
     letta_server_url: str = "http://localhost:8283"
+    letta_agent_name: str = "fae-main"
+    letta_server_password: str = ""
+    # Relative to repo root unless absolute
+    letta_embedded_path: str = ".data/fae-memory.db"
 
     # vLLM self-hosted (optional)
     vllm_asr_url: str = "http://localhost:8001"

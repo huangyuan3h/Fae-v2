@@ -1,55 +1,30 @@
-"""Letta REST client (Phase 2.1 — scaffold).
+"""Letta REST client (Phase 2.1).
 
-Implements the surface used by tools / Pipecat injection. Methods raise
-`NotImplementedError` until the Letta server + agent bootstrap land.
+Talks to a self-hosted Letta server over HTTP. Callers should treat all
+methods as best-effort: raise on hard failures so the service layer can
+log and degrade without breaking chat.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
+
+import httpx
 
 from fae.memory.schemas import FactIn, FactOut, UserProfile
 
 logger = logging.getLogger("fae.memory.letta")
 
+_DEFAULT_PERSONA = (
+    "You are FAE, a concise bilingual voice assistant with long-term memory. "
+    "Use remembered facts about the user when relevant."
+)
+_DEFAULT_HUMAN = "Unknown user. Learn and remember their name and preferences."
+_DEFAULT_CURRENT = ""
 
-class LettaMemoryClient:
-    """Thin async wrapper around Letta's HTTP API."""
-
-    def __init__(self, base_url: str, *, agent_name: str = "fae-main") -> None:
-        self.base_url = base_url.rstrip("/")
-        self.agent_name = agent_name
-        self._agent_id: str | None = None
-
-    @property
-    def agent_id(self) -> str | None:
-        return self._agent_id
-
-    async def ensure_agent(self) -> str:
-        """Create or resolve the `fae-main` agent; return agent_id."""
-        raise NotImplementedError("Phase 2.1: bootstrap Letta agent fae-main")
-
-    async def save_fact(self, fact: FactIn) -> FactOut:
-        raise NotImplementedError("Phase 2.1: memory_save_fact")
-
-    async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
-        raise NotImplementedError("Phase 2.1: memory_search")
-
-    async def update_user(self, profile: UserProfile) -> UserProfile:
-        raise NotImplementedError("Phase 2.1: memory_update_user")
-
-    async def recall_for_prompt(self, query: str, *, top_k: int = 10) -> str:
-        """Return a short block of relevant memories for LLM system injection."""
-        _ = (query, top_k)
-        raise NotImplementedError("Phase 2.2: recall injection")
-
-    async def close(self) -> None:
-        """Release HTTP resources (no-op until aiohttp/httpx session exists)."""
-        logger.debug("LettaMemoryClient.close base_url=%s", self.base_url)
-
-
-# Tool names from DEVELOPMENT_PLAN 2.1 — implement as Letta tools later.
 MEMORY_TOOLS: tuple[str, ...] = (
     "memory_save_fact",
     "memory_search",
@@ -64,9 +39,275 @@ def memory_tool_stubs() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": name,
-                "description": f"Stub for {name} (Phase 2.1)",
+                "description": f"FAE memory tool: {name}",
                 "parameters": {"type": "object", "properties": {}},
             },
         }
         for name in MEMORY_TOOLS
     ]
+
+
+class LettaMemoryClient:
+    """Thin async wrapper around Letta's HTTP API."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        agent_name: str = "fae-main",
+        api_key: str | None = None,
+        model: str = "openai/gpt-4o-mini",
+        embedding: str = "openai/text-embedding-3-small",
+        timeout_s: float = 15.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.agent_name = agent_name
+        self.model = model
+        self.embedding = embedding
+        self._agent_id: str | None = None
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self._http = httpx.AsyncClient(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=timeout_s,
+        )
+
+    @property
+    def agent_id(self) -> str | None:
+        return self._agent_id
+
+    async def ensure_agent(self) -> str:
+        """Create or resolve the named agent; return agent_id."""
+        existing = await self._find_agent_id()
+        if existing:
+            self._agent_id = existing
+            logger.info("Letta agent resolved name=%s id=%s", self.agent_name, existing)
+            return existing
+
+        payload: dict[str, Any] = {
+            "name": self.agent_name,
+            "memory_blocks": [
+                {"label": "persona", "value": _DEFAULT_PERSONA, "limit": 5000},
+                {"label": "human", "value": _DEFAULT_HUMAN, "limit": 5000},
+                {"label": "current", "value": _DEFAULT_CURRENT, "limit": 5000},
+            ],
+            "model": self.model,
+            "embedding": self.embedding,
+        }
+        resp = await self._http.post("/v1/agents/", json=payload)
+        if resp.status_code >= 400:
+            # Retry without embedding (some servers derive it).
+            payload.pop("embedding", None)
+            resp = await self._http.post("/v1/agents/", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        agent_id = data.get("id") or data.get("agent_id")
+        if not agent_id:
+            raise RuntimeError(f"Letta create agent missing id: {data!r}")
+        self._agent_id = str(agent_id)
+        logger.info("Letta agent created name=%s id=%s", self.agent_name, agent_id)
+        return self._agent_id
+
+    async def _find_agent_id(self) -> str | None:
+        # Prefer name query when supported; fall back to list scan.
+        for path in (f"/v1/agents/?name={self.agent_name}", "/v1/agents/"):
+            try:
+                resp = await self._http.get(path)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code >= 400:
+                continue
+            data = resp.json()
+            agents = data if isinstance(data, list) else data.get("agents") or data.get("items") or []
+            if not isinstance(agents, list):
+                continue
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    continue
+                if agent.get("name") == self.agent_name:
+                    aid = agent.get("id") or agent.get("agent_id")
+                    if aid:
+                        return str(aid)
+            # name-filtered endpoint may return a single match list
+            if "name=" in path and len(agents) == 1 and isinstance(agents[0], dict):
+                aid = agents[0].get("id") or agents[0].get("agent_id")
+                if aid:
+                    return str(aid)
+        return None
+
+    def _require_agent(self) -> str:
+        if not self._agent_id:
+            raise RuntimeError("ensure_agent() must be called first")
+        return self._agent_id
+
+    async def _get_block(self, label: str) -> str:
+        agent_id = self._require_agent()
+        resp = await self._http.get(
+            f"/v1/agents/{agent_id}/core-memory/blocks/{label}"
+        )
+        if resp.status_code == 404:
+            return ""
+        resp.raise_for_status()
+        data = resp.json()
+        return str(data.get("value") or "")
+
+    async def _set_block(self, label: str, value: str) -> None:
+        agent_id = self._require_agent()
+        resp = await self._http.patch(
+            f"/v1/agents/{agent_id}/core-memory/blocks/{label}",
+            json={"value": value},
+        )
+        resp.raise_for_status()
+
+    async def save_fact(self, fact: FactIn) -> FactOut:
+        agent_id = self._require_agent()
+        payload = {
+            "text": fact.content,
+            "tags": fact.tags,
+            "metadata": {"session_id": fact.session_id} if fact.session_id else {},
+        }
+        # Try modern passages API, then legacy archival-memory.
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory",
+            f"/v1/agents/{agent_id}/passages",
+        ):
+            try:
+                resp = await self._http.post(path, json=payload)
+            except httpx.HTTPError as e:
+                logger.warning("archival insert failed path=%s err=%s", path, e)
+                continue
+            if resp.status_code < 400:
+                data = resp.json()
+                fact_id = str(
+                    data.get("id")
+                    or data.get("passage_id")
+                    or uuid4()
+                )
+                return FactOut(
+                    id=fact_id,
+                    content=fact.content,
+                    tags=list(fact.tags),
+                    session_id=fact.session_id,
+                    created_at=datetime.now(UTC),
+                )
+        # Fallback: append into human block so M2-1 still works.
+        human = await self._get_block("human")
+        line = f"- {fact.content}"
+        if line not in human:
+            human = f"{human.rstrip()}\n{line}".strip()
+            await self._set_block("human", human)
+        return FactOut(
+            id=str(uuid4()),
+            content=fact.content,
+            tags=list(fact.tags),
+            session_id=fact.session_id,
+            created_at=datetime.now(UTC),
+        )
+
+    async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
+        agent_id = self._require_agent()
+        params = {"query": query, "top_k": top_k}
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory/search",
+            f"/v1/agents/{agent_id}/archival-memory",
+            f"/v1/agents/{agent_id}/passages/search",
+        ):
+            try:
+                resp = await self._http.get(path, params=params)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code >= 400:
+                continue
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("passages") or data.get("results") or data.get("items") or []
+            out: list[FactOut] = []
+            for item in items[:top_k]:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("text") or item.get("content") or "")
+                if not content:
+                    continue
+                out.append(
+                    FactOut(
+                        id=str(item.get("id") or uuid4()),
+                        content=content,
+                        tags=list(item.get("tags") or []),
+                        session_id=(item.get("metadata") or {}).get("session_id")
+                        if isinstance(item.get("metadata"), dict)
+                        else None,
+                    )
+                )
+            if out:
+                return out
+
+        # Fallback: keyword scan of human + current blocks.
+        human = await self._get_block("human")
+        current = await self._get_block("current")
+        blob = f"{human}\n{current}"
+        q = (query or "").lower()
+        hits: list[FactOut] = []
+        for line in blob.splitlines():
+            line = line.strip(" -*\t")
+            if not line:
+                continue
+            if not q or any(tok in line.lower() for tok in q.split()):
+                hits.append(FactOut(id=str(uuid4()), content=line, tags=["core"]))
+            if len(hits) >= top_k:
+                break
+        return hits
+
+    async def update_user(self, profile: UserProfile) -> UserProfile:
+        existing = await self._get_block("human")
+        lines = existing.splitlines() if existing else []
+        if profile.display_name:
+            replaced = False
+            new_lines: list[str] = []
+            for line in lines:
+                if line.startswith("Name:"):
+                    new_lines.append(f"Name: {profile.display_name}")
+                    replaced = True
+                else:
+                    new_lines.append(line)
+            if not replaced:
+                new_lines.insert(0, f"Name: {profile.display_name}")
+            lines = new_lines
+        for key, value in profile.preferences.items():
+            pref_line = f"{key}: {value}"
+            if pref_line not in lines:
+                lines.append(pref_line)
+        if profile.notes and profile.notes not in "\n".join(lines):
+            lines.append(profile.notes)
+        text = "\n".join(lines).strip() or _DEFAULT_HUMAN
+        await self._set_block("human", text)
+        return profile
+
+    async def recall_for_prompt(self, query: str, *, top_k: int = 10) -> str:
+        human = (await self._get_block("human")).strip()
+        current = (await self._get_block("current")).strip()
+        try:
+            facts = await self.search(query, top_k=top_k)
+        except Exception:  # noqa: BLE001
+            logger.exception("Letta search failed during recall")
+            facts = []
+        parts: list[str] = []
+        if human:
+            parts.append(f"[human]\n{human}")
+        if current:
+            parts.append(f"[current]\n{current}")
+        if facts:
+            lines = "\n".join(f"- {f.content}" for f in facts)
+            parts.append(f"[facts]\n{lines}")
+        return "\n\n".join(parts)
+
+    async def health(self) -> bool:
+        try:
+            resp = await self._http.get("/v1/health")
+            return resp.status_code < 400
+        except httpx.HTTPError:
+            return False
+
+    async def close(self) -> None:
+        await self._http.aclose()
+        logger.debug("LettaMemoryClient.close base_url=%s", self.base_url)

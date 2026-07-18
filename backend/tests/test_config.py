@@ -23,7 +23,7 @@ def test_defaults_when_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     # accidentally read the repo-root .env.
     monkeypatch.setattr(config_module, "_ENV_FILE", tmp_path / "missing.env")
     # Clear any inherited env vars for the fields we assert on.
-    for field in ("APP_ENV", "LOG_LEVEL", "DASHSCOPE_API_KEY"):
+    for field in ("APP_ENV", "LOG_LEVEL", "DASHSCOPE_API_KEY", "LETTA_MODE"):
         monkeypatch.delenv(field, raising=False)
 
     s = Settings()
@@ -32,6 +32,8 @@ def test_defaults_when_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert s.log_level == "INFO"
     assert s.dashscope_api_key == ""
     assert s.letta_server_url == "http://localhost:8283"
+    assert s.letta_mode == "remote"
+    assert s.letta_agent_name == "fae-main"
     assert s.vllm_asr_url == "http://localhost:8001"
     assert s.vllm_llm_url == "http://localhost:8002"
     assert s.qdrant_url == "http://localhost:6333"
