@@ -14,9 +14,11 @@ interfaces for the next checkpoint.
 from fae.pipecat.barge_in import BargeInController
 from fae.pipecat.bot import PipelineEvent, TextPipelineBot
 from fae.pipecat.sentence import SentenceAggregator
+from fae.pipecat.vad import EnergyVAD
 
 __all__ = [
     "BargeInController",
+    "EnergyVAD",
     "PipelineEvent",
     "SentenceAggregator",
     "TextPipelineBot",

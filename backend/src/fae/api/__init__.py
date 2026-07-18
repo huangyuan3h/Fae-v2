@@ -13,10 +13,12 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from fae.api.deps import get_llm_client
 from fae.api.pipeline import router as pipeline_router
+from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
 from fae.config import Settings, get_settings
 from fae.llm import (
@@ -105,6 +107,15 @@ def create_app(
     )
     app.state.sessions = SessionStore()
 
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins or ["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # ── Checkpoint 1 endpoints ────────────────────────────────────────
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -186,6 +197,9 @@ def create_app(
 
     # ── Phase 1.3: text pipeline smoke ─────────────────────────────────
     app.include_router(pipeline_router)
+
+    # ── Phase 1.4: voice session bootstrap ─────────────────────────────
+    app.include_router(voice_router)
 
     return app
 

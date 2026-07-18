@@ -1,57 +1,66 @@
 # FAE-v2
 
-> **F**ully **A**utonomous **E**cho · v2
-> 一个有长期记忆、能主动 loop、可本地部署的语音 Agent。
+> **F**ully **A**utonomous **E**cho · v2  
+> 有长期记忆、能主动 loop、可本地部署的语音 Agent。
 
 ## 文档
 
-- 📐 **[ARCHITECTURE.md](./ARCHITECTURE.md)** — 完整架构文档（必读）
-- ✅ **[doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)** — 分阶段 checklist
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — 架构
+- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — 分阶段 checklist
 
-## 当前进度
+## Phase 1 状态
 
-| 阶段 | 状态 |
+| 项 | 状态 |
 |---|---|
-| 1.1 基础设施 + Compose | 脚手架就绪（ASR/Letta/UI 为 stub） |
-| 1.2 FastAPI + sessions + CI | 就绪 |
-| 1.3 文本 pipeline 最小尝试 | 就绪（非浏览器语音） |
-| 1.4 Minimal UI / VoiceOrb | 未开始 |
-| 1.5 真模型一键演示 | 未开始 |
+| Docker Compose 6 服务 | ✅（ASR/Letta 仍为 stub，可无 GPU 起栈） |
+| FastAPI + sessions + CI | ✅ |
+| 文本 pipeline + barge-in + Energy VAD | ✅ |
+| Next.js UI（VoiceOrb / Mic / 文字回退） | ✅ |
+| 浏览器语音对话（Web Speech STT/TTS + `/ws/chat`） | ✅ |
+| Daily / Silero / 真 ASR GPU | 预留接口，需 Key / GPU 后替换 |
 
 ## 快速开始
-
-### A. 本地后端开发（uv）
 
 ```bash
 git clone https://github.com/huangyuan3h/Fae-v2.git
 cd Fae-v2
 cp .env.example .env
-./start.sh
-# → http://localhost:8000
+# 填入 DASHSCOPE_API_KEY（或在 UI「Agent 设置」里填 API Key）
 
-curl http://localhost:8000/health
-cd backend && uv run pytest
-```
+# 方式 A：本地开发
+./start.sh                  # backend :8000
+cd ui && pnpm install && pnpm dev   # UI :3000
 
-### B. Docker 全栈（6 服务）
-
-```bash
+# 方式 B：Docker 一键起
 ./deploy/scripts/setup.sh
 ./deploy/scripts/start.sh
-# UI:      http://localhost:3000
-# Backend: http://localhost:8000
+open http://localhost:3000
 ```
 
-### 关键端点
+### 演示路径（M1）
+
+1. 打开 http://localhost:3000  
+2. 在「Agent 设置」填入 OpenAI-compatible `base_url` / `api_key` / `model`（如 DashScope）  
+3. 点击「开始说话」（Chrome）或使用文字输入  
+4. 听到 / 看到流式回复；可点「打断」做 barge-in  
+
+### 常用端点
 
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/health` | 存活 |
-| GET | `/ready` | 就绪 |
-| POST | `/api/sessions` | 创建会话 |
-| POST | `/api/chat` | 同步文本 chat |
+| POST | `/api/sessions` | 会话 |
+| POST | `/api/voice/session` | 语音会话 bootstrap |
+| POST | `/api/chat` | 同步 chat |
 | WS | `/ws/chat` | 流式 token |
-| POST | `/api/pipeline/text` | 1.3 文本管道冒烟（LLM→句子→TTS stub） |
+| POST | `/api/pipeline/text` | 文本管道冒烟 |
+
+## 测试
+
+```bash
+cd backend && uv run pytest
+cd ui && pnpm lint && pnpm build
+```
 
 ## 许可证
 

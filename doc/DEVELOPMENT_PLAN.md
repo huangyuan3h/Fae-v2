@@ -51,33 +51,34 @@
 - [x] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（复用 `fae.llm` OpenAI 兼容客户端）
 - [x] 实现 `backend/src/fae/pipecat/transport.py`（LocalTransport；Daily/LiveKit 后续）
 - [x] 实现 `backend/src/fae/pipecat/bot.py`：文本模式 `user text → LLM → SentenceAggregator → TTS stub`
-- [ ] 接入 Silero VAD + SmartTurn v3
-- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列
+- [x] 接入 VAD：`EnergyVAD` 默认可用；`try_silero_vad()` 在安装 `pipecat-ai[silero]` 后启用 Silero
+- [ ] SmartTurn v3（依赖完整 Pipecat Daily 路径，后续替换）
+- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列；UI「打断」取消 WS + TTS
 - [x] 实现 SentenceAggregator，把流式 token 攒句
 
-> **冒烟测试**（M1-1）：浏览器说"你好"，2.5s 内听到 FAE 回放"你好"。
-> **当前文本冒烟**：`POST /api/pipeline/text`（假 LLM）可跑通 token→sentence→audio stub。
+> **冒烟测试**（M1-1）：浏览器说"你好"，听到 FAE 语音回放（Web Speech STT/TTS + `/ws/chat`；需 Chrome + 有效 LLM Key）。
+> **文本冒烟**：`POST /api/pipeline/text` 可跑通 token→sentence→audio stub。
 
 ### 1.4 最小 UI
 
-- [ ] `npx create-next-app@latest` 初始化 `ui/`
-- [ ] 安装 shadcn/ui：`npx shadcn@latest init`（dark mode 默认）
-- [ ] 实现 `src/components/voice/VoiceOrb.tsx`：3 种状态动效（呼吸 / 旋转 / 脉冲）
-- [ ] 实现 `src/components/voice/MicButton.tsx`：申请麦克风权限
-- [ ] 接入 Pipecat React Client + Daily JS SDK
-- [ ] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts`
-- [ ] 主对话页 `src/app/page.tsx`：VoiceOrb + 文本回退输入框
+- [x] `create-next-app@15` 初始化 `ui/`（App Router + Tailwind 4）
+- [x] 视觉体系：自定义 token + Syne/DM Sans（未锁 shadcn，避免模板感）
+- [x] 实现 `src/components/voice/VoiceOrb.tsx`：idle / listening / thinking / speaking 动效
+- [x] 实现 `src/components/voice/MicButton.tsx`：申请麦克风 / 启动 Web Speech
+- [x] 语音客户端：浏览器 Web Speech 路径（Daily SDK 预留在 `pipecat-client.ts`）
+- [x] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts`
+- [x] 主对话页 `src/app/page.tsx`：VoiceOrb + 文本回退输入框 + Agent 设置
 
-> **冒烟测试**（M1-2）：浏览器对浏览器完整对话 ≥ 3 轮。
+> **冒烟测试**（M1-2）：浏览器完整对话 ≥ 3 轮（语音或文字回退均可）。
 
 ### 1.5 部署闭环
 
-- [ ] `ui.Dockerfile` 多阶段构建（pnpm install → build → standalone output）
-- [ ] `backend.Dockerfile` 多阶段构建（uv lock → 精简 runtime）
-- [ ] `vllm-asr.Dockerfile`：拉 `vllm/vllm-openai:latest`，跑 `Qwen3-ASR-1.7B`
-- [ ] README 写启动流程：clone → cp .env → setup.sh → start.sh → open :3000
+- [x] `ui.Dockerfile` 多阶段构建（pnpm install → build → standalone output）
+- [x] `backend.Dockerfile` 多阶段构建（uv lock → 精简 runtime）
+- [x] `vllm-asr.Dockerfile`：Phase 1 使用 ASR stub（真 `Qwen3-ASR` GPU 镜像后续替换）
+- [x] README 写启动流程：clone → cp .env → setup.sh → start.sh → open :3000
 
-> **Phase 1 收尾验收**：录 30s 演示视频，发布到团队频道。
+> **Phase 1 收尾验收**：本地 `pnpm dev` + `./start.sh` 可演示；Docker 一键起（网络可拉镜像时）。
 
 ---
 

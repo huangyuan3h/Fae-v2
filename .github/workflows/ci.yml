@@ -22,12 +22,26 @@ jobs:
           uv sync --group dev
           uv run pytest
 
-  ui-package:
-    name: UI package.json present
+  ui:
+    name: UI lint + build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
     steps:
       - uses: actions/checkout@v4
-      - name: Validate ui package manifest
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Install, lint, build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
         run: |
-          test -f ui/package.json
-          node -e "const p=require('./ui/package.json'); if(!p.name) process.exit(1)"
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm build

@@ -1,7 +1,8 @@
 """Transport abstractions.
 
-Phase 1.3 minimal attempt uses a local in-process transport for text smoke
-tests. Daily / LiveKit WebRTC transport lands when the UI voice path is wired.
+Phase 1 MVP uses browser Web Speech + `/ws/chat` (no WebRTC room required).
+`DailyTransportConfig` documents the future Pipecat Daily wiring; minting a
+live room still needs `DAILY_API_KEY` and the pipecat Daily bot process.
 """
 
 from __future__ import annotations
@@ -37,3 +38,12 @@ class LocalTransport:
 
     async def send_assistant_audio(self, pcm: bytes) -> None:
         self.sent_audio.append(pcm)
+
+
+@dataclass(frozen=True)
+class DailyTransportConfig:
+    """Parameters for a future Daily / Pipecat WebRTC session."""
+
+    room_url: str
+    token: str
+    bot_name: str = "FAE"
