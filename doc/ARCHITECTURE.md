@@ -21,12 +21,14 @@
 
 ### 1.1 一句话定义
 
-FAE-v2 是一个**能在本地电脑长期陪你的语音 Agent**：
-- 🎙️ **能听会说**：实时语音对话，中英文混合
+FAE-v2 是一个**可自托管的个人助理 Agent Core**：
+- 🎙️ **能听会说**（默认浏览器路径；语音可加深）
 - 🧠 **能记住事**：跨会话、跨天的长期记忆
 - 🎯 **主动 loop**：定时任务 / 主动发起话题 / 提醒
-- 🛠️ **有真本事**：可调用工具（搜索、写文件、读写数据库、执行命令）
-- 🎨 **颜值在线**：现代化 Web 界面，配 shadcn/ui
+- 🛠️ **有真本事**：可扩展工具（目标：日历、文件、脚本、第三方 API…）
+- 📱 **Client 可替换**：Web / Telegram / 未来任意壳，只连同一 Core
+
+> 产品叙事见 [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)（P6 起）。Web UI 是**参考壳**，不是产品本体。
 
 ### 1.2 与同类产品的差异
 
@@ -45,7 +47,8 @@ FAE-v2 是一个**能在本地电脑长期陪你的语音 Agent**：
 
 > **现行默认路径**：浏览器 Web Speech STT → `/ws/chat`（LLM + memory + skills）→ 本机 TTS（`VLLM_TTS_URL`）。  
 > **可选**：Daily + Pipecat 全双工（需 `DAILY_API_KEY`）；Telegram long-polling channel（`TELEGRAM_*`，共享 `session_id=default`）。  
-> **未实现**：LiveKit / Slack。MCP **暂缓**（见 DEVELOPMENT_PLAN）。
+> **未实现**：LiveKit / Slack。MCP 不作唯一扩展面（见 DEVELOPMENT_PLAN P8）。  
+> **下一主线**：P6 Core 常驻 & 快速部署（配置外置、compose/Release、远程 channel）。
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐

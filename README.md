@@ -6,24 +6,21 @@
 
 ## 文档
 
-- [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) — 架构真相源（默认语音路径 / Daily 可选 / LiveKit 未实现 / MCP 暂缓）
-- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — 阶段状态与验收
+- [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) — 架构真相源
+- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — **Personal Assistant 计划（P6 起）**
+- [doc/archive/DEVELOPMENT_PLAN_through_v0.2.md](./doc/archive/DEVELOPMENT_PLAN_through_v0.2.md) — 已完成至 v0.2.0 的旧清单归档
 - [doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md) — 本机 TTS
-- [evals/README.md](./evals/README.md) — 最小评测集（Phase Q.5）
+- [evals/README.md](./evals/README.md) — 最小评测集
+- [CHANGELOG.md](./CHANGELOG.md) — 版本摘要
 
-## 质量状态（Phase Q 首版）
+## 质量状态（stable 0.2.0）
 
 | 里程碑 | 状态 |
 |---|---|
-| Q.0 人设可配置 | ✅ |
-| Q.1 语音可用（浏览器 STT · 本机 TTS · 可打断） | ✅ MQ-1 |
-| Q.2 Skills 契约与触发 | ✅ MQ-2 |
-| Q.3 记忆真有用（session=`default` · human 事实） | ✅ MQ-3 |
-| Q.4 Loop 真主动（服务端 LLM · 持久化 idle） | ✅ MQ-4 |
-| Q.5 横切（文档 + 最小 evals） | ✅ |
-| 5.1 多端 & Telegram（PWA 壳 + long polling） | ✅ M5-1 |
-| 5.2 Subagents（`run_subagent` · researcher/coder/reviewer） | ✅ M5-2 |
-| **下一主线** | **按需（本地 ASR / 5.3）** |
+| Phase 1～4 骨架 + Phase Q 质量 | ✅ |
+| 5.1 多端 & Telegram | ✅ M5-1 |
+| 5.2 Subagents | ✅ M5-2 |
+| **下一主线** | **P6 · Core 常驻 & 快速部署**（见新 DEVELOPMENT_PLAN） |
 
 MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 
