@@ -41,18 +41,21 @@ def _runtime(request: Request) -> VoiceRuntime:
 
 @router.get("/status")
 async def voice_status(request: Request) -> dict[str, bool | str]:
-    """Whether server-side Daily / DashScope TTS can be used."""
+    """Voice path readiness: Qwen3-TTS (default) + optional Daily."""
     settings = request.app.state.settings
     daily = bool((settings.daily_api_key or "").strip())
     dashscope = bool((settings.dashscope_api_key or "").strip())
     return {
         "daily_configured": daily,
         "dashscope_tts_configured": dashscope,
-        "default_path": "daily" if daily else "browser",
+        "qwen_tts_configured": dashscope,
+        "tts_model": settings.tts_model,
+        "tts_voice": settings.tts_voice,
+        "default_path": "qwen3-tts" if dashscope else "browser",
         "hint": (
-            "Daily ready — enable in Settings → 语音, then press mic on home"
-            if daily
-            else "Set DAILY_API_KEY (+ DASHSCOPE_API_KEY for TTS) in root .env and restart"
+            "Qwen3-TTS ready — home page plays server audio after each reply"
+            if dashscope
+            else "Set DASHSCOPE_API_KEY for Qwen3-TTS; Daily is optional WebRTC only"
         ),
     }
 

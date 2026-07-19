@@ -32,10 +32,14 @@ class Qwen3TTSService:
     def configured(self) -> bool:
         return bool(self._api_key)
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(
+        self, text: str, *, raise_on_error: bool = False
+    ) -> bytes:
         if not text.strip():
             return b""
         if not self._api_key:
+            if raise_on_error:
+                raise RuntimeError("DashScope API key not configured")
             frames = max(1, len(text) * int(self._sample_rate * 0.04))
             return struct.pack(f"<{frames}h", *([0] * frames))
 
@@ -60,8 +64,12 @@ class Qwen3TTSService:
                     chunks.append(base64.b64decode(data_b64))
             pcm = b"".join(chunks)
             logger.debug("DashScope TTS bytes=%d text=%r", len(pcm), text[:40])
+            if raise_on_error and not pcm:
+                raise RuntimeError("Qwen3-TTS returned empty audio")
             return pcm
-        except Exception:  # noqa: BLE001
+        except Exception:
+            if raise_on_error:
+                raise
             logger.exception("DashScope TTS failed — returning silence")
             frames = max(1, int(self._sample_rate * 0.1))
             return struct.pack(f"<{frames}h", *([0] * frames))

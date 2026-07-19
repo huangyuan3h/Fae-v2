@@ -6,152 +6,118 @@
 
 ---
 
-## 0. 总览：5 个阶段 / 9 周
+## 0. 总览（按当前状态重排）
 
-| 阶段 | 名称 | 周次 | 阶段成果（Demo-Ready 标准） |
+| 阶段 | 名称 | 状态 | 阶段成果（Demo-Ready 标准） |
 |---|---|---|---|
-| Phase 1 | MVP | W1–W2 | 浏览器对浏览器语音对话 + Docker 一键起 |
-| Phase 2 | 记忆深化 | W3–W4 | 三层记忆 + 记忆浏览器 UI |
-| Phase 3 | Skills 体系 | W5–W6 | Markdown skill 自动触发 + 5 个内置 skill |
-| Phase 4 | 主动 Loop | W7–W8 | 心跳 + 定时任务 + 主动问候 |
-| Phase 5 | 上限扩展 | W9+ | MCP / Subagent / 多端 / 第三方 channel |
+| Phase 1 | MVP | ✅ 完成 | 浏览器语音对话 + Docker 一键起 |
+| Phase 2 | 记忆深化 | ✅ 完成 | 三层记忆 + 记忆浏览器 UI |
+| **Phase 2.6** | **本地语音栈** | 🔜 **下一优先** | **浏览器 STT + `/ws/chat` + 本地 TTS 播报；不依赖 Daily** |
+| Phase 3 | Skills 体系 | 待开始 | Markdown skill 自动触发 + 5 个内置 skill |
+| Phase 4 | 主动 Loop | 待开始 | 心跳 + 定时任务 + 主动问候 |
+| Phase 5 | 上限扩展 | 待开始 | MCP / Subagent / 多端 / 第三方 channel |
+
+### 0.1 现状快照（2026-07-19）
+
+**已落地**
+
+- 根目录 `npm run dev`：backend `:8000` + UI（`:3000` / `:3001`）
+- Settings → 模型：OpenAI / Ollama 配置 CRUD、测试连接、当前选用（localStorage）
+- Settings → 语音：Daily 开关（**可选**；未配 Key 会回退 browser）
+- 默认对话路径：浏览器 Web Speech STT + `/ws/chat` + **浏览器 `speechSynthesis` TTS**
+- 记忆：embedded / remote Letta、Recall、Archival、Episodic、sleeptime、`/memory` UI
+- 回复清洗：剥离 `<think>`；TTS 前去 Markdown；聊天区 Markdown 渲染
+- CORS：含 `3000` / `3001`
+
+**已知缺口（驱动 Phase 2.6）**
+
+- 默认 TTS 是系统朗读，不自然；且曾误以为勾选 Daily = 本地 TTS
+- Daily 路径需要 `DAILY_API_KEY`（WebRTC 房间）+ 云端 `DASHSCOPE_API_KEY`（TTS）——**不是本地 TTS**
+- 架构愿景里的「本地 TTS」尚未接到默认产品路径
+
+### 0.2 语音策略修订（相对旧计划）
+
+| 项 | 旧计划 | **现行计划** |
+|---|---|---|
+| 默认 TTS | 浏览器 `speechSynthesis`；可选 Daily + DashScope | **本地 TTS 服务（OpenAI-compatible HTTP）** |
+| Daily | 增强主路径之一 | **可选 / 降级**：仅在需要 WebRTC 全双工时启用 |
+| DashScope TTS | Pipecat Daily 默认合成 | **可选云端 fallback**；不再作为本地开发前提 |
+| STT（近期） | 浏览器 Web Speech 可接受 | **先保持浏览器 STT**；本地 ASR（vLLM-Omni）并行可选 |
+| 传输 | Daily WebRTC 或浏览器 | **默认：HTTP/WS 文本 + 本地 TTS 音频回放**（无 Daily Key） |
+
+**本地 TTS 接口约定（可换引擎）**
+
+```text
+POST {VLLM_TTS_URL}/v1/audio/speech
+Body: { "model": "...", "input": "...", "voice": "..." }
+→ audio/mpeg | audio/wav | audio/pcm
+```
+
+- 开发无 GPU：compose / 本地 **TTS stub**（固定短音或静音 + 正确 Content-Type）
+- 有 GPU / 本机模型：同一 URL 换成 Qwen3-TTS / CosyVoice / 其它兼容服务
+- UI：播 `Audio` / `AudioContext`，**不再默认走 `speechSynthesis`**（失败时可降级）
 
 ---
 
-## Phase 1 · MVP（W1–W2）
+## Phase 1 · MVP — ✅ 完成
 
-> 目标：把"麦克风 → 浏览器听到自己回放"这条最短链路打通，再让 Docker 一键起。
+> 历史记录保留；细节见 git 历史。摘要：脚手架、FastAPI、Pipecat（含 Daily 可选）、Next UI、Docker。
 
-### 1.1 基础设施脚手架
-
-- [x] 初始化仓库结构：`backend/` + `ui/` + `deploy/` + `docs/`（文档在 `doc/`）
-- [x] 创建 `backend/pyproject.toml`（fastapi/uvicorn/openai/`pipecat-ai[daily,openai,sentence,silero]`/dashscope；`letta` 后续）
-- [x] 创建 `ui/package.json`（Next.js 15 + `@daily-co/daily-js`）
-- [x] 创建 `docker-compose.yml`：服务 = `backend` / `ui` / `letta` / `vllm-asr` / `qdrant` / `redis`（ASR/Letta/UI 现为 stub，便于无 GPU 起栈）
-- [x] 写 `backend/src/fae/config.py`：基于 `pydantic-settings` 加载 `.env`
-- [x] 写 `.env.example`：DashScope / Daily / Letta / vLLM / Qdrant / Redis
-- [x] 写 `deploy/scripts/setup.sh` + `start.sh`
-
-> **验收**：`./deploy/scripts/start.sh` 起来后，6 个容器全部 `healthy`。
-> （ASR/Letta/UI 使用 stub 镜像；GPU 真模型与正式 Letta 后续替换。）
-
-### 1.2 FastAPI 入口 + 健康检查
-
-- [x] 实现 `backend/src/fae/api/`：暴露 `/health` `/ready` `/api/sessions` + voice/pipeline/chat/ws
-- [x] 把 uvicorn 启动命令固化到 `deploy/docker/backend.Dockerfile`
-- [x] 写最小 pytest：访问 `/health` 断言 200（全量 coverage ≥ 80%）
-- [x] CI：`.github/workflows/ci.yml` 跑 `pytest` + UI lint/build
-
-> **验收**：`curl http://localhost:8000/health` 返回 `{"status":"ok"}`。
-
-### 1.3 Pipecat 最小 Pipeline
-
-- [x] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（HTTP，对接 compose ASR stub / 未来 vLLM）
-- [x] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py` + `dashscope_tts.py`（有 Key 真实合成，否则静音）
-- [x] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（复用 `fae.llm` OpenAI 兼容客户端）
-- [x] 实现 `backend/src/fae/pipecat/transport.py`（LocalTransport）+ `daily_rooms.py` / `daily_bot.py`（Daily）
-- [x] 实现 `backend/src/fae/pipecat/bot.py`：文本模式 `user text → LLM → SentenceAggregator → TTS`
-- [x] 接入 VAD：`EnergyVAD` + `SileroVADAnalyzer`（`pipecat-ai[silero]`）
-- [x] SmartTurn v3：Daily bot 使用默认 `UserTurnStrategies`（stop = LocalSmartTurnAnalyzerV3）
-- [x] 实现打断（Barge-in）：`on_user_speech_during_playback()`；UI「打断」；`/api/voice/barge-in`
-- [x] 实现 SentenceAggregator，把流式 token 攒句
-- [x] Daily / Pipecat 全链路 bot：STT→LLM→DashScope TTS→Daily out
-
-> **冒烟测试**（M1-1）：
-> - 浏览器路径：Web Speech STT/TTS + `/ws/chat`（默认）
-> - Daily 路径：UI 勾选「优先 Daily」+ 服务端 `DAILY_API_KEY` + `DASHSCOPE_API_KEY`
-> **文本冒烟**：`POST /api/pipeline/text`。
-
-### 1.4 最小 UI
-
-- [x] `create-next-app@15` 初始化 `ui/`（App Router + Tailwind 4）
-- [x] 视觉体系：自定义 token + Syne/DM Sans（未锁 shadcn，避免模板感）
-- [x] 实现 `src/components/voice/VoiceOrb.tsx`：idle / listening / thinking / speaking 动效
-- [x] 实现 `src/components/voice/MicButton.tsx`：申请麦克风 / 启动 Web Speech / Daily 通话
-- [x] 语音客户端：浏览器 Web Speech + `@daily-co/daily-js` Daily 路径
-- [x] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts` + `daily-session.ts`
-- [x] 主对话页 `src/app/page.tsx`：VoiceOrb + 文本回退输入框 + Agent 设置
-
-> **冒烟测试**（M1-2）：浏览器完整对话 ≥ 3 轮（语音或文字回退均可）。
-
-### 1.5 部署闭环
-
-- [x] `ui.Dockerfile` 多阶段构建（pnpm install → build → standalone output）
-- [x] `backend.Dockerfile` 多阶段构建（uv lock → 精简 runtime）
-- [x] `vllm-asr.Dockerfile`：Phase 1 使用 OpenAI-compatible ASR stub（真 GPU 镜像可替换同一接口）
-- [x] README 写启动流程：clone → cp .env → setup.sh → start.sh → open :3000
-
-> **Phase 1 收尾验收**：本地 `pnpm dev` + `./start.sh` 可演示；可选 Daily 增强路径；Docker 一键起。 **Phase 1 完成。**
+- [x] 基础设施 / FastAPI / Pipecat 最小管线 / 最小 UI / 部署闭环
+- [x] 浏览器路径：Web Speech STT/TTS + `/ws/chat`
+- [x] Daily 可选路径（云端 TTS）— **Phase 2.6 起不再作为默认推荐**
 
 ---
 
-## Phase 2 · 记忆深化（W3–W4）
+## Phase 2 · 记忆深化 — ✅ 完成
 
-> 目标：让 FAE 真正"记得住"——三层记忆 + 事件日志 + 用户可见的记忆浏览器。
+- [x] 2.1 Letta（remote / embedded）
+- [x] 2.2 Pipecat / WS 记忆注入与持久化
+- [x] 2.3 Recall + Archival + Episodic
+- [x] 2.4 sleeptime consolidation
+- [x] 2.5 记忆浏览器 UI
 
-### 准备（Phase 1 收尾已完成）
-
-- [x] `fae.memory` 包 + `FactIn` / `FactOut` / `UserProfile` schema
-- [x] `LettaMemoryClient` / `LettaMemoryService` + lifespan 接线
-- [x] `app.state.memory` 挂载点 + `VoiceRuntime`（session ↔ barge-in / Daily task）
-- [x] 统一 LLM `base_url` 默认含 `/v1`；打断路径接通 `/api/voice/barge-in`
-
-### 2.1 Letta 接入
-
-- [x] Compose 使用官方 `letta/letta:latest`（Postgres 卷 `letta-data`；离线可用 `LETTA_MODE=embedded` SQLite）
-- [x] 创建 / 解析 agent：`fae-main`，挂 persona / human / current 三块 core memory
-- [x] 实现 `backend/src/fae/memory/letta_client.py`（REST）+ `embedded.py`
-- [x] 三个工具表面：`save_fact` / `search` / `update_user`（+ `recall_for_prompt`）
-- [x] Pydantic schema：`FactIn` / `FactOut` / `UserProfile`
-- [x] `/ws/chat` + `/api/chat`：召回注入 + 回合写入（启发式「我叫X」→ M2-1）
-
-> **冒烟测试**（M2-1）：说"我叫小明"，关掉浏览器，重开，问"我叫什么" → 答"小明"。
-> 本地最快：`.env` 设 `LETTA_MODE=embedded`，或 `docker compose up letta` + `LETTA_MODE=remote`。
-
-### 2.2 Pipecat Memory Service
-
-- [x] `LettaMemoryService`（浏览器 WS / HTTP + Daily 已接）
-- [x] 接到 Daily：`seed_daily_memory` + `MemoryTurnProcessor`（同一 `recall_context` / `persist_turn`）
-- [x] 每次 LLM 调用前注入相关记忆（含 `[recent_turns]` + facts；top-k=10）
-- [x] 每轮结束 `append_recall` + 启发式身份事实（按 `session_id` 分桶；话题靠 recent_turns）
-- [x] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant / stub）— 见 2.3
-
-> **冒烟测试**（M2-2）：连续聊多个话题后问"我刚才提到 Python 那个项目怎么样"。
-> `LETTA_MODE=embedded` 即可本地验收。
-
-### 2.3 三层记忆 + Episodic 扩展
-
-- [x] Core Memory：persona / human / current；`GET /api/memory/stats` + current 字数预算
-- [x] Recall Memory：共享 SQLite `RecallStore` + session 分桶（hot window）
-- [x] Archival Memory：Qdrant 集合 `fae_archival`（不可用时 stub）；超 N 轮 compact
-- [x] **Episodic Memory 扩展**：实现 `backend/src/fae/memory/episodic.py`
-  - [x] 关键事件检测（启发式："搬家"/"换了工作"等；LLM 标记后续可选）
-  - [x] 事件 ↔ 记忆的双向链接（fact / archival）+ `GET /api/memory/events`
-  - [x] 6 个月未访问的 archival 记忆自动降权（`ARCHIVAL_DECAY_DAYS`）
-
-### 2.4 sleeptime 整理
-
-- [x] 实现 `backend/src/fae/memory/consolidation.py`（启发式摘要；LLM 摘要后续可选）
-- [x] 触发时机：每日定点小时 + 闲时（`SLEEPTIME_IDLE_SECONDS`，默认 5min）+ `POST /api/memory/consolidate`
-- [x] 工作流：归纳 Recall → 摘要写入 Core `current` / 偏好事实 → 可选 Archival + compact
-- [x] rate limit：单次最长 `SLEEPTIME_MAX_RUNTIME_S`（默认 30s）+ 会话最小间隔
-
-### 2.5 记忆浏览器 UI
-
-- [x] 路由 `ui/src/app/memory/page.tsx`：按时间线展示（Recharts）
-- [x] 路由 `ui/src/app/memory/facts/page.tsx`：结构化事实列表 + 增删改
-- [x] 路由 `ui/src/app/memory/search/page.tsx`：语义搜索框 + 命中高亮
-- [x] 组件 `MemoryTimeline.tsx` + `MemorySearch.tsx`
-- [x] 数据请求：TanStack Query + 乐观更新（facts CRUD）
-- [x] Backend：`/api/memory/facts` CRUD、`/api/memory/search`、`/api/memory/timeline`
-
-> **Phase 2 收尾验收**：演示"跨天记忆"——昨天告诉 FAE 喜欢的咖啡，今天它主动提起；可在 `/memory` 浏览事实与时间线。
+> 附带已完成（原计划外，已合入主线）：根目录 `npm run dev`、Settings 模型管理、think/markdown 清洗。
 
 ---
 
-## Phase 3 · Skills 体系（W5–W6）
+## Phase 2.6 · 本地语音栈（下一优先）
 
-> 目标：Skill = Markdown，按需加载。落地 5+ 内置 skill + 编辑器。
+> 目标：开发者 **零 Daily Key** 即可听到自然、本地合成的中文语音。  
+> 默认路径：`Mic/文字 →（浏览器 STT 可选）→ /ws/chat → 本地 TTS → 浏览器播放`。
+
+### 2.6.1 后端：Qwen3-TTS（无 Daily）— ✅ 进行中/首版
+
+- [x] 配置：`DASHSCOPE_API_KEY` + `TTS_MODEL` / `TTS_VOICE` / `TTS_LANGUAGE` / `TTS_SAMPLE_RATE`
+- [x] `POST /api/tts/speak`：strip think/markdown → Qwen3-TTS → `audio/wav`
+- [x] `GET /api/tts/status`
+- [x] 单测：`test_tts_api.py`（无 Key 503、WAV 头、speakable）
+
+> **验收**：`.env` 设 `DASHSCOPE_API_KEY` 后  
+> `curl -X POST localhost:8000/api/tts/speak -H 'Content-Type: application/json' -d '{"text":"你好"}' --output /tmp/a.wav`
+
+### 2.6.2 UI：默认播 Qwen3-TTS — ✅ 首版
+
+- [x] `ui/src/lib/qwen-tts.ts`：请求 `/api/tts/speak` + `Audio` 播放 / 打断
+- [x] `useVoiceSession`：优先 Qwen3-TTS，失败降级浏览器朗读
+- [x] Settings → 语音：Qwen3-TTS 状态；Daily 收进高级
+- [x] 首页状态：`Qwen3-TTS` / `浏览器朗读` / `Daily`
+
+> **冒烟测试**（M2.6-1）：不设 `DAILY_API_KEY`，文字聊 3 轮听到 Qwen 音色；打断立即停。
+
+### 2.6.3 后续（真·本机模型，可选）
+
+- [ ] OpenAI-compatible 本地 TTS URL（`VLLM_TTS_URL`）与 Qwen 云端切换
+- [ ] compose TTS stub / 自托管 Qwen3-TTS
+- [ ] 流式首包优化
+- [ ] 同步 `ARCHITECTURE.md` 默认路径说明
+
+---
+
+## Phase 3 · Skills 体系（接在 2.6 之后）
+
+> 目标：Skill = Markdown，按需加载。落地 5+ 内置 skill + 编辑器。  
+> 依赖：Phase 2.6 默认对话体验稳定（避免一边改语音一边改 skill）。
 
 ### 3.1 Skill 格式 & 加载器
 
@@ -163,7 +129,7 @@
 - [ ] 实现加载策略枚举：`ALWAYS_ON` / `TRIGGER_BASED` / `MANUAL` / `LAZY`
 - [ ] 触发器匹配：关键词 + 简单 embedding 余弦（不引重型模型）
 
-### 3.2 内置 Skills（W6 累计 ≥ 5 个）
+### 3.2 内置 Skills（累计 ≥ 5 个）
 
 - [ ] `daily_check_in.md`：每日问候 + 行程确认
 - [ ] `technical_debugging.md`：stack trace 解析 + 排查
@@ -195,9 +161,10 @@
 
 ---
 
-## Phase 4 · 主动 Loop（W7–W8）
+## Phase 4 · 主动 Loop
 
-> 目标：让 FAE 主动起来——心跳、定时任务、主动问候、桌面通知。
+> 目标：心跳、定时任务、主动问候、桌面通知。  
+> 主动触达默认 **通知 + 文字**；若用户在线且本地 TTS 可用，可再播一句短语音（不依赖 Daily）。
 
 ### 4.1 APScheduler + Heartbeat
 
@@ -207,7 +174,7 @@
   - [ ] 用户超过 6h 未交互 + 有未回应话题 → 主动发起
   - [ ] `outreach_cooldown = 12h`，每天最多 1 次主动问候
   - [ ] "待办到期"检测：扫 Episodic Memory
-- [ ] 与 LLM 的桥接：心跳触发时不走 TTS，走"桌面通知 + 文字"通道
+- [ ] 与 LLM 的桥接：心跳默认走「桌面通知 + 文字」；可选本地 TTS 短播报
 
 ### 4.2 内置 cron 任务
 
@@ -229,13 +196,13 @@
 - [ ] Web Push（VAPID）：用户首次访问时订阅
 - [ ] 浏览器 Notification API：心跳事件触达
 - [ ] 可选：macOS `terminal-notifier` / Linux `notify-send`
-- [ ] 设置页 `src/app/settings/privacy/page.tsx`：通知开关 + 勿扰时段
+- [ ] 设置页通知开关 + 勿扰时段（可挂在现有 `/settings`）
 
 > **Phase 4 收尾验收**：演示 24h 无人值守，FAE 主动发起 1 次合理问候。
 
 ---
 
-## Phase 5 · 上限扩展（W9+）
+## Phase 5 · 上限扩展
 
 > 进入"无上限"阶段，按需取用，不强排期。
 
@@ -256,104 +223,114 @@
 
 - [ ] PWA 化（manifest.json + service worker，离线可用）
 - [ ] 移动端响应式适配
-- [ ] Slack bot 适配器
-- [ ] Telegram bot 适配器
+- [ ] Slack / Telegram bot 适配器
 
 ### 5.4 多用户 / 多角色
 
 - [ ] Letta agent 池化（每用户独立 agent_id）
 - [ ] NextAuth.js 接入（OAuth + Email magic link）
-- [ ] 数据隔离：每个用户独立 SQLite 文件 / Qdrant collection
+- [ ] 数据隔离：每用户独立存储
+
+### 5.5 本地 ASR（可选增强）
+
+- [ ] 浏览器 STT → 可选切换本地 Qwen3-ASR（`VLLM_ASR_URL`，接口已部分存在）
+- [ ] Settings 增加 STT 来源：browser / local
+
+### 5.6 Daily / LiveKit（可选增强）
+
+- [ ] 仅当需要低延迟全双工 WebRTC 时启用
+- [ ] Daily bot 的 TTS 改为调用 **同一套本地 TTS 客户端**（不再默认 DashScope）
 
 ---
 
 ## 跨阶段横切关注（Continuous）
 
-> 这些不是"阶段"，但每个 PR 都要 review。
-
 ### 安全 / 隐私
 
-- [ ] 工具权限分级实现（Safe / Caution / Sensitive / Dangerous）
-- [ ] UI 确认弹窗：每次 Sensitive / Dangerous 工具执行前
-- [ ] 5s 倒计时：Dangerous 工具二次确认
-- [ ] "一键遗忘"：清空所有记忆 + 重置 Letta agent
-- [ ] 数据导出：`src/app/settings/privacy/page.tsx` 下载 JSONL
+- [ ] 工具权限分级（Safe / Caution / Sensitive / Dangerous）
+- [ ] UI 确认弹窗：Sensitive / Dangerous 执行前
+- [ ] 「一键遗忘」：清空记忆 + 重置 agent
+- [ ] 数据导出 JSONL（Settings）
+- [x] LLM API Key 仅存浏览器；服务端不落盘 UI Key
+- [ ] 本地 TTS / ASR：**音频默认不离开本机**（文档写清）
 
 ### 可观测性
 
-- [ ] 结构化日志（loguru / structlog）：每次 tool call 持久化
-- [ ] "现在在做什么"面板：UI 透明显示 `FAE 正在调用 memory_search...`
-- [ ] Token 用量统计（Recharts 折线图）
-- [ ] 工具调用历史页 `src/app/tools/page.tsx`
+- [ ] 结构化日志：tool call / TTS 后端选择
+- [ ] 「现在在做什么」面板
+- [ ] Token / TTS 延迟统计
 
 ### 性能
 
-- [ ] 端到端延迟埋点：每个阶段打点（VAD / ASR / LLM / TTS）
+- [ ] 端到端延迟埋点：STT / LLM / **本地 TTS**
 - [ ] P50 / P95 仪表盘
-- [ ] ASR 准确率评测（librispeech + common-voice-zh）
-- [ ] TTS 自然度评测（seed-tts）
-- [ ] 端到端对话评测（`evals/e2e/`）
+- [ ] TTS 自然度主观评测（对比 browser vs local）
 
 ### 评测（Evals）
 
-- [ ] `evals/asr/`：librispeech-test.jsonl / common-voice-zh.jsonl / noisy-mixed.jsonl
-- [ ] `evals/tts/`：seed-tts-test.jsonl / voice-clone-test.jsonl
-- [ ] `evals/agent/`：tool-calling / memory-recall / multi-turn / proactive-loop
-- [ ] `evals/e2e/`：daily-checkin / technical-debug / travel-planning
-- [ ] CI 集成：每次 PR 跑核心 eval，回归报警
+- [ ] `evals/tts/`：本地 stub + 真模型样本
+- [ ] `evals/agent/`：memory-recall / multi-turn
+- [ ] `evals/e2e/`：本地语音回合（无 Daily）
 
 ### 文档
 
-- [ ] `docs/design/memory-design.md`：记忆系统设计细节
-- [ ] `docs/design/skills-format.md`：Skill 格式规范
-- [ ] `docs/design/ui-mockups.md`：UI 草图
-- [ ] `docs/api/api-reference.md`：REST API 文档（OpenAPI 自动生成 + 人工注释）
-- [ ] README：项目介绍 + Quick Start + 截图 + 演示视频链接
+- [ ] 同步 `ARCHITECTURE.md` 语音默认路径为本地 TTS
+- [ ] `docs/design/local-tts.md`：接口、换引擎、VRAM 建议
+- [x] README Quick Start：`npm run setup` + `npm run dev`
+- [ ] README：本地 TTS 与（可选）Daily 的区别说明
 
 ---
 
-## 关键里程碑（Milestones）
+## 关键里程碑（修订）
 
-| ID | 时间 | 验收标准 |
+| ID | 验收标准 | 状态 |
 |---|---|---|
-| M0 | W0 末 | 仓库脚手架 + Docker 5 服务全绿 |
-| M1-1 | W1 末 | 浏览器听到自己声音回放 |
-| M1-2 | W2 末 | 端到端对话 ≥ 3 轮，录 30s 视频 |
-| M2-1 | W3 末 | 跨会话记忆冒烟通过 |
-| M2-2 | W4 末 | 记忆浏览器 UI 可用 |
-| M3-1 | W5 末 | skill 自动触发可用 |
-| M3-2 | W6 末 | 5+ 内置 skill + 编辑器 |
-| M4-1 | W7 末 | 定时任务 + 通知通道 |
-| M4-2 | W8 末 | 24h 主动 loop 演示 |
-| M5+ | W9+ | 按需取用 MCP / Subagent / 多端 |
+| M0 | 仓库脚手架 + Compose 可起 | ✅ |
+| M1-1 / M1-2 | 浏览器对话 ≥ 3 轮 | ✅ |
+| M2-1 / M2-2 | 跨会话记忆 + `/memory` | ✅ |
+| **M2.6-1** | **无 Daily Key，本地 TTS stub 播报 3 轮** | 🔜 |
+| **M2.6-2** | **真本地模型 TTS，主观明显好于系统朗读** | 🔜 |
+| M3-1 / M3-2 | skill 触发 + 编辑器 | 待 |
+| M4-1 / M4-2 | 定时任务 + 主动 loop | 待 |
+| M5+ | MCP / Subagent / 本地 ASR / 可选 WebRTC | 按需 |
 
 ---
 
-## 风险登记（Risk Register）
+## 风险登记（修订）
 
 | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
-| Qwen3-TTS Realtime 商用授权变化 | 低 | 高 | 锁定版本号 + 备选 Fish Audio S2 Pro |
-| Letta 0.50 API 变动 | 中 | 中 | 固定 `letta==0.50.*`，加 client 抽象层 |
-| vLLM-Omni 不支持 Qwen3-ASR | 中 | 中 | 先打 HTTP 协议，必要时切 `transformers` 直跑 |
-| WebRTC 在国内网络不稳定 | 中 | 中 | 增加 WebSocket 音频 fallback |
-| 端到端延迟突破 2.5s | 中 | 高 | 各阶段埋点 + 按阶段优化（先用云端 LLM 跑通） |
-| 主动 loop 误触 | 中 | 中 | 严格 cooldown + 用户勿扰时段 + 灰度发布 |
+| 本地 TTS VRAM / 机型不够 | 中 | 高 | stub 保开发；文档写清最低配置；可换小模型 |
+| 本地 TTS 首包慢于云端 | 高 | 中 | 句子级合成 + 可接受延迟；流式后续 |
+| 误把 Daily 当本地 TTS | — | — | **产品文案 + Settings 状态已规划改正（2.6.3/2.6.5）** |
+| DashScope / Daily 授权或网络 | 低 | 低 | 已降为 optional |
+| Letta API 变动 | 中 | 中 | embedded 模式 + client 抽象 |
+| 主动 loop 误触 | 中 | 中 | cooldown + 勿扰 |
 
 ---
 
 ## 完成度跟踪
 
-> 每个 Phase 收尾时更新本节，给团队一目了然的进度。
-
-- [x] Phase 1 完成（M1-2 通过；浏览器默认 + Daily 增强可选）
-- [x] Phase 2 完成（M2-1/M2-2 + 记忆浏览器 UI）
-- [ ] Phase 3 完成（M3-2 通过）
-- [ ] Phase 4 完成（M4-2 通过）
+- [x] Phase 1 完成
+- [x] Phase 2 完成
+- [ ] **Phase 2.6 完成（M2.6-1 / M2.6-2）** ← **当前主线**
+- [ ] Phase 3 完成
+- [ ] Phase 4 完成
 - [ ] Phase 5 持续推进
 
 ---
 
-**最后更新**：2026-07-19（Phase 2 stable · hardening pass）
-**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
+## 近期执行顺序（建议）
+
+1. **2.6.1** 后端 `/api/tts/speak` + local client  
+2. **2.6.2** TTS stub + compose / `.env`  
+3. **2.6.3** UI 默认播本地 TTS + Settings 文案纠正  
+4. **2.6.4** 文档换真模型  
+5. **2.6.5** 对齐 `ARCHITECTURE.md`  
+6. 再进入 Phase 3 Skills  
+
+---
+
+**最后更新**：2026-07-19（重排：Phase 2.6 本地 TTS 为主路径；Daily / DashScope TTS 降为可选）  
+**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)（待 2.6.5 同步）  
 **反馈**：GitHub Issues / PR

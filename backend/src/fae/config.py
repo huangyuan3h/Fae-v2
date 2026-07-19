@@ -38,9 +38,13 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", description="development | production")
     log_level: str = "INFO"
 
-    # ── Voice / LLM (placeholders for later checkpoints) ────────────────
-    # DashScope (Qwen3-TTS Realtime + Qwen3 LLM)
+    # ── Voice / LLM ─────────────────────────────────────────────────────
+    # DashScope — used for Qwen3-TTS (default browser-path playback)
     dashscope_api_key: str = ""
+    tts_model: str = "qwen3-tts-flash"
+    tts_voice: str = "Cherry"
+    tts_language: str = "Chinese"
+    tts_sample_rate: int = Field(default=24000, ge=8000)
 
     # Letta (long-term memory)
     # remote | embedded | off

@@ -20,6 +20,7 @@ export default function HomePage() {
     error,
     sessionId,
     mode,
+    ttsMode,
     dailyConnected,
     support,
     sendText,
@@ -76,7 +77,13 @@ export default function HomePage() {
           <p className="mt-2 text-xs text-[var(--ink-soft)]">
             当前模型：{active.name}
             {sessionId ? ` · ${sessionId.slice(0, 8)}` : ""} · {mode}
-            {mode === "browser" ? " · 浏览器朗读" : " · Daily TTS"}
+            {mode === "daily"
+              ? " · Daily"
+              : ttsMode === "qwen3-tts"
+                ? " · Qwen3-TTS"
+                : ttsMode === "browser"
+                  ? " · 浏览器朗读"
+                  : ""}
           </p>
         )}
       </header>

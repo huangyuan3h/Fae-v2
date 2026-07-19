@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from fae.api.deps import get_llm_client
 from fae.api.pipeline import router as pipeline_router
+from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
 from fae.config import Settings, get_settings
@@ -638,6 +639,9 @@ def create_app(
 
     # ── Phase 1.4: voice session bootstrap ─────────────────────────────
     app.include_router(voice_router)
+
+    # ── Qwen3-TTS (no Daily required) ──────────────────────────────────
+    app.include_router(tts_router)
 
     return app
 

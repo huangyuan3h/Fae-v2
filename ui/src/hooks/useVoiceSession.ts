@@ -16,6 +16,7 @@ import {
   syncActiveConfig,
 } from "@/lib/models";
 import { createVoiceSession } from "@/lib/pipecat-client";
+import { speakWithQwenTts } from "@/lib/qwen-tts";
 import {
   BrowserSTT,
   speak,
@@ -33,6 +34,7 @@ import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
+export type TtsMode = "qwen3-tts" | "browser" | "none";
 
 export type ChatLine = {
   id: string;
@@ -57,6 +59,7 @@ export function useVoiceSession() {
   const [sessionId] = useState(makeClientSessionId);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
+  const [ttsMode, setTtsMode] = useState<TtsMode>("none");
   const [preferDaily, setPreferDailyState] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support, setSupport] = useState({ stt: false, tts: false });
@@ -224,9 +227,25 @@ export function useVoiceSession() {
         );
 
         const reply = toSpeakableText(assistantBuf.current);
-        if (reply && support.tts) {
+        if (reply) {
           setOrb("speaking");
-          await speak(reply);
+          try {
+            await speakWithQwenTts(reply);
+            setTtsMode("qwen3-tts");
+          } catch (ttsErr) {
+            // Fallback to browser speech when DashScope TTS is unavailable.
+            if (support.tts) {
+              setTtsMode("browser");
+              await speak(reply);
+              const msg =
+                ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
+              if (msg.includes("DASHSCOPE") || msg.includes("not set")) {
+                setError("Qwen3-TTS 未配置，已降级浏览器朗读（需 DASHSCOPE_API_KEY）");
+              }
+            } else {
+              throw ttsErr;
+            }
+          }
         }
         setOrb("idle");
       } catch (e) {
@@ -318,6 +337,7 @@ export function useVoiceSession() {
     sessionId,
     voiceSessionId,
     mode,
+    ttsMode,
     preferDaily,
     setPreferDaily,
     dailyConnected,

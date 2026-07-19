@@ -52,10 +52,11 @@ open http://localhost:3000
 ### 演示
 
 1. 打开 http://localhost:3000 → **Settings → 模型**，添加 OpenAI / Ollama 配置并设为当前使用  
-2. **默认路径**：点「开始说话」（Chrome）或文字输入 → 流式回复 + 浏览器播报  
-3. **Daily 增强**：Settings → 语音 → 勾选「优先 Daily / Pipecat」→ 回首页点开始  
-4. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
-5. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边
+2. 根目录 `.env` 设置 `DASHSCOPE_API_KEY`（**Qwen3-TTS**，不需要 Daily）并重启后端  
+3. **默认路径**：说话或打字 → 流式回复 + **Qwen3-TTS** 播报（失败才降级浏览器朗读）  
+4. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily（需 `DAILY_API_KEY`）  
+5. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
+6. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边
 
 LLM API Key / Base URL / Model 保存在浏览器 localStorage（Settings），不必写进根目录 `.env`。
 

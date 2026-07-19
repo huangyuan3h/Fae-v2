@@ -1,4 +1,6 @@
-/** Browser Web Speech STT/TTS helpers for Phase 1 MVP voice path. */
+/** Browser Web Speech STT + fallback TTS helpers. */
+
+import { stopQwenTts } from "@/lib/qwen-tts";
 
 export type SttResult = {
   transcript: string;
@@ -76,6 +78,7 @@ export function speak(text: string, lang = "zh-CN"): Promise<void> {
 }
 
 export function stopSpeaking(): void {
+  stopQwenTts();
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
