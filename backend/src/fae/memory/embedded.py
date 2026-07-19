@@ -263,30 +263,15 @@ class EmbeddedMemoryClient:
             return cur.rowcount > 0
 
     async def update_user(self, profile: UserProfile) -> UserProfile:
-        lines: list[str] = []
-        if profile.display_name:
-            lines.append(f"Name: {profile.display_name}")
-        for key, value in profile.preferences.items():
-            lines.append(f"{key}: {value}")
-        if profile.notes:
-            lines.append(profile.notes)
-        # Merge with existing human block — keep prior lines not overwritten.
+        from fae.memory.profile_block import merge_human_profile
+
         existing = self._get_block("human")
-        if profile.display_name and "Name:" in existing:
-            rebuilt: list[str] = []
-            for line in existing.splitlines():
-                if line.startswith("Name:"):
-                    rebuilt.append(f"Name: {profile.display_name}")
-                else:
-                    rebuilt.append(line)
-            # Ensure Name line exists
-            if not any(l.startswith("Name:") for l in rebuilt):
-                rebuilt.insert(0, f"Name: {profile.display_name}")
-            text = "\n".join(rebuilt)
-        else:
-            text = "\n".join(lines) if lines else existing or _DEFAULT_HUMAN
-            if profile.display_name and "Name:" not in text:
-                text = f"Name: {profile.display_name}\n{text}".strip()
+        text = merge_human_profile(
+            existing,
+            display_name=profile.display_name,
+            preferences=profile.preferences,
+            notes=profile.notes,
+        )
         self._set_block("human", text)
         return profile
 

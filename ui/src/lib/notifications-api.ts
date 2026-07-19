@@ -54,7 +54,16 @@ export function getNotificationPrefs() {
   );
 }
 
-export function putNotificationPrefs(prefs: Partial<NotificationPrefs> & { clear_quiet?: boolean }) {
+export function putNotificationPrefs(
+  prefs: Partial<{
+    enabled: boolean;
+    quiet_start_hour: number | null;
+    quiet_end_hour: number | null;
+    desktop_enabled: boolean;
+    web_push_enabled: boolean;
+    clear_quiet: boolean;
+  }>,
+) {
   return fetch(`${backendHttpBase()}/api/notifications/prefs`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

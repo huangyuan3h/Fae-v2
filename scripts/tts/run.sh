@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Start OpenAI-compatible Qwen3-TTS on :8880 for npm run dev.
+# Apple Silicon defaults to MLX 8bit + TTS_MAX_CONCURRENT=2.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -8,9 +9,43 @@ READY="$ROOT/.deps/qwen3-tts.ready"
 PORT="${PORT:-${FAE_TTS_PORT:-8880}}"
 HOST="${HOST:-127.0.0.1}"
 
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+IS_APPLE_SILICON=0
+if [[ "$OS" == "Darwin" && "$ARCH" == "arm64" ]]; then
+  IS_APPLE_SILICON=1
+fi
+
+# Desired defaults (overridable via env).
+if [[ "$IS_APPLE_SILICON" -eq 1 ]]; then
+  export TTS_BACKEND="${TTS_BACKEND:-mlx}"
+  export MLX_MODEL_ID="${MLX_MODEL_ID:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit}"
+  export TTS_MODEL_NAME="${TTS_MODEL_NAME:-$MLX_MODEL_ID}"
+  # mlx-audio 0.3/0.4 can wedge the whole process if two gens overlap — keep 1.
+  export TTS_MAX_CONCURRENT="${TTS_MAX_CONCURRENT:-1}"
+  export TTS_LAZY_LOAD="${TTS_LAZY_LOAD:-false}"
+  export TTS_WARMUP_ON_START="${TTS_WARMUP_ON_START:-true}"
+  VENV_DIR="${DEP_DIR}/.venv-mlx"
+else
+  export TTS_BACKEND="${TTS_BACKEND:-pytorch}"
+  export TTS_DEVICE="${TTS_DEVICE:-cpu}"
+  export TTS_DTYPE="${TTS_DTYPE:-float32}"
+  export TTS_ATTN="${TTS_ATTN:-sdpa}"
+  export TTS_MODEL_NAME="${TTS_MODEL_NAME:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
+  export TTS_MAX_CONCURRENT="${TTS_MAX_CONCURRENT:-2}"
+  export TTS_LAZY_LOAD="${TTS_LAZY_LOAD:-true}"
+  VENV_DIR="${DEP_DIR}/.venv"
+fi
+
 tts_models_ok() {
   curl -sf --max-time 2 "http://${HOST}:${PORT}/v1/models" 2>/dev/null \
     | grep -q '"object"[[:space:]]*:[[:space:]]*"list"'
+}
+
+tts_backend_name() {
+  curl -sf --max-time 2 "http://${HOST}:${PORT}/health" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("backend") or {}).get("name") or "")' \
+    2>/dev/null || true
 }
 
 free_stale_listener() {
@@ -19,7 +54,7 @@ free_stale_listener() {
   [[ -z "$pids" ]] && return 0
   for pid in $pids; do
     args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
-    if echo "$args" | grep -qE 'api\.main|qwen3-tts|Qwen3-TTS'; then
+    if echo "$args" | grep -qE 'api\.main|qwen3-tts|Qwen3-TTS|uvicorn'; then
       echo "[fae-tts] freeing stale TTS pid=$pid on :${PORT}"
       kill "$pid" 2>/dev/null || true
     else
@@ -32,32 +67,36 @@ free_stale_listener() {
   sleep 1
 }
 
-detect_mps() {
-  # shellcheck disable=SC1091
-  source "$DEP_DIR/.venv/bin/activate"
-  python - <<'PY'
-import sys
-try:
-    import torch
-    sys.exit(0 if torch.backends.mps.is_available() else 1)
-except Exception:
-    sys.exit(1)
-PY
+ensure_setup() {
+  local need=0
+  if [[ ! -f "$READY" ]]; then
+    need=1
+  fi
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    need=1
+  fi
+  if [[ "$need" -eq 1 ]]; then
+    echo "[fae-tts] server / venv missing — running setup (first time may take a while) ..."
+    bash "$ROOT/scripts/tts/setup.sh"
+  fi
 }
 
-if [[ ! -f "$READY" || ! -x "$DEP_DIR/.venv/bin/python" ]]; then
-  echo "[fae-tts] server not installed yet — running setup (first time may take a while) ..."
-  bash "$ROOT/scripts/tts/setup.sh"
-fi
+ensure_setup
 
-# Already healthy from a previous session → keep this npm slot alive (do not re-bind).
+# Reuse only if healthy AND already on the desired backend (avoid keeping old pytorch).
 if tts_models_ok; then
-  echo "[fae-tts] already healthy on http://${HOST}:${PORT} — reusing (Ctrl+C stops npm run dev only)"
-  while tts_models_ok; do
-    sleep 30
-  done
-
-  echo "[fae-tts] upstream gone — will start a new server"
+  current="$(tts_backend_name)"
+  if [[ -n "$current" && "$current" == "$TTS_BACKEND" ]]; then
+    echo "[fae-tts] already healthy on http://${HOST}:${PORT} backend=$current — reusing"
+    echo "[fae-tts] (Ctrl+C stops npm run dev only; TTS process stays up)"
+    while tts_models_ok; do
+      sleep 30
+    done
+    echo "[fae-tts] upstream gone — will start a new server"
+  else
+    echo "[fae-tts] :${PORT} is up but backend='${current:-unknown}' (want $TTS_BACKEND) — restarting"
+    free_stale_listener
+  fi
 fi
 
 if ! tts_models_ok; then
@@ -65,41 +104,24 @@ if ! tts_models_ok; then
 fi
 
 # shellcheck disable=SC1091
-source "$DEP_DIR/.venv/bin/activate"
+source "${VENV_DIR}/bin/activate"
 cd "$DEP_DIR"
 
 export HOST
 export PORT
 export WORKERS="${WORKERS:-1}"
-export TTS_LAZY_LOAD="${TTS_LAZY_LOAD:-true}"
-export TTS_MAX_CONCURRENT="${TTS_MAX_CONCURRENT:-1}"
 export CORS_ORIGINS="${CORS_ORIGINS:-*}"
-export TTS_MODEL_NAME="${TTS_MODEL_NAME:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
 
-OS="$(uname -s)"
-if [[ "$OS" == "Darwin" ]]; then
-  # official backend ignores MPS (cuda-or-cpu only). Use pytorch backend + mps.
-  if [[ -z "${TTS_BACKEND:-}" ]]; then
-    # float16 on MPS often yields NaN logits with Qwen3-TTS; use float32.
-    if detect_mps; then
-      export TTS_BACKEND="${TTS_BACKEND:-pytorch}"
-      export TTS_DEVICE="${TTS_DEVICE:-mps}"
-      export TTS_DTYPE="${TTS_DTYPE:-float32}"
-      export TTS_ATTN="${TTS_ATTN:-sdpa}"
-    else
-      export TTS_BACKEND="${TTS_BACKEND:-pytorch}"
-      export TTS_DEVICE="${TTS_DEVICE:-cpu}"
-      export TTS_DTYPE="${TTS_DTYPE:-float32}"
-      export TTS_ATTN="${TTS_ATTN:-sdpa}"
-    fi
+if [[ "$TTS_BACKEND" == "mlx" ]]; then
+  # Quick import check; guide user if mlx extras missing.
+  if ! python -c 'import mlx_audio' 2>/dev/null; then
+    echo "[fae-tts] ERROR: mlx-audio not found in ${VENV_DIR}"
+    echo "[fae-tts] run: npm run setup:tts"
+    exit 1
   fi
-  echo "[fae-tts] darwin backend=${TTS_BACKEND} device=${TTS_DEVICE:-?} dtype=${TTS_DTYPE:-?} model=$TTS_MODEL_NAME port=$PORT"
+  echo "[fae-tts] darwin MLX backend model=$MLX_MODEL_ID concurrent=$TTS_MAX_CONCURRENT lazy=$TTS_LAZY_LOAD port=$PORT"
 else
-  export TTS_BACKEND="${TTS_BACKEND:-pytorch}"
-  export TTS_DEVICE="${TTS_DEVICE:-cpu}"
-  export TTS_DTYPE="${TTS_DTYPE:-float32}"
-  export TTS_ATTN="${TTS_ATTN:-sdpa}"
-  echo "[fae-tts] backend=$TTS_BACKEND device=$TTS_DEVICE model=$TTS_MODEL_NAME port=$PORT"
+  echo "[fae-tts] backend=$TTS_BACKEND device=${TTS_DEVICE:-?} model=$TTS_MODEL_NAME concurrent=$TTS_MAX_CONCURRENT port=$PORT"
 fi
 
 if [[ -n "${HF_ENDPOINT:-}" ]]; then
@@ -107,6 +129,6 @@ if [[ -n "${HF_ENDPOINT:-}" ]]; then
 fi
 
 echo "[fae-tts] listening http://$HOST:$PORT"
-echo "[fae-tts] NOTE: first request downloads ~2GB weights — UI will stay silent until that finishes"
+echo "[fae-tts] NOTE: first MLX/pytorch load may download weights — UI silent until ready"
 
 exec python -m api.main

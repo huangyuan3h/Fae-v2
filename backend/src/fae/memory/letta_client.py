@@ -325,27 +325,15 @@ class LettaMemoryClient:
         return hits
 
     async def update_user(self, profile: UserProfile) -> UserProfile:
+        from fae.memory.profile_block import merge_human_profile
+
         existing = await self._get_block("human")
-        lines = existing.splitlines() if existing else []
-        if profile.display_name:
-            replaced = False
-            new_lines: list[str] = []
-            for line in lines:
-                if line.startswith("Name:"):
-                    new_lines.append(f"Name: {profile.display_name}")
-                    replaced = True
-                else:
-                    new_lines.append(line)
-            if not replaced:
-                new_lines.insert(0, f"Name: {profile.display_name}")
-            lines = new_lines
-        for key, value in profile.preferences.items():
-            pref_line = f"{key}: {value}"
-            if pref_line not in lines:
-                lines.append(pref_line)
-        if profile.notes and profile.notes not in "\n".join(lines):
-            lines.append(profile.notes)
-        text = "\n".join(lines).strip() or _DEFAULT_HUMAN
+        text = merge_human_profile(
+            existing,
+            display_name=profile.display_name,
+            preferences=profile.preferences,
+            notes=profile.notes,
+        )
         await self._set_block("human", text)
         return profile
 

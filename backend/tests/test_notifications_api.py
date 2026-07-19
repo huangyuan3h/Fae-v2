@@ -66,3 +66,12 @@ def test_prefs_and_subscribe(
         },
     )
     assert unsub.status_code == 200
+
+    # Explicit null clears quiet hours (omitted fields keep previous).
+    cleared = client.put(
+        "/api/notifications/prefs",
+        json={"quiet_start_hour": None, "quiet_end_hour": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["quiet_start_hour"] is None
+    assert cleared.json()["quiet_end_hour"] is None

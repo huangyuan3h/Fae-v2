@@ -104,11 +104,14 @@ async def _run_stream(
             break
 
     try:
-        stream_request, activation = await prepare_chat_request(
+        settings = getattr(ws.app.state, "settings", None)
+        stream_request, activation, default_city = await prepare_chat_request(
             request,
             session_id=session_id,
             memory=memory,
             skills=skills,
+            default_city=getattr(settings, "weather_default_city", "") or "",
+            default_timezone=getattr(settings, "weather_default_timezone", "") or "",
         )
         await _send(
             ws,
@@ -122,11 +125,15 @@ async def _run_stream(
 
         assistant_parts: list[str] = []
         last_active = list(activation.active)
-        settings = getattr(ws.app.state, "settings", None)
         schedule_store = getattr(ws.app.state, "schedule_store", None)
         if not getattr(settings, "scheduler_enabled", False):
             schedule_store = None
         proactive = getattr(ws.app.state, "proactive", None)
+        from fae.tools.weather import weather_likely
+
+        weather_on = bool(getattr(settings, "weather_enabled", True)) and (
+            weather_likely(user_text) or "weather_briefing" in activation.active
+        )
 
         def _on_sched_mut() -> None:
             if proactive is not None and hasattr(proactive, "resync"):
@@ -139,6 +146,8 @@ async def _run_stream(
             skills,
             session_id=session_id,
             schedule_store=schedule_store,
+            weather_enabled=weather_on,
+            default_city=default_city,
             on_schedule_mutated=_on_sched_mut,
         ):
             if activation.active != last_active:

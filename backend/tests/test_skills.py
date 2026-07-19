@@ -127,7 +127,7 @@ async def test_prepare_injects_active_skills(tmp_path: Path) -> None:
             )
         ],
     )
-    prepared, activation = await prepare_chat_request(
+    prepared, activation, _city = await prepare_chat_request(
         req, session_id="s", memory=None, skills=rt
     )
     assert "technical_debugging" in activation.active
@@ -193,6 +193,7 @@ def test_skills_api_list_and_test_trigger(monkeypatch: pytest.MonkeyPatch) -> No
     assert resp.status_code == 200
     names = {s["name"] for s in resp.json()}
     assert "technical_debugging" in names
+    assert "weather_briefing" in names
 
     trig = client.post(
         "/api/skills/test-trigger",

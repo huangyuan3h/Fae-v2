@@ -179,6 +179,8 @@ async def trigger_schedule(job_id: str, request: Request) -> dict[str, Any]:
         job = store.get_job(job_id)
         assert job is not None
         if delivery is not None:
+            if job.kind == "date":
+                store.patch_job(job_id, enabled=False)
             await delivery.notify(
                 job.title or "提醒",
                 job.body or job.title,

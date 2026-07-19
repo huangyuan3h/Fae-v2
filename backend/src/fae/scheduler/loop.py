@@ -104,7 +104,8 @@ class ProactiveLoop:
                     return True
             except Exception:  # noqa: BLE001
                 pass
-        return self.activity.last_at(session_id) is not None
+        # Mere activity must not count — that would fire outreach for every idle chat.
+        return False
 
     async def start(self) -> None:
         if self._started:
@@ -212,9 +213,11 @@ class ProactiveLoop:
             if not job.enabled or job.kind != "date" or job.run_at is None:
                 continue
             if job.run_at <= now:
-                await self.run_job(job.id)
-                # disable after fire
-                self.store.patch_job(job.id, enabled=False)
+                # Claim before notify to avoid double-fire with DateTrigger.
+                claimed = self.store.patch_job(job.id, enabled=False)
+                if claimed is None or claimed.enabled:
+                    continue
+                await self.run_job(job.id, already_claimed=True)
 
     async def _handle_outreach(self, session_id: str) -> None:
         body = await self._generate_with_skill(
@@ -233,10 +236,16 @@ class ProactiveLoop:
             source="proactive_outreach",
         )
 
-    async def run_job(self, job_id: str) -> dict[str, Any]:
+    async def run_job(
+        self, job_id: str, *, already_claimed: bool = False
+    ) -> dict[str, Any]:
         job = self.store.get_job(job_id)
         if job is None:
             return {"ok": False, "error": "not_found"}
+        # Claim one-shots before side effects so APS + heartbeat cannot double-fire.
+        if job.kind == "date" and not already_claimed and job.enabled:
+            self.store.patch_job(job_id, enabled=False)
+            self.resync()
         if job_id == "daily_checkin":
             return await self._run_daily_checkin(job)
         if job_id == "weekly_recap":
@@ -244,11 +253,14 @@ class ProactiveLoop:
         # Custom reminder
         title = job.title or "提醒"
         body = job.body or job.title
-        await self.delivery.notify(
-            title, body, session_id="", source=f"job:{job_id}"
-        )
-        if job.kind == "date":
-            self.store.patch_job(job_id, enabled=False)
+        try:
+            await self.delivery.notify(
+                title, body, session_id="", source=f"job:{job_id}"
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("notify failed for job=%s", job_id)
+            return {"ok": False, "id": job_id, "error": "notify_failed"}
+        if job.kind == "date" and already_claimed:
             self.resync()
         return {"ok": True, "id": job_id, "title": title}
 

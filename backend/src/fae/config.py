@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     skills_state_path: str = ".data/fae-skills-state.json"
     skills_max_active: int = Field(default=2, ge=1, le=10)
 
+    # Live tools (Open-Meteo weather — no API key)
+    weather_enabled: bool = True
+    weather_default_city: str = ""
+    weather_default_timezone: str = ""
+
     # Proactive scheduler (Phase 4) — tests should set SCHEDULER_ENABLED=false
     scheduler_enabled: bool = False
     heartbeat_seconds: float = Field(default=30.0, ge=5.0)

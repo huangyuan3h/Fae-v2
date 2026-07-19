@@ -45,8 +45,23 @@ from fae.memory.factory import MemoryStack, create_memory_stack
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler import ActivityTracker, ConnectionHub, ProactiveLoop, ScheduleStore
 from fae.scheduler.delivery import NotificationDelivery
+from fae.scheduler.jobs import builtin_job_specs
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
+
+
+def _schedules_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.schedules_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _seed_builtin_jobs(store: ScheduleStore) -> None:
+    specs = builtin_job_specs()
+    store.ensure_builtin_jobs(
+        [(s.id, "cron", s.cron, s.description, s.meta) for s in specs]
+    )
 
 logger = logging.getLogger("fae")
 
@@ -102,12 +117,12 @@ async def lifespan(app: FastAPI):
     app.state.ws_hub = hub
 
     # Schedule store always available for REST even when loop is disabled.
-    if getattr(app.state, "schedule_store", None) is None:
-        db_path = Path(settings.schedules_db_path)
-        if not db_path.is_absolute():
-            db_path = REPO_ROOT / db_path
-        app.state.schedule_store = ScheduleStore(db_path)
-    store: ScheduleStore = app.state.schedule_store
+    # Recreate if previous lifespan closed the connection.
+    store = getattr(app.state, "schedule_store", None)
+    if not isinstance(store, ScheduleStore):
+        store = ScheduleStore(_schedules_db_path(settings))
+        app.state.schedule_store = store
+    _seed_builtin_jobs(store)
     delivery = NotificationDelivery(
         store,
         hub,
@@ -164,25 +179,34 @@ async def lifespan(app: FastAPI):
             app.state.episodic = None
             app.state.sleeptime = None
 
-    # Phase 4 proactive loop
-    if settings.scheduler_enabled and getattr(app.state, "proactive", None) is None:
-        loop = ProactiveLoop(
-            store=store,
-            activity=activity,
-            delivery=delivery,
-            skills=getattr(app.state, "skills", None),
-            llm=getattr(app.state, "llm_client", None),
-            episodic=getattr(app.state, "episodic", None),
-            recall=getattr(app.state, "recall_store", None),
-            sleeptime=getattr(app.state, "sleeptime", None),
-            heartbeat_seconds=settings.heartbeat_seconds,
-            outreach_idle_hours=settings.outreach_idle_hours,
-            outreach_cooldown_hours=settings.outreach_cooldown_hours,
-            outreach_max_per_day=settings.outreach_max_per_day,
-        )
-        app.state.proactive = loop
-        await loop.start()
-    elif getattr(app.state, "proactive", None) is None:
+    # Phase 4 proactive loop — recreate after prior shutdown cleared the handle.
+    if settings.scheduler_enabled:
+        existing = getattr(app.state, "proactive", None)
+        if isinstance(existing, ProactiveLoop) and existing._started:
+            pass
+        else:
+            llm_cfg = LLMConfig(
+                api_key=settings.dashscope_api_key or "unused",
+                model="qwen3-max",
+            )
+            loop = ProactiveLoop(
+                store=store,
+                activity=activity,
+                delivery=delivery,
+                skills=getattr(app.state, "skills", None),
+                llm=getattr(app.state, "llm_client", None),
+                episodic=getattr(app.state, "episodic", None),
+                recall=getattr(app.state, "recall_store", None),
+                sleeptime=getattr(app.state, "sleeptime", None),
+                heartbeat_seconds=settings.heartbeat_seconds,
+                outreach_idle_hours=settings.outreach_idle_hours,
+                outreach_cooldown_hours=settings.outreach_cooldown_hours,
+                outreach_max_per_day=settings.outreach_max_per_day,
+                default_llm_config=llm_cfg,
+            )
+            app.state.proactive = loop
+            await loop.start()
+    else:
         app.state.proactive = None
 
     yield
@@ -193,6 +217,7 @@ async def lifespan(app: FastAPI):
     proactive = getattr(app.state, "proactive", None)
     if isinstance(proactive, ProactiveLoop):
         await proactive.stop()
+    app.state.proactive = None
     scheduler = getattr(app.state, "sleeptime", None)
     if isinstance(scheduler, SleeptimeScheduler):
         await scheduler.stop()
@@ -209,6 +234,8 @@ async def lifespan(app: FastAPI):
     schedule_store = getattr(app.state, "schedule_store", None)
     if isinstance(schedule_store, ScheduleStore):
         schedule_store.close()
+    app.state.schedule_store = None
+    app.state.delivery = None
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -292,10 +319,8 @@ def create_app(
     app.state.activity = ActivityTracker()
     app.state.proactive = None
     app.state.ws_hub = ConnectionHub()
-    schedules_path = Path(settings.schedules_db_path)
-    if not schedules_path.is_absolute():
-        schedules_path = REPO_ROOT / schedules_path
-    app.state.schedule_store = ScheduleStore(schedules_path)
+    app.state.schedule_store = ScheduleStore(_schedules_db_path(settings))
+    _seed_builtin_jobs(app.state.schedule_store)
     app.state.delivery = NotificationDelivery(
         app.state.schedule_store,
         app.state.ws_hub,
@@ -401,14 +426,19 @@ def create_app(
                 user_text = msg.content
                 break
         try:
-            prepared, activation = await prepare_chat_request(
+            settings = request.app.state.settings
+            prepared, activation, default_city = await prepare_chat_request(
                 body,
                 session_id=session_id,
                 memory=memory,
                 skills=skills_rt if isinstance(skills_rt, SkillRuntime) else None,
+                default_city=getattr(settings, "weather_default_city", "") or "",
+                default_timezone=getattr(settings, "weather_default_timezone", "")
+                or "",
             )
             from fae.agent.llm_turn import apply_lazy_skill_tool
             from fae.scheduler.store import ScheduleStore as _ScheduleStore
+            from fae.tools.weather import weather_likely
 
             early: str | None = None
             schedule_store = getattr(request.app.state, "schedule_store", None)
@@ -416,12 +446,17 @@ def create_app(
                 schedule_store
                 if (
                     isinstance(schedule_store, _ScheduleStore)
-                    and request.app.state.settings.scheduler_enabled
+                    and settings.scheduler_enabled
                 )
                 else None
             )
+            weather_on = bool(getattr(settings, "weather_enabled", True)) and (
+                weather_likely(user_text) or "weather_briefing" in activation.active
+            )
             tools_needed = bool(
-                (isinstance(skills_rt, SkillRuntime) and activation.tools) or sched
+                (isinstance(skills_rt, SkillRuntime) and activation.tools)
+                or sched
+                or weather_on
             )
             if tools_needed:
                 prepared, activation, early = await apply_lazy_skill_tool(
@@ -431,6 +466,8 @@ def create_app(
                     skills_rt if isinstance(skills_rt, SkillRuntime) else None,
                     session_id=session_id,
                     schedule_store=sched,
+                    weather_enabled=weather_on,
+                    default_city=default_city,
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)

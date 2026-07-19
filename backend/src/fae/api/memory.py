@@ -3,14 +3,80 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.core_budget import core_stats_from_client
 from fae.memory.factory import MemoryStack
-from fae.memory.schemas import FactIn
+from fae.memory.profile_block import CITY_KEY, TIMEZONE_KEY, parse_human_profile
+from fae.memory.schemas import FactIn, UserProfile
 from fae.pipecat.services.letta_memory import LettaMemoryService
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
+
+
+class ProfileUpdate(BaseModel):
+    display_name: str | None = None
+    city: str | None = None
+    timezone: str | None = None
+    notes: str | None = None
+
+
+class ProfileOut(BaseModel):
+    display_name: str | None = None
+    city: str | None = None
+    timezone: str | None = None
+    preferences: dict[str, str] = Field(default_factory=dict)
+    notes: str | None = None
+    human: str = ""
+
+
+@router.get("/profile", response_model=ProfileOut)
+async def memory_get_profile(request: Request) -> ProfileOut:
+    """Read Name / City / Timezone from the core human block."""
+    memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
+    if memory is None or memory.client is None:
+        raise HTTPException(status_code=503, detail="memory unavailable")
+    human = await memory.client.get_block("human")
+    parsed = parse_human_profile(human)
+    notes = "\n".join(parsed.notes).strip() or None
+    return ProfileOut(
+        display_name=parsed.display_name,
+        city=parsed.city,
+        timezone=parsed.timezone,
+        preferences=parsed.preferences,
+        notes=notes,
+        human=human,
+    )
+
+
+@router.put("/profile", response_model=ProfileOut)
+async def memory_put_profile(body: ProfileUpdate, request: Request) -> ProfileOut:
+    """Upsert display name, city, and timezone into the human block."""
+    memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
+    if memory is None or memory.client is None:
+        raise HTTPException(status_code=503, detail="memory unavailable")
+    prefs: dict[str, str] = {}
+    if body.city is not None:
+        city = body.city.strip()
+        if city:
+            prefs[CITY_KEY] = city
+    if body.timezone is not None:
+        tz = body.timezone.strip()
+        if tz:
+            prefs[TIMEZONE_KEY] = tz
+    name = body.display_name.strip() if body.display_name else None
+    notes = body.notes.strip() if body.notes else None
+    if not name and not prefs and notes is None:
+        raise HTTPException(status_code=400, detail="no profile fields provided")
+    await memory.client.update_user(
+        UserProfile(display_name=name or None, preferences=prefs, notes=notes)
+    )
+    if city := prefs.get(CITY_KEY):
+        await memory.client.save_fact(
+            FactIn(content=f"User lives in {city}", tags=["identity", "location", "city"])
+        )
+    return await memory_get_profile(request)
 
 
 @router.get("/stats")

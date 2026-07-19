@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ensureNotificationPermission,
@@ -23,6 +23,22 @@ export function NotificationsPanel() {
     queryFn: () => listNotifications(false),
   });
   const [status, setStatus] = useState<string | null>(null);
+  const [quietStart, setQuietStart] = useState("");
+  const [quietEnd, setQuietEnd] = useState("");
+
+  useEffect(() => {
+    if (!prefsQ.data) return;
+    setQuietStart(
+      prefsQ.data.quiet_start_hour == null
+        ? ""
+        : String(prefsQ.data.quiet_start_hour),
+    );
+    setQuietEnd(
+      prefsQ.data.quiet_end_hour == null
+        ? ""
+        : String(prefsQ.data.quiet_end_hour),
+    );
+  }, [prefsQ.data]);
 
   const saveM = useMutation({
     mutationFn: putNotificationPrefs,
@@ -34,6 +50,26 @@ export function NotificationsPanel() {
   });
 
   const prefs = prefsQ.data;
+
+  const saveQuiet = () => {
+    if (quietStart === "" && quietEnd === "") {
+      saveM.mutate({ clear_quiet: true });
+      return;
+    }
+    const start = quietStart === "" ? null : Number(quietStart);
+    const end = quietEnd === "" ? null : Number(quietEnd);
+    if (
+      (start != null && (Number.isNaN(start) || start < 0 || start > 23)) ||
+      (end != null && (Number.isNaN(end) || end < 0 || end > 23))
+    ) {
+      setStatus("勿扰小时须为 0–23");
+      return;
+    }
+    saveM.mutate({
+      quiet_start_hour: start,
+      quiet_end_hour: end,
+    });
+  };
 
   return (
     <div className="space-y-8">
@@ -48,9 +84,7 @@ export function NotificationsPanel() {
               <input
                 type="checkbox"
                 checked={prefs.enabled}
-                onChange={(e) =>
-                  saveM.mutate({ enabled: e.target.checked })
-                }
+                onChange={(e) => saveM.mutate({ enabled: e.target.checked })}
               />
               启用通知
             </label>
@@ -81,15 +115,9 @@ export function NotificationsPanel() {
                 min={0}
                 max={23}
                 className="w-16 rounded border border-black/10 px-2 py-1"
-                value={prefs.quiet_start_hour ?? ""}
+                value={quietStart}
                 placeholder="起"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  saveM.mutate({
-                    quiet_start_hour: v === "" ? undefined : Number(v),
-                    quiet_end_hour: prefs.quiet_end_hour ?? undefined,
-                  });
-                }}
+                onChange={(e) => setQuietStart(e.target.value)}
               />
               <span>—</span>
               <input
@@ -97,20 +125,25 @@ export function NotificationsPanel() {
                 min={0}
                 max={23}
                 className="w-16 rounded border border-black/10 px-2 py-1"
-                value={prefs.quiet_end_hour ?? ""}
+                value={quietEnd}
                 placeholder="止"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  saveM.mutate({
-                    quiet_start_hour: prefs.quiet_start_hour ?? undefined,
-                    quiet_end_hour: v === "" ? undefined : Number(v),
-                  });
-                }}
+                onChange={(e) => setQuietEnd(e.target.value)}
               />
               <button
                 type="button"
+                className="rounded-full border border-black/10 px-3 py-1 text-xs"
+                onClick={saveQuiet}
+              >
+                保存勿扰
+              </button>
+              <button
+                type="button"
                 className="text-xs text-[var(--accent)] underline"
-                onClick={() => saveM.mutate({ clear_quiet: true })}
+                onClick={() => {
+                  setQuietStart("");
+                  setQuietEnd("");
+                  saveM.mutate({ clear_quiet: true });
+                }}
               >
                 清除勿扰
               </button>

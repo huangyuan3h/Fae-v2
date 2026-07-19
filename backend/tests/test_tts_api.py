@@ -28,10 +28,25 @@ def test_to_speakable_strips_markdown_and_think() -> None:
     assert to_speakable_text(raw) == "标题\n你好世界"
 
 
+def test_to_speakable_skips_tables_and_code() -> None:
+    raw = (
+        "地球概况如下。\n\n"
+        "| 项目 | 数据 |\n| --- | --- |\n| 直径 | 1万公里 |\n\n"
+        "继续说明气候。\n"
+        "```js\nconsole.log(1)\n```\n"
+        "结束。"
+    )
+    out = to_speakable_text(raw)
+    assert "直径" not in out
+    assert "console" not in out
+    assert "地球概况" in out
+    assert "气候" in out
+
+
 def test_clip_for_local_tts_sentence() -> None:
     long = "第一句。" + ("字" * 200)
-    out = clip_for_local_tts(long, max_chars=72)
-    assert "第一句。" in out or len(out) <= 73
+    out = clip_for_local_tts(long, max_chars=40)
+    assert "第一句。" in out or len(out) <= 41
 
 
 def test_speak_local_unavailable(monkeypatch) -> None:  # noqa: ANN001

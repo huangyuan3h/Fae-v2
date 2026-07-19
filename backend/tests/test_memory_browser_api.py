@@ -75,3 +75,33 @@ def test_facts_404_and_search_requires_q(tmp_path: Path) -> None:
 
         bad = http.get("/api/memory/search", params={"q": ""})
         assert bad.status_code == 400
+
+
+def test_profile_get_and_put(tmp_path: Path) -> None:
+    with _app(tmp_path) as http:
+        empty = http.put("/api/memory/profile", json={})
+        assert empty.status_code == 400
+
+        saved = http.put(
+            "/api/memory/profile",
+            json={
+                "display_name": "小明",
+                "city": "北京",
+                "timezone": "Asia/Shanghai",
+            },
+        )
+        assert saved.status_code == 200
+        body = saved.json()
+        assert body["display_name"] == "小明"
+        assert body["city"] == "北京"
+        assert body["timezone"] == "Asia/Shanghai"
+        assert "City: 北京" in body["human"]
+
+        got = http.get("/api/memory/profile")
+        assert got.status_code == 200
+        assert got.json()["city"] == "北京"
+
+        updated = http.put("/api/memory/profile", json={"city": "上海"})
+        assert updated.status_code == 200
+        assert updated.json()["city"] == "上海"
+        assert updated.json()["display_name"] == "小明"

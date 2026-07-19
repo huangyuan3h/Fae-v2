@@ -86,35 +86,35 @@ async def get_prefs(request: Request) -> dict[str, Any]:
 async def put_prefs(body: PrefsBody, request: Request) -> dict[str, Any]:
     store = _store(request)
     current = store.get_prefs()
+    fields = body.model_fields_set
+
+    if body.clear_quiet:
+        quiet_start: int | None = None
+        quiet_end: int | None = None
+    else:
+        # Explicit null in JSON clears; omitted field keeps current.
+        if "quiet_start_hour" in fields:
+            quiet_start = body.quiet_start_hour
+        else:
+            quiet_start = current.quiet_start_hour
+        if "quiet_end_hour" in fields:
+            quiet_end = body.quiet_end_hour
+        else:
+            quiet_end = current.quiet_end_hour
+
     prefs = NotificationPrefs(
-        enabled=current.enabled if body.enabled is None else body.enabled,
-        quiet_start_hour=(
-            None
-            if body.clear_quiet
-            else (
-                current.quiet_start_hour
-                if body.quiet_start_hour is None
-                else body.quiet_start_hour
-            )
-        ),
-        quiet_end_hour=(
-            None
-            if body.clear_quiet
-            else (
-                current.quiet_end_hour
-                if body.quiet_end_hour is None
-                else body.quiet_end_hour
-            )
-        ),
+        enabled=current.enabled if "enabled" not in fields else bool(body.enabled),
+        quiet_start_hour=quiet_start,
+        quiet_end_hour=quiet_end,
         desktop_enabled=(
             current.desktop_enabled
-            if body.desktop_enabled is None
-            else body.desktop_enabled
+            if "desktop_enabled" not in fields
+            else bool(body.desktop_enabled)
         ),
         web_push_enabled=(
             current.web_push_enabled
-            if body.web_push_enabled is None
-            else body.web_push_enabled
+            if "web_push_enabled" not in fields
+            else bool(body.web_push_enabled)
         ),
     )
     store.set_prefs(prefs)

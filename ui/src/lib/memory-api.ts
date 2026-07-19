@@ -32,6 +32,15 @@ export type SearchResult = {
   events: SearchHit[];
 };
 
+export type UserProfile = {
+  display_name?: string | null;
+  city?: string | null;
+  timezone?: string | null;
+  preferences?: Record<string, string>;
+  notes?: string | null;
+  human?: string;
+};
+
 function formatApiError(status: number, body: string): string {
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
@@ -111,4 +120,20 @@ export function fetchMemoryStats() {
     archival: string;
     sleeptime: string;
   }>("/api/memory/stats");
+}
+
+export function fetchProfile() {
+  return jsonFetch<UserProfile>("/api/memory/profile");
+}
+
+export function updateProfile(body: {
+  display_name?: string;
+  city?: string;
+  timezone?: string;
+  notes?: string;
+}) {
+  return jsonFetch<UserProfile>("/api/memory/profile", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }

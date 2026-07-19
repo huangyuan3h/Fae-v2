@@ -1,6 +1,6 @@
 import { backendHttpBase } from "@/lib/config";
 import { formatNetworkError } from "@/lib/network-error";
-import { chunkForTts } from "@/lib/sentence-agg";
+import { chunkForTts, TTS_CHUNK_CHARS } from "@/lib/sentence-agg";
 
 let currentAudio: HTMLAudioElement | null = null;
 let currentUrl: string | null = null;
@@ -159,18 +159,23 @@ export async function speakWithLocalTts(
 type QueuedClip = { id: number; url: string; audio?: HTMLAudioElement };
 
 /**
- * Phrase-level WAV queue: keep synth ahead of playback (prefetch depth 3).
+ * Phrase-level WAV queue.
+ * Core: Mac TTS synth is often slower than playback — buffer before start
+ * and keep up to 4 in-flight short clips so play rarely underruns.
  */
 export class TtsPlayQueue {
   private opts: TtsSpeakOpts;
   private readonly maxInflight: number;
   private readonly targetReady: number;
+  /** Wait for this many ready clips before first audible play. */
+  private readonly minStartReady: number;
   private pending: string[] = [];
   private ready = new Map<number, QueuedClip>();
   private nextId = 0;
   private playHead = 0;
   private inflight = 0;
   private playing = false;
+  private started = false;
   private generation = 0;
   private onError: ((err: Error) => void) | null = null;
   private onIdle: (() => void) | null = null;
@@ -178,12 +183,15 @@ export class TtsPlayQueue {
 
   constructor(
     opts: TtsSpeakOpts = {},
-    maxInflight = 3,
+    // MLX server serializes gens (TTS_MAX_CONCURRENT=1); 2 in-flight HTTP is enough.
+    maxInflight = 2,
     targetReady = 2,
+    minStartReady = 2,
   ) {
     this.opts = opts;
     this.maxInflight = Math.max(1, Math.min(4, maxInflight));
     this.targetReady = Math.max(1, targetReady);
+    this.minStartReady = Math.max(1, minStartReady);
     activeQueue = this;
   }
 
@@ -200,7 +208,7 @@ export class TtsPlayQueue {
   }
 
   enqueue(text: string): void {
-    const chunks = chunkForTts(text, 72);
+    const chunks = chunkForTts(text, TTS_CHUNK_CHARS);
     if (!chunks.length) return;
     if (activeQueue !== this) activeQueue = this;
     for (const chunk of chunks) this.pending.push(chunk);
@@ -218,6 +226,7 @@ export class TtsPlayQueue {
     this.playHead = 0;
     this.inflight = 0;
     this.playing = false;
+    this.started = false;
     this.primed = null;
     // Clear audio without going through stopAllLocalTts (would re-enter stop).
     if (currentAudio) {
@@ -257,7 +266,7 @@ export class TtsPlayQueue {
 
   private pumpSynth(): void {
     const gen = this.generation;
-    // Never wait on playback — synthesize whenever text is pending (up to 3).
+    // Never wait on playback — fill up to maxInflight whenever text is pending.
     while (this.inflight < this.maxInflight && this.pending.length > 0) {
       const text = this.pending.shift()!;
       const id = this.nextId;
@@ -271,9 +280,7 @@ export class TtsPlayQueue {
           audio.preload = "auto";
           audio.src = url;
           this.ready.set(id, { id, url, audio });
-          // Prefer starting playback as soon as the play-head clip is ready.
           this.pumpPlay();
-          // If we are already playing and ready buffer is thin, keep filling.
           if (this.readyAhead() < this.targetReady) this.pumpSynth();
         })
         .catch((err) => {
@@ -315,6 +322,14 @@ export class TtsPlayQueue {
     const clip = this.ready.get(this.playHead);
     if (!clip) return;
 
+    // Buffer before first play so synth can stay ahead of realtime audio.
+    // If the pipeline is drained (short reply), play with whatever we have.
+    if (!this.started) {
+      const ahead = this.readyAhead();
+      const drained = this.pending.length === 0 && this.inflight === 0;
+      if (ahead < this.minStartReady && !drained) return;
+    }
+
     this.ready.delete(this.playHead);
     this.playHead += 1;
 
@@ -324,6 +339,7 @@ export class TtsPlayQueue {
       return;
     }
 
+    this.started = true;
     this.playing = true;
     this.pauseCurrentAudioOnly();
     currentUrl = clip.url;
@@ -354,7 +370,7 @@ export class TtsPlayQueue {
       if (gen !== this.generation) return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
       const remaining = audio.duration - audio.currentTime;
-      if (remaining < 0.12) this.primeNext();
+      if (remaining < 0.15) this.primeNext();
     };
 
     void audio.play().catch((e) => {

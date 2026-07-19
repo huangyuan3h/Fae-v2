@@ -5,20 +5,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEP_DIR="${FAE_TTS_DIR:-$ROOT/.deps/qwen3-tts}"
 READY="$ROOT/.deps/qwen3-tts.ready"
-MODEL="${TTS_MODEL_NAME:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-${FAE_TTS_PORT:-8880}}"
+
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  MODEL="${MLX_MODEL_ID:-${TTS_MODEL_NAME:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit}}"
+  VENV_BIN="$DEP_DIR/.venv-mlx/bin/activate"
+else
+  MODEL="${TTS_MODEL_NAME:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
+  VENV_BIN="$DEP_DIR/.venv/bin/activate"
+fi
 CACHE="$HOME/.cache/huggingface/hub/models--${MODEL//\//--}"
 
 echo "[fae-tts] prepare model=$MODEL"
 
-if [[ ! -f "$READY" || ! -x "$DEP_DIR/.venv/bin/python" ]]; then
+if [[ ! -f "$READY" || ! -f "$VENV_BIN" ]]; then
   echo "[fae-tts] server package missing — running setup first"
   bash "$ROOT/scripts/tts/setup.sh"
 fi
 
 # shellcheck disable=SC1091
-source "$DEP_DIR/.venv/bin/activate"
+source "$VENV_BIN"
 
 incomplete="$(find "$CACHE" -name '*.incomplete' 2>/dev/null | head -5 || true)"
 if [[ -n "$incomplete" ]]; then

@@ -12,7 +12,7 @@ _THINK_FENCE = re.compile(
     r"```(?:thinking|reasoning|thought)\s*\n[\s\S]*?```",
     re.IGNORECASE,
 )
-_CODE_FENCE = re.compile(r"```[\w+-]*\n?([\s\S]*?)```")
+_CODE_FENCE = re.compile(r"```[\w+-]*\n?[\s\S]*?```")
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -25,6 +25,9 @@ _STRIKE = re.compile(r"~~([^~]+)~~")
 _LIST = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 _NUM_LIST = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 _MD_NOISE = re.compile(r"[*_~`#]")
+# One or more consecutive GFM pipe-table lines
+_PIPE_TABLE = re.compile(r"(?:^|\n)(?:\|[^\n]*\|(?:\n|$))+")
+_TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
 
 
 def to_speakable_text(text: str) -> str:
@@ -32,7 +35,12 @@ def to_speakable_text(text: str) -> str:
         return ""
     s = _THINK_TAG.sub("", text)
     s = _THINK_FENCE.sub("", s)
-    s = _CODE_FENCE.sub(r"\1", s)
+    # Repair collapsed table rows before stripping
+    s = s.replace("||", "|\n|")
+    # Drop code fences and tables entirely — do not read aloud
+    s = _CODE_FENCE.sub("\n", s)
+    s = _PIPE_TABLE.sub("\n", s)
+    s = _TABLE_LINE.sub("", s)
     s = _INLINE_CODE.sub(r"\1", s)
     s = _IMAGE.sub(r"\1", s)
     s = _LINK.sub(r"\1", s)
@@ -69,4 +77,3 @@ def clip_for_local_tts(text: str, max_chars: int = 240) -> str:
         if idx >= max_chars // 3:
             return window[: idx + len(sep)].strip()
     return window[:max_chars].rstrip() + "…"
-

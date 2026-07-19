@@ -1,4 +1,4 @@
-"""Run one assistant turn with optional LAZY request_skill + schedule tools."""
+"""Run one assistant turn with optional LAZY request_skill + tools."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
 from fae.llm.client import LLMClient
-from fae.llm.types import ChatRequest, ChatResponse
+from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
 from fae.scheduler.tools import SCHEDULE_TOOLS, dispatch_schedule_tool
+from fae.tools.weather import WEATHER_TOOLS, dispatch_weather_tool
 
 if TYPE_CHECKING:
     from fae.scheduler.store import ScheduleStore
@@ -23,6 +24,8 @@ _SCHEDULE_TOOL_NAMES = {
     "cancel_job",
 }
 
+_WEATHER_TOOL_NAMES = {"get_weather"}
+
 
 def _strip_tools(request: ChatRequest) -> ChatRequest:
     if request.tools is None and request.tool_choice is None:
@@ -30,22 +33,42 @@ def _strip_tools(request: ChatRequest) -> ChatRequest:
     return request.model_copy(update={"tools": None, "tool_choice": None})
 
 
+def _append_unique_tools(tools: list[dict], extra: list[dict]) -> None:
+    names = {
+        t.get("function", {}).get("name")
+        for t in tools
+        if isinstance(t, dict)
+    }
+    for t in extra:
+        n = t.get("function", {}).get("name")
+        if n not in names:
+            tools.append(t)
+            names.add(n)
+
+
 def _merge_tools(
     activation: SkillActivationInfo,
     schedule_store: ScheduleStore | None,
+    *,
+    weather_enabled: bool = False,
 ) -> list[dict]:
     tools = list(activation.tools or [])
     if schedule_store is not None:
-        names = {
-            t.get("function", {}).get("name")
-            for t in tools
-            if isinstance(t, dict)
-        }
-        for t in SCHEDULE_TOOLS:
-            n = t.get("function", {}).get("name")
-            if n not in names:
-                tools.append(t)
+        _append_unique_tools(tools, SCHEDULE_TOOLS)
+    if weather_enabled:
+        _append_unique_tools(tools, WEATHER_TOOLS)
     return tools
+
+
+def _tool_result_message(tool_name: str, result: str) -> ChatMessage:
+    return ChatMessage(
+        role="system",
+        content=(
+            f'<tool_result name="{tool_name}">\n{result}\n</tool_result>\n'
+            "Use this live tool data to answer the user. "
+            "Do not claim you lack access to this information."
+        ),
+    )
 
 
 async def apply_lazy_skill_tool(
@@ -56,13 +79,19 @@ async def apply_lazy_skill_tool(
     *,
     session_id: str = "default",
     schedule_store: ScheduleStore | None = None,
+    weather_enabled: bool = False,
+    default_city: str | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
     If the model answers with plain content and no tool call, early_content is set
     and the caller should not stream again.
+    Weather tools inject results and return early_content=None so the caller
+    streams a natural-language answer.
     """
-    tools = _merge_tools(activation, schedule_store)
+    tools = _merge_tools(
+        activation, schedule_store, weather_enabled=weather_enabled
+    )
     if not tools:
         return request, activation, None
 
@@ -89,6 +118,18 @@ async def apply_lazy_skill_tool(
             summary = f"已处理日程工具 {tc.name}：{result}"
             return _strip_tools(request), activation, summary
 
+        if tc.name in _WEATHER_TOOL_NAMES and weather_enabled:
+            result = await dispatch_weather_tool(
+                tc.name,
+                tc.arguments,
+                default_city=default_city,
+            )
+            logger.info("get_weather result_len=%s", len(result))
+            messages = list(request.messages)
+            messages.append(_tool_result_message(tc.name, result))
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
     if (probe.content or "").strip():
         return _strip_tools(request), activation, probe.content
     return _strip_tools(request), activation, None
@@ -102,13 +143,15 @@ async def stream_assistant_turn(
     *,
     session_id: str = "default",
     schedule_store: ScheduleStore | None = None,
+    weather_enabled: bool = False,
+    default_city: str | None = None,
     on_schedule_mutated: Callable[[], None] | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
     req = request
     early: str | None = None
-    tools = _merge_tools(act, schedule_store)
+    tools = _merge_tools(act, schedule_store, weather_enabled=weather_enabled)
     if tools:
         act = SkillActivationInfo(
             active=act.active,
@@ -123,6 +166,8 @@ async def stream_assistant_turn(
             skills,
             session_id=session_id,
             schedule_store=schedule_store,
+            weather_enabled=weather_enabled,
+            default_city=default_city,
         )
         if early is not None and on_schedule_mutated is not None:
             if "日程工具" in early:

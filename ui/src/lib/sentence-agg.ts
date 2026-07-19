@@ -1,14 +1,16 @@
 /**
  * Hybrid speech chunker for stream-to-speak TTS.
- * Hard sentence ends first; soft comma / length cuts; idle soft-flush.
+ * Short phrases so Mac TTS synth can stay ahead of playback.
  */
 
 const HARD_END = /(?<=[。！？.!?…\n])/;
 const SOFT_CHARS = new Set(["，", "、", "；", ";", ":"]);
-const SOFT_MIN_CHARS = 48;
-const HARD_MAX_CHARS = 72;
-const IDLE_FLUSH_MS = 400;
-const IDLE_FLUSH_MIN_CHARS = 12;
+/** Soft comma cut once buffer is long enough. */
+const SOFT_MIN_CHARS = 28;
+/** Hard length cut — keep synth requests short on MPS. */
+export const TTS_CHUNK_CHARS = 40;
+const IDLE_FLUSH_MS = 250;
+const IDLE_FLUSH_MIN_CHARS = 8;
 
 export type SoftFlushHandler = (chunks: string[]) => void;
 
@@ -85,8 +87,8 @@ export class SpeechChunkAggregator {
         }
       }
 
-      if (this.buf.length >= HARD_MAX_CHARS) {
-        const cut = this.findLengthCut(this.buf, HARD_MAX_CHARS);
+      if (this.buf.length >= TTS_CHUNK_CHARS) {
+        const cut = this.findLengthCut(this.buf, TTS_CHUNK_CHARS);
         const piece = this.buf.slice(0, cut).trim();
         if (piece) completed.push(piece);
         this.buf = this.buf.slice(cut);
@@ -99,7 +101,6 @@ export class SpeechChunkAggregator {
   }
 
   private findSoftCut(s: string): number {
-    // Prefer a soft boundary in the second half so chunks stay substantive.
     const minIdx = Math.floor(SOFT_MIN_CHARS / 2);
     for (let i = s.length - 1; i >= minIdx; i -= 1) {
       if (SOFT_CHARS.has(s[i]!)) return i + 1;
@@ -117,11 +118,14 @@ export class SpeechChunkAggregator {
   }
 }
 
-/** @deprecated Use SpeechChunkAggregator — kept for hard sentence-only callers. */
+/** @deprecated Use SpeechChunkAggregator */
 export class SentenceAggregator extends SpeechChunkAggregator {}
 
 /** Split oversized text so each chunk fits the TTS per-request cap. */
-export function chunkForTts(text: string, maxChars = HARD_MAX_CHARS): string[] {
+export function chunkForTts(
+  text: string,
+  maxChars = TTS_CHUNK_CHARS,
+): string[] {
   const s = text.trim();
   if (!s) return [];
   if (s.length <= maxChars) return [s];
