@@ -9,7 +9,7 @@ export const TTS_PREFS_CHANGED_EVENT = "fae:tts-prefs-changed";
 
 export const DEFAULT_TTS_PREFS: TtsPrefs = {
   voice: "Vivian",
-  speed: 1.2,
+  speed: 1.0,
   language: "Chinese",
 };
 

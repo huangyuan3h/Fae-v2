@@ -63,7 +63,7 @@ class LocalTTSClient:
         timeout_s: float = 300.0,
         api_key: str = "local",
         language: str = "Chinese",
-        speed: float = 1.2,
+        speed: float = 1.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model

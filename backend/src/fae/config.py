@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     tts_model: str = "tts-1"
     tts_voice: str = "Vivian"
     tts_language: str = "Chinese"
-    tts_speed: float = Field(default=1.2, ge=0.25, le=4.0)
+    tts_speed: float = Field(default=1.0, ge=0.25, le=4.0)
     tts_sample_rate: int = Field(default=24000, ge=8000)
     tts_response_format: str = "wav"
     # Cold start (HF download + model load) on Mac can exceed a minute.

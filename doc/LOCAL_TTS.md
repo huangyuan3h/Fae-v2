@@ -26,7 +26,7 @@ ahead of realtime audio. Per-request cap is **40** characters.
 
 Tune **voice / speed / language** in **Settings → 语音** (stored in
 `localStorage`, sent on each `/api/tts/speak`). Process defaults come from `.env`
-(`TTS_SPEED=1.2`, etc.).
+(`TTS_SPEED=1.0`, etc.).
 
 ## First-time setup
 
@@ -106,7 +106,7 @@ VLLM_TTS_URL=http://127.0.0.1:8880/v1
 TTS_MODEL=tts-1
 TTS_VOICE=Vivian
 TTS_LANGUAGE=Chinese
-TTS_SPEED=1.2
+TTS_SPEED=1.0
 TTS_RESPONSE_FORMAT=wav
 TTS_TIMEOUT_S=300
 ```
