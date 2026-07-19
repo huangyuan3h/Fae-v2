@@ -43,45 +43,31 @@ FAE-v2 是一个**能在本地电脑长期陪你的语音 Agent**：
 
 ## 2. 顶层架构
 
+> **现行默认路径（Phase Q）**：浏览器 Web Speech STT → `/ws/chat`（LLM + memory + skills）→ 本机 TTS（`VLLM_TTS_URL`）。  
+> **可选**：Daily + Pipecat 全双工（需 `DAILY_API_KEY`）。  
+> **未实现**：LiveKit。MCP **暂缓**（见 DEVELOPMENT_PLAN）。
+
 ```text
 ┌────────────────────────────────────────────────────────────────┐
-│                       浏览器（Web UI）                          │
-│        Next.js 15 + shadcn/ui + Tailwind + Pipecat Client      │
-│                                                                 │
-│  • 麦克风可视化（VoiceOrb）    • 对话气泡（ChatPanel）           │
-│  • 记忆浏览（MemoryPanel）    • 定时任务管理（Schedules）        │
-│  • Skills / Tools 启用面板                                      │
-└─────────────────────────┬──────────────────────────────────────┘
-                          │ WebRTC（Daily 或 LiveKit Cloud）
-┌─────────────────────────▼──────────────────────────────────────┐
-│              Pipecat 语音管道（Python · FastAPI）               │
-│                                                                 │
-│  [麦克风] → [VAD/SmartTurn] → [STT] → [Context+Memory] →        │
-│  [LLM + Tools] → [SentenceAggregator] → [TTS] → [扬声器]        │
-│                                                                 │
-│  并行支路：打断检测 · 流式句子聚合 · 工具调用 · 心跳              │
-└─────────────────────────┬──────────────────────────────────────┘
-                          │ HTTP / WebSocket / gRPC
-┌─────────────────────────▼──────────────────────────────────────┐
-│                   Agent Core（"大脑"层）                        │
-│                                                                 │
-│   ┌───────────────┐ ┌───────────────┐ ┌──────────────────────┐ │
-│   │ Letta Server  │ │ APScheduler   │ │ Tool Registry        │ │
-│   │ 长期记忆       │ │ 定时任务       │ │ (TypeScript / Python)│ │
-│   │ (stateful)    │ │ + 心跳 loop   │ │                      │ │
-│   └───────────────┘ └───────────────┘ └──────────────────────┘ │
-│                                                                 │
-│   ┌───────────────────────────────────────────────────────────┐│
-│   │ Skills Registry（Markdown，类似 Vercel Eve 风格）         ││
-│   └───────────────────────────────────────────────────────────┘│
-└─────────────────────────┬──────────────────────────────────────┘
-                          │
-┌─────────────────────────▼──────────────────────────────────────┐
-│                       模型 / 数据层                              │
-│                                                                 │
-│  vLLM-Omni (Qwen3-ASR-1.7B)   DashScope Realtime (Qwen3-TTS)  │
-│  vLLM (Qwen3-Max / DeepSeek)   Letta DB (SQLite / Postgres)   │
-│  Redis（短期上下文 / 任务队列）  Qdrant / pgvector（向量回忆）   │
+│                       浏览器（Web UI · Next.js）                 │
+│  VoiceOrb · Chat · /memory · /skills · /schedules · Settings   │
+└───────────────┬────────────────────────────┬───────────────────┘
+                │ 默认                        │ 可选
+                │ Web Speech STT              │ Daily WebRTC
+                │ + /ws/chat                  │ + Pipecat bot
+                ▼                             ▼
+┌───────────────────────────────┐  ┌─────────────────────────────┐
+│ FastAPI Agent Core            │  │ Daily voice pipeline        │
+│  prepare → LLM → tools        │  │  VAD → STT → LLM → local TTS│
+│  memory · skills · scheduler  │  │  (LiveKit: not implemented) │
+└───────────────┬───────────────┘  └──────────────┬──────────────┘
+                │                                 │
+                └────────────┬────────────────────┘
+                             ▼
+┌────────────────────────────────────────────────────────────────┐
+│ 本机 TTS HTTP（Qwen3-TTS / CosyVoice / stub · VLLM_TTS_URL）    │
+│ 记忆：Letta remote 或 embedded SQLite · archival 可选向量       │
+│ LLM：浏览器 Key 或服务端 DASHSCOPE / PROACTIVE_LLM_*            │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,25 +75,23 @@ FAE-v2 是一个**能在本地电脑长期陪你的语音 Agent**：
 
 ## 3. 技术选型（Why）
 
-### 3.1 语音栈：Qwen3 全套
+### 3.1 语音栈（现行）
 
-| 层 | 选型 | 许可证 | 理由 |
+| 层 | 默认路径 | 可选 / 后置 | 说明 |
 |---|---|---|---|
-| **STT** | Qwen3-ASR-1.7B | Apache 2.0 | 英文 WER 1.63%，中文 CER 极低，52 语种。Apache 2.0 + 多语言 SOTA |
-| **TTS** | Qwen3-TTS（DashScope Realtime SDK） | Apache 2.0 | 端到端 97ms 延迟，3 秒克隆，自然语言控制语气 |
-| **LLM** | Qwen3-Max（默认）/ DeepSeek-V3（备选） | Apache 2.0 | 中文最强，工具调用稳定 |
+| **STT** | 浏览器 Web Speech API | Daily 路径上的 OpenAI-compatible ASR（`VLLM_ASR_URL`） | 本地 ASR（Qwen3-ASR）属 Phase 5 可选 |
+| **TTS** | 本机 OpenAI-compatible HTTP（`VLLM_TTS_URL`：Qwen3-TTS / CosyVoice / stub） | — | **不是** DashScope Realtime 云端 TTS |
+| **LLM** | 浏览器 Settings 的 OpenAI-compatible Key | 服务端 `DASHSCOPE_API_KEY` / `PROACTIVE_LLM_*`（主动 Loop） | 聊天 Key 不落盘到服务端 UI 配置 |
 
-> ❌ **不使用 Canary-Qwen 2.5B**（NVIDIA）：虽然英文 WER 5.63% 第一，但官方明确声明**仅支持英文**，中文混排会乱。
+### 3.2 语音管道：默认 WS vs 可选 Pipecat/Daily
 
-### 3.2 语音管道框架：Pipecat
+- **默认**：无 WebRTC — UI STT → FastAPI `/ws/chat` → 流式 token → UI 调 `/api/tts/speak` 播本机 TTS
+- **可选 Daily**：Pipecat + Daily transport（VAD / SmartTurn / barge-in）；需 `DAILY_API_KEY`
+- **LiveKit**：未实现；不要当作现行路径
+- Pipecat 仍是 Daily 路径的框架选择（Python-first、frame pipeline）
 
-- **Python-first**，与 Qwen 生态（同为 Python）完美匹配
-- **68+ service 集成**，可自由替换 STT/TTS/LLM 模块
-- **Frame-based pipeline**，插入记忆 / Skills / 工具的天然位置
-- ✅ 内置：VAD、Turn detection、Barge-in（打断）、Sentence aggregation
-
-> 不使用 **Vercel AI SDK 7 Realtime**：只接闭源语音模型，无法使用 Qwen3。
-> 不使用 **Vercel Eve**：Eve 是后端 agent 框架，**不是**语音框架。
+> 不使用 **Vercel AI SDK 7 Realtime** 作默认语音栈。  
+> MCP（Model Context Protocol）**暂缓**，不以近期主清单推进。
 
 ### 3.3 长期记忆：Letta（原 MemGPT）
 
@@ -418,37 +402,31 @@ src/app/
 
 ## 4. 数据流：从麦克风到扬声器
 
-### 4.1 完整链路
+### 4.1 默认链路（无 Daily）
 
 ```text
-1. 用户说话 → 浏览器 MediaStream
+1. 用户说话 → 浏览器 Web Speech STT（continuous）→ 文本
               ↓
-2. WebRTC 推送音频帧 → Pipecat transport（Daily / LiveKit）
+2. UI WebSocket → FastAPI /ws/chat
               ↓
-3. Silero VAD 检测到语音开始 / 结束
+3. prepare_chat_request：memory 注入 + skill match/inject + tools
               ↓
-4. Qwen3-ASR-1.7B 实时转写（流式输出 partial transcript）
+4. LLM 流式 token → WS type=token（可带 skills scores）
               ↓
-5. SmartTurn v3 检测"用户说完了"
+5. UI 分句聚合 → POST /api/tts/speak → 本机 TTS（VLLM_TTS_URL）→ 播放
               ↓
-6. Context Aggregator 把用户消息加入对话历史
+6. 打断：停本地 TTS + WS cancel（非 Daily barge-in）
               ↓
-7. Memory Service 注入相关历史记忆（top-k=10）
-              ↓
-8. Skill Selector 加载匹配的 skills（按 trigger）
-              ↓
-9. LLM（Qwen3-Max）生成回复 + 决定是否调用工具
-              ↓ (parallel)
-   ├─ 有 tool call → 执行 tool → 结果回灌 LLM
-   └─ 无 tool call → 直接进入 TTS
-              ↓
-10. Sentence Aggregator 把流式 token 攒成句子
-              ↓
-11. Qwen3-TTS Realtime 流式合成音频（首包 97ms）
-              ↓
-12. 音频帧 WebRTC 回传 → 浏览器播放
-              ↓
-13. 整轮对话落库 → Recall Memory + 触发记忆整理
+7. persist_turn → recall / human facts；sleeptime 闲时整理
+```
+
+### 4.1b 可选 Daily 链路
+
+```text
+浏览器 Daily room → Pipecat（VAD / SmartTurn / STT）
+  → LLM（persona + memory seed；每轮 skills rematch）
+  → 本机 LocalTTSService → Daily 出站音频
+LiveKit：未实现
 ```
 
 ### 4.2 延迟预算
@@ -463,16 +441,10 @@ src/app/
 
 > 当 LLM 在工具调用循环里时，整体可达 < 4s（P95）。
 
-### 4.3 打断处理（Barge-in）
+### 4.3 打断处理
 
-```python
-# 简化逻辑
-async def on_user_speech_during_playback():
-    await tts.stop_stream()           # 立即停止 TTS
-    await audio.playback.clear()      # 清空播放队列
-    # 保留已说出的内容作为对话历史
-    # 用户的新一轮语音重新进入 pipeline
-```
+- **默认浏览器路径**：停止本地 TTS 播放队列 + 向 `/ws/chat` 发 `cancel`；说完后可自动再听
+- **Daily 路径**：Pipecat `InterruptionFrame` / barge-in（仅此路径）
 
 ---
 
@@ -654,10 +626,10 @@ open http://localhost:3000  # 浏览器打开
 
 ### 7.3 数据流控制
 
-- STT 音频：只在本地处理，**不上传**
-- LLM 调用：可走 DashScope API（用户可切换到自部署 vLLM）
-- TTS 合成：DashScope Realtime（用户可切换到自部署 vLLM-Omni）
-- 记忆：默认本地 Letta + SQLite，可选加密
+- STT（默认）：浏览器 Web Speech，音频不出 FAE 后端
+- LLM：浏览器配置的 OpenAI-compatible 端点，或服务端 Key（主动 Loop）
+- TTS：默认本机 `VLLM_TTS_URL`（不经过 DashScope Realtime）
+- 记忆：默认 embedded SQLite 或 Compose Letta；archival 可 stub / 真向量
 
 ---
 
@@ -678,38 +650,29 @@ open http://localhost:3000  # 浏览器打开
 
 ## 9. 评测（Evals）
 
-### 9.1 自动化评测集
+### 9.1 最小评测集（Phase Q.5 · 已落地）
+
+完整 ASR/TTS corpus **未**建设。现行最小集：
 
 ```text
 evals/
-├── asr/                     # 语音识别
-│   ├── librispeech-test.jsonl
-│   ├── common-voice-zh.jsonl
-│   └── noisy-mixed.jsonl
-├── tts/                     # 语音合成
-│   ├── seed-tts-test.jsonl
-│   └── voice-clone-test.jsonl
-├── agent/                   # Agent 能力
-│   ├── tool-calling.jsonl
-│   ├── memory-recall.jsonl
-│   ├── multi-turn.jsonl
-│   └── proactive-loop.jsonl
-└── e2e/                     # 端到端对话
-    ├── daily-checkin.jsonl
-    ├── technical-debug.jsonl
-    └── travel-planning.jsonl
+├── agent/
+│   ├── skill-trigger.json    # MQ-2 触发正负例
+│   └── memory-recall.json    # 名/城/忌口写入后 recall
+└── e2e/
+    └── ws_voice_round_no_daily.json   # 无 Daily：WS chat + TTS stub
 ```
 
-### 9.2 评测维度
+Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说明见 [`evals/README.md`](../evals/README.md)。
 
-| 维度 | 指标 |
+### 9.2 评测维度（目标）
+
+| 维度 | 现行最小断言 |
 |---|---|
-| **语音质量** | WER、CER、naturalness MOS |
-| **对话能力** | 任务完成率、轮次、用户满意度 |
-| **记忆能力** | 跨会话召回率、时序理解 |
-| **主动性** | 主动 loop 相关性评分 |
-| **Skills** | 触发准确率、上下文契合度 |
-| **性能** | 端到端延迟、并发能力 |
+| **Skills** | fixture 三场景稳定 + 短词不误触 |
+| **记忆** | embedded recall 含写入事实 |
+| **语音路径** | FakeProvider WS + stub TTS 出 WAV；不依赖 Daily |
+| **后置** | WER/MOS、真模型 e2e、主动 loop 相关性 |
 
 ---
 
@@ -743,13 +706,17 @@ evals/
 - [x] Proactive outreach（主动发起话题）
 - [x] 通知通道（Web Push / 桌面通知 / WS）
 
-### Phase 5: 上限扩展（第 9 周+）
+### Phase Q: 质量硬化 — ✅ 首版（见 DEVELOPMENT_PLAN）
 
-- [ ] MCP 集成（Model Context Protocol）
-- [ ] Subagents（专业子 agent）
-- [ ] 多用户 / 多角色
-- [ ] 移动端 PWA
-- [ ] 第三方 channel（Slack / Telegram）
+- [x] Q.0 人设 · Q.1 语音 · Q.2 Skills · Q.3 记忆 · Q.4 Loop · Q.5 横切
+
+### Phase 5: 上限扩展（按优先级）
+
+- [ ] **5.1** 多端 & Telegram（下一主线）
+- [ ] **5.2** Subagents
+- [ ] 多用户 / 本地 ASR / Daily 加深（按需）
+- [ ] **MCP 暂缓**（默认不做）
+- [ ] LiveKit：仅在明确需要时再评估（当前未实现）
 
 ---
 

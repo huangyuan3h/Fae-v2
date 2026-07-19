@@ -3,7 +3,7 @@
 > 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。  
 > 用法：完成一项就打 `[x]`，每条任务标明阶段、依赖、产出、验收。  
 > 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。  
-> **现行优先级**：**质量 > 上限**。Phase 1–4 骨架已齐，下一主线是把「勉强能用」做成「真好用」。
+> **现行优先级**：**质量 > 上限**。Phase Q 首版已收口；**下一主线 = Phase 5.1 多端 & channel**。
 
 ---
 
@@ -16,19 +16,21 @@
 | Phase 2.6 | 本地 TTS | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
 | Phase 3 | Skills 体系 | ✅ 骨架完成 | Markdown skill 自动触发 + 6 内置 + `/skills` |
 | Phase 4 | 主动 Loop | ✅ 骨架完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
-| **Phase Q** | **质量硬化** | **🔜 下一主线** | 语音可用 · Skill 真触发 · 记忆真有用 · Loop 真主动 |
-| Phase 5 | 上限扩展 | 待开始（按优先级取用） | 多端/channel → Subagents → 其余可选 |
+| **Phase Q** | **质量硬化** | **✅ 首版收口** | 语音 · Skill · 记忆 · Loop · 横切 evals |
+| **Phase 5.1** | **多端 & channel** | **🔜 下一主线** | Telegram（或等价）多端入口 |
+| Phase 5 | 上限扩展（其余） | 待开始（按优先级取用） | Subagents → 多用户 / 本地 ASR / WebRTC / MCP |
 
-### 0.1 现状判断
+### 0.1 现状判断（Q 首版后）
 
 | 域 | 骨架 | 真实体验 | 一句话 |
 |---|---|---|---|
-| 语音 | ✅ | ⚠ 勉强能用 | 浏览器 STT 单次识别；TTS 非流式、首包慢；打断/路径分裂 |
-| Skills | ✅ | ⚠ 很弱 | 关键词 Jaccard；`requires_tools` 未接线；剧本薄 |
-| 记忆 | ✅ | ⚠ 很弱 | 事实靠正则；archival 常 stub 向量；sleeptime 非真摘要 |
-| Loop | ✅ | ⚠ 很弱 | 主动文案常回落到罐头句；会话绑定弱；推送依赖 VAPID |
+| 语音 | ✅ | ✅ 首版可用 | 默认浏览器 STT + WS + 本机 TTS；可打断；Daily 可选 |
+| Skills | ✅ | ✅ 首版可用 | 触发/契约/UI 分已加固；evals skill-trigger 进 CI |
+| 记忆 | ✅ | ✅ 首版可用 | 跨刷新 recall；vector_mode 诚实；evals memory-recall |
+| Loop | ✅ | ✅ 首版可用 | 有记忆的主动问候 + 日程确认；服务端 LLM Key |
+| 横切 | ✅ | ✅ | ARCH/README 诚实；无 Daily 语音回合 eval 进 CI |
 
-**结论**：不要急着冲 Phase 5「上限」。先做 **Phase Q**，把 1–4 从「能演示」做成「愿意天天用」。
+**结论**：Phase Q 首版已收口（MQ-0～MQ-5）。进「上限」从 **Phase 5.1 多端** 起；MCP / LiveKit 仍暂缓。
 
 ### 0.2 概念速查（易混淆项）
 
@@ -138,11 +140,12 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ---
 
-## Phase Q · 质量硬化 — 🔜 下一主线
+## Phase Q · 质量硬化 — ✅ 首版收口
 
 > **目标**：同一套功能，从「冒烟能过」变成「日常愿意开着」。  
-> **不做**：MCP、多用户、LiveKit（除非 Q 完成且明确需要）。  
-> **验收总标**：本地无 Daily Key，中文语音聊 10 轮可打断；跨天记得 3 件事实；贴 Traceback 稳触发 skill；idle 后主动问候有记忆、非罐头句。
+> **不做**：MCP、多用户、LiveKit（除非明确需要）。  
+> **验收总标**：本地无 Daily Key，中文语音聊 10 轮可打断；跨天记得 3 件事实；贴 Traceback 稳触发 skill；idle 后主动问候有记忆、非罐头句。  
+> **下一主线**：Phase 5.1 多端 & channel。
 
 ### Q.1 语音可用（Voice Quality）— ✅ 首版
 
@@ -201,20 +204,20 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] **日程解析加固**：中文 fixture（明早8点 / 明天早上八点 / 后天9点）；Schedules 解析→确认→创建
 - [x] **验收（MQ-4）**：调短 idle 后主动问候可引用记忆；「明早 8 点提醒…」parse 确认后到点进收件箱（+ WS）
 
-### Q.5 横切（随 Q.1–Q.4 穿插）
+### Q.5 横切（文档诚实 + 最小 evals）— ✅
 
-- [ ] 同步 `ARCHITECTURE.md`：默认语音路径、Daily 可选、LiveKit 未实现、MCP 暂缓
-- [ ] README：质量状态与「下一主线 = Phase Q」一致
-- [ ] 最小 evals：`evals/agent/` memory-recall + skill-trigger；`evals/e2e/` 无 Daily 一轮语音（可 stub TTS）
+- [x] 同步 `ARCHITECTURE.md`：默认语音路径、Daily 可选、LiveKit 未实现、MCP 暂缓
+- [x] README：质量状态与下一主线一致（Q 完成后 → **Phase 5.1**）
+- [x] 最小 evals：`evals/agent/` memory-recall + skill-trigger；`evals/e2e/` 无 Daily 一轮（TTS stub）；runners=`backend/tests/test_evals_*.py`
 
 ---
 
 ## Phase 5 · 上限扩展（按优先级，不并行冲）
 
-> 进入「无上限」前，**默认已完成 Phase Q 主验收（MQ-1～MQ-4）**。  
-> 下列顺序 = 当前产品优先级（高 → 低）。
+> Phase Q 主验收（MQ-0～MQ-5）首版已完成。  
+> 下列顺序 = 当前产品优先级（高 → 低）；**从 5.1 起为下一主线**。
 
-### 5.1 多端 & 第三方 channel ← **优先做**
+### 5.1 多端 & 第三方 channel ← **下一主线**
 
 > 需要：同一 Agent 不只困在桌面浏览器标签页。
 
@@ -287,12 +290,12 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [ ] 结构化日志：tool call / TTS 后端 / skill 触发分
 - [ ] 「现在在做什么」面板
 - [ ] 端到端延迟：STT / LLM / 本地 TTS（P50/P95 可后补仪表盘）
-- [ ] `evals/`：memory-recall · skill-trigger · 无 Daily 语音回合
+- [x] `evals/`：memory-recall · skill-trigger · 无 Daily 语音回合（Q.5 最小集）
 
 ### 文档
 
-- [ ] `ARCHITECTURE.md` 与现行默认路径一致
-- [ ] README：Phase Q 为下一主线；Daily ≠ 本地 TTS；MCP 暂缓
+- [x] `ARCHITECTURE.md` 与现行默认路径一致（Q.5）
+- [x] README：质量状态 + 下一主线 5.1；Daily ≠ 本地 TTS；MCP 暂缓（Q.5）
 - [x] README Quick Start：`npm run setup` + `npm run dev`
 
 ---
@@ -304,12 +307,12 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | M0～M4 | 各阶段骨架 Demo | ✅ |
 | M2.6-1 / M2.6-2 | 本地 TTS stub / 真模型可播 | ✅ 首版（体验进 Q.1） |
 | **MQ-0** | 人设可配置：Settings 改 persona 下一轮生效 | ✅ |
-| **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
 | **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | ✅ 首版 |
 | **MQ-2** | Skills：三场景稳定 + 契约无悬空 | ✅ Q.2 首版 |
-| **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
+| **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
 | **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | ✅ Q.4 首版 |
-| **M5-1** | 多端 / Telegram（或等价 channel） | 待 Q 后 |
+| **MQ-5** | 横切：ARCH/README 诚实 + 最小 evals 进 CI | ✅ Q.5 |
+| **M5-1** | 多端 / Telegram（或等价 channel） | 🔜 下一主线 |
 | **M5-2** | Subagent 委派回灌 | 待 Q 后 |
 | M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP | 按需 |
 
@@ -319,7 +322,7 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
-| 把「骨架完成」当「可用」继续堆功能 | 高 | 高 | **锁定 Phase Q 为下一主线** |
+| 把「骨架完成」当「可用」继续堆功能 | 高 | 高 | Phase Q 首版已收口；进 5.x 前靠 evals 守门 |
 | 本地 TTS VRAM / 首包慢 | 中 | 高 | stub 保开发；流式/分句；文档写清机型 |
 | 主动 Loop 无服务端模型配置 → 罐头句 | 高 | 高 | Q.4 显式配置 + 失败告警 |
 | archival stub 向量伪装「语义记忆」 | 高 | 高 | UI/日志标明 stub；Q.3 上真 embedding |
@@ -338,8 +341,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase Q.1 语音可用（首版）
 - [x] Phase Q.4 Loop 真主动（首版）
 - [x] Phase Q.2 Skills 变强（首版）
-- [ ] **Phase Q 横切 / Q.5** ← **下一主线**（evals · README · ARCHITECTURE）
-- [ ] Phase 5.1 多端 & channel
+- [x] Phase Q.5 横切（文档 + 最小 evals）
+- [ ] **Phase 5.1 多端 & channel** ← **下一主线**
 - [ ] Phase 5.2 Subagents
 - [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
 
@@ -347,18 +350,13 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ## 近期执行顺序（建议）
 
-1. **Phase Q.0** 人设可配置 — ✅  
-2. **Phase Q.3** 记忆真有用 — ✅ 首版  
-3. **Phase Q.1** 语音可用 — ✅ 首版  
-4. **Phase Q.4** Loop 真主动 — ✅ 首版  
-5. **Phase Q.2** Skills 变强 — ✅ 首版  
-6. **Phase Q.5** 横切（evals / README / ARCHITECTURE）  
-7. **Phase 5.1** 多端 & Telegram  
-8. **Phase 5.2** Subagents  
-9. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
+1. **Phase Q.0～Q.5** 质量硬化 — ✅  
+2. **Phase 5.1** 多端 & Telegram ← 下一主线  
+3. **Phase 5.2** Subagents  
+4. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Q.0～Q.4 首版落地；下一主线 Q.5 横切）  
+**最后更新**：2026-07-19（Phase Q 首版收口；下一主线 Phase 5.1）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

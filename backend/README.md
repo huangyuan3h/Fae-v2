@@ -1,6 +1,12 @@
 # FAE-v2 Backend
 
-Python backend for FAE-v2: FastAPI HTTP + (later) Pipecat voice pipeline.
+Python backend for FAE-v2: FastAPI (`/ws/chat`, memory, skills, scheduler, local TTS) plus optional Daily/Pipecat voice.
+
+**Canonical docs**: [../README.md](../README.md) · [../doc/ARCHITECTURE.md](../doc/ARCHITECTURE.md) · [../doc/DEVELOPMENT_PLAN.md](../doc/DEVELOPMENT_PLAN.md)
+
+**Default voice path**: browser STT → `/ws/chat` → local TTS (`VLLM_TTS_URL`). Daily is optional. LiveKit / MCP are not in scope.
+
+**Evals**: case data in [`../evals/`](../evals/); runners are `tests/test_evals_*.py` (picked up by `uv run pytest`).
 
 ## Layout
 
