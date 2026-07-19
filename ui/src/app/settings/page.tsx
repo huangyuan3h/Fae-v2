@@ -5,13 +5,14 @@ import { useState } from "react";
 import { AppNav } from "@/components/AppNav";
 import { ModelsPanel } from "@/components/settings/ModelsPanel";
 import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
+import { PersonaPanel } from "@/components/settings/PersonaPanel";
 import { ProfilePanel } from "@/components/settings/ProfilePanel";
 import { VoicePanel } from "@/components/settings/VoicePanel";
 
-type Tab = "profile" | "models" | "voice" | "notifications";
+type Tab = "persona" | "profile" | "models" | "voice" | "notifications";
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("profile");
+  const [tab, setTab] = useState<Tab>("persona");
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-4 pb-16 pt-10">
@@ -24,13 +25,14 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-sm text-[var(--ink-soft)]">
-          个人资料、模型与语音选项；密钥仅保存在本机浏览器。
+          人设、重要信息、模型与语音；密钥仅保存在本机浏览器。
         </p>
       </header>
 
       <nav className="mb-8 flex flex-wrap gap-2 border-b border-black/10 pb-4">
         {(
           [
+            { id: "persona" as const, label: "人设" },
             { id: "profile" as const, label: "重要信息" },
             { id: "models" as const, label: "模型" },
             { id: "voice" as const, label: "语音" },
@@ -56,6 +58,7 @@ export default function SettingsPage() {
         })}
       </nav>
 
+      {tab === "persona" && <PersonaPanel />}
       {tab === "profile" && <ProfilePanel />}
       {tab === "models" && <ModelsPanel />}
       {tab === "voice" && <VoicePanel />}

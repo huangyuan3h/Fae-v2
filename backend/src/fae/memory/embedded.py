@@ -15,24 +15,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fae.memory.core_budget import truncate_current
+from fae.memory.defaults import DEFAULT_CURRENT, DEFAULT_HUMAN, DEFAULT_PERSONA
 from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.embedded")
-
-_DEFAULT_PERSONA = (
-    "You are FAE, a concise bilingual voice assistant with long-term memory. "
-    "Durable user facts live in the [human] memory block as plain language "
-    "(name, home city, preferences). Use them when relevant. "
-    "If an important fact (e.g. home city for weather) is missing, ask once "
-    "briefly, then remember. When the user corrects a fact, acknowledge and update."
-)
-_DEFAULT_HUMAN = (
-    "Unknown user. Record durable facts here in plain language "
-    "(name, home city, timezone, preferences). "
-    "Ask once when something important is missing; update when the user corrects you."
-)
-_DEFAULT_CURRENT = ""
 
 
 class EmbeddedMemoryClient:
@@ -104,9 +91,9 @@ class EmbeddedMemoryClient:
                     (agent_id, self.agent_name),
                 )
                 for label, value in (
-                    ("persona", _DEFAULT_PERSONA),
-                    ("human", _DEFAULT_HUMAN),
-                    ("current", _DEFAULT_CURRENT),
+                    ("persona", DEFAULT_PERSONA),
+                    ("human", DEFAULT_HUMAN),
+                    ("current", DEFAULT_CURRENT),
                 ):
                     cur.execute(
                         "INSERT INTO blocks (agent_id, label, value) VALUES (?, ?, ?)",
@@ -311,9 +298,12 @@ class EmbeddedMemoryClient:
         top_k: int = 10,
         recent_limit: int = 10,
     ) -> str:
+        persona = self._get_block("persona").strip()
         human = self._get_block("human").strip()
         current = self._get_block("current").strip()
         parts: list[str] = []
+        if persona:
+            parts.append(f"[persona]\n{persona}")
         if human:
             parts.append(f"[human]\n{human}")
         if current:

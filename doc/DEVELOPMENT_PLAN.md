@@ -165,12 +165,24 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [ ] **路径对齐**：Daily / WS 每轮都用真实用户文本 match（消灭空 seed）
 - [ ] **验收（MQ-2）**：Traceback / 旅行 / 写作三场景触发稳定；误触发率可演示对比「改前改后」
 
+### Q.0 人设可配置（人情味入口）— ✅
+
+> 先让用户能设定「FAE 是谁、怎么说话」，再谈记忆/技能深度。
+
+- [x] `persona` 注入 `recall_for_prompt`（修复「存了不进 prompt」）
+- [x] 共享 `DEFAULT_PERSONA` + 温暖默认文案 + 3 预设
+- [x] `GET/PUT /api/memory/persona`（含 `reset`）
+- [x] Settings →「人设」tab；与「重要信息」(human) 分离
+- [x] Daily `system_instruction` 读取同一 persona
+
+**验收**：Settings 改人设 → 下一轮对话语气一致；恢复默认可用。
+
 ### Q.3 记忆真有用（Memory Usefulness）
 
 **问题**：事实正则、episodic 关键词、archival stub 向量、sleeptime 堆字、会话 ID 碎片。
 
 - [ ] **身份稳定**：浏览器刷新 / 主动任务 / 记忆 UI 共用稳定 `user`/`agent`/`session` 约定（消灭 `"default"` 漂移）
-- [ ] **事实提取升级**：LLM（或更强规则+确认）写 user/persona；低置信可进待确认
+- [ ] **事实提取升级**：LLM（或更强规则+确认）写 user 事实；低置信可进待确认
 - [ ] **Archival 真检索**：真实 embedding；stub 模式在 `/memory` 与日志明确标「不可靠」
 - [ ] **Sleeptime 产出短摘要**：整理后的 `current` 应是可行动摘要，不是对话垃圾堆
 - [ ] **Recall 可用性**：按相关性或话题检索，而不只是最近 N 轮 dump
@@ -290,6 +302,7 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 |---|---|---|
 | M0～M4 | 各阶段骨架 Demo | ✅ |
 | M2.6-1 / M2.6-2 | 本地 TTS stub / 真模型可播 | ✅ 首版（体验进 Q.1） |
+| **MQ-0** | 人设可配置：Settings 改 persona 下一轮生效 | ✅ |
 | **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | 🔜 |
 | **MQ-2** | Skills：三场景稳定 + 契约无悬空 | 🔜 |
 | **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
@@ -318,7 +331,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 - [x] Phase 1～4 骨架
 - [x] Phase 2.6 本地 TTS 首版
-- [ ] **Phase Q 质量硬化** ← **下一主线**
+- [x] Phase Q.0 人设可配置
+- [ ] **Phase Q 质量硬化（Q.1–Q.4）** ← **下一主线**
 - [ ] Phase 5.1 多端 & channel
 - [ ] Phase 5.2 Subagents
 - [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
@@ -327,16 +341,17 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ## 近期执行顺序（建议）
 
-1. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
-2. **Phase Q.3** 记忆真有用（身份稳定 + 事实/检索）— 与语音可并行小组  
-3. **Phase Q.2** Skills 契约与触发质量  
-4. **Phase Q.4** Loop 真主动（模型配置 + 会话绑定）  
-5. **Phase 5.1** 多端 & Telegram  
-6. **Phase 5.2** Subagents  
-7. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
+1. **Phase Q.0** 人设可配置 — ✅  
+2. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
+3. **Phase Q.3** 记忆真有用（身份稳定 + 事实/检索）— 与语音可并行小组  
+4. **Phase Q.2** Skills 契约与触发质量  
+5. **Phase Q.4** Loop 真主动（模型配置 + 会话绑定）  
+6. **Phase 5.1** 多端 & Telegram  
+7. **Phase 5.2** Subagents  
+8. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Phase 1–4 骨架收口；Phase Q 质量硬化立为主线；Phase 5 按多端 → Subagents → 可选增强重排；MCP 暂缓）  
+**最后更新**：2026-07-19（Q.0 人设可配置落地；Phase Q 质量硬化为主线；Phase 5 按多端 → Subagents → 可选增强；MCP 暂缓）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

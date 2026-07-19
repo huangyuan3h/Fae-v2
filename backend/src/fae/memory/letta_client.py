@@ -15,24 +15,11 @@ from uuid import uuid4
 import httpx
 
 from fae.memory.core_budget import truncate_current
+from fae.memory.defaults import DEFAULT_CURRENT, DEFAULT_HUMAN, DEFAULT_PERSONA
 from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
 
 logger = logging.getLogger("fae.memory.letta")
-
-_DEFAULT_PERSONA = (
-    "You are FAE, a concise bilingual voice assistant with long-term memory. "
-    "Durable user facts live in the [human] memory block as plain language "
-    "(name, home city, preferences). Use them when relevant. "
-    "If an important fact (e.g. home city for weather) is missing, ask once "
-    "briefly, then remember. When the user corrects a fact, acknowledge and update."
-)
-_DEFAULT_HUMAN = (
-    "Unknown user. Record durable facts here in plain language "
-    "(name, home city, timezone, preferences). "
-    "Ask once when something important is missing; update when the user corrects you."
-)
-_DEFAULT_CURRENT = ""
 
 MEMORY_TOOLS: tuple[str, ...] = (
     "memory_save_fact",
@@ -102,9 +89,9 @@ class LettaMemoryClient:
         payload: dict[str, Any] = {
             "name": self.agent_name,
             "memory_blocks": [
-                {"label": "persona", "value": _DEFAULT_PERSONA, "limit": 5000},
-                {"label": "human", "value": _DEFAULT_HUMAN, "limit": 5000},
-                {"label": "current", "value": _DEFAULT_CURRENT, "limit": 5000},
+                {"label": "persona", "value": DEFAULT_PERSONA, "limit": 5000},
+                {"label": "human", "value": DEFAULT_HUMAN, "limit": 5000},
+                {"label": "current", "value": DEFAULT_CURRENT, "limit": 5000},
             ],
             "model": self.model,
             "embedding": self.embedding,
@@ -373,9 +360,12 @@ class LettaMemoryClient:
         top_k: int = 10,
         recent_limit: int = 10,
     ) -> str:
+        persona = (await self._get_block("persona")).strip()
         human = (await self._get_block("human")).strip()
         current = (await self._get_block("current")).strip()
         parts: list[str] = []
+        if persona:
+            parts.append(f"[persona]\n{persona}")
         if human:
             parts.append(f"[human]\n{human}")
         if current:

@@ -41,6 +41,19 @@ export type UserProfile = {
   human?: string;
 };
 
+export type PersonaPreset = {
+  id: string;
+  label: string;
+  description: string;
+  text: string;
+};
+
+export type PersonaConfig = {
+  persona: string;
+  default: string;
+  presets: PersonaPreset[];
+};
+
 function formatApiError(status: number, body: string): string {
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
@@ -134,6 +147,17 @@ export function updateProfile(body: {
   notes?: string;
 }) {
   return jsonFetch<UserProfile>("/api/memory/profile", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchPersona() {
+  return jsonFetch<PersonaConfig>("/api/memory/persona");
+}
+
+export function updatePersona(body: { persona?: string; reset?: boolean }) {
+  return jsonFetch<PersonaConfig>("/api/memory/persona", {
     method: "PUT",
     body: JSON.stringify(body),
   });

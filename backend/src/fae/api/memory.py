@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.core_budget import core_stats_from_client
+from fae.memory.defaults import DEFAULT_PERSONA, persona_presets_payload
 from fae.memory.factory import MemoryStack
 from fae.memory.profile_block import CITY_KEY, TIMEZONE_KEY, parse_human_profile
 from fae.memory.schemas import FactIn, UserProfile
@@ -32,6 +33,66 @@ class ProfileOut(BaseModel):
     preferences: dict[str, str] = Field(default_factory=dict)
     notes: str | None = None
     human: str = ""
+
+
+class PersonaPresetOut(BaseModel):
+    id: str
+    label: str
+    description: str
+    text: str
+
+
+class PersonaOut(BaseModel):
+    persona: str
+    default: str
+    presets: list[PersonaPresetOut] = Field(default_factory=list)
+
+
+class PersonaUpdate(BaseModel):
+    """Replace persona text, or set ``reset`` to restore the built-in default."""
+
+    persona: str | None = None
+    reset: bool = False
+
+
+def _persona_response(text: str) -> PersonaOut:
+    return PersonaOut(
+        persona=text,
+        default=DEFAULT_PERSONA,
+        presets=[PersonaPresetOut(**p) for p in persona_presets_payload()],
+    )
+
+
+@router.get("/persona", response_model=PersonaOut)
+async def memory_get_persona(request: Request) -> PersonaOut:
+    """Read the FAE persona (system identity / speaking style) block."""
+    memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
+    if memory is None or memory.client is None:
+        raise HTTPException(status_code=503, detail="memory unavailable")
+    persona = await memory.client.get_block("persona")
+    return _persona_response(persona or DEFAULT_PERSONA)
+
+
+@router.put("/persona", response_model=PersonaOut)
+async def memory_put_persona(body: PersonaUpdate, request: Request) -> PersonaOut:
+    """Update or reset the persona block used as the agent system identity."""
+    memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
+    if memory is None or memory.client is None:
+        raise HTTPException(status_code=503, detail="memory unavailable")
+
+    if body.reset:
+        await memory.client.set_block("persona", DEFAULT_PERSONA)
+        return _persona_response(DEFAULT_PERSONA)
+
+    if body.persona is None:
+        raise HTTPException(
+            status_code=400, detail="provide persona text or set reset=true"
+        )
+    text = body.persona.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="persona block cannot be empty")
+    await memory.client.set_block("persona", text)
+    return _persona_response(text)
 
 
 @router.get("/profile", response_model=ProfileOut)

@@ -76,15 +76,24 @@ async def run_daily_bot(
         base_url=asr_url,
         model="whisper-1",
     )
+
+    from fae.memory.defaults import DEFAULT_PERSONA
+
+    persona_text = DEFAULT_PERSONA
+    if memory is not None and memory.enabled and memory.client is not None:
+        try:
+            stored = (await memory.client.get_block("persona")).strip()
+            if stored:
+                persona_text = stored
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to load persona for Daily; using default")
+
     llm = OpenAILLMService(
         api_key=api_key,
         base_url=base_url,
         settings=OpenAILLMService.Settings(
             model=model,
-            system_instruction=(
-                "You are FAE, a concise bilingual voice assistant with memory. "
-                "Keep replies short and conversational."
-            ),
+            system_instruction=persona_text,
         ),
     )
     tts = LocalTTSService(

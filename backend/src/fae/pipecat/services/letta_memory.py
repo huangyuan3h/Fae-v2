@@ -150,7 +150,8 @@ class LettaMemoryService:
             return request
         block = (
             f"{_MEMORY_TAG_OPEN}\n"
-            "Durable memories and recent conversation. "
+            "Identity, durable memories, and recent conversation. "
+            "[persona] is who you are and how you speak — follow it. "
             "[human] is plain-language important user facts "
             "(name, home city, preferences) — use and update via conversation; "
             "ask once when a needed fact is missing.\n"
@@ -169,7 +170,8 @@ class LettaMemoryService:
             "role": "system",
             "content": (
                 f"{_MEMORY_TAG_OPEN}\n"
-                "Durable memories and recent conversation. "
+                "Identity, durable memories, and recent conversation. "
+                "[persona] is who you are and how you speak — follow it. "
                 "[human] is plain-language important user facts "
                 "(name, home city, preferences) — use and update via conversation; "
                 "ask once when a needed fact is missing.\n"

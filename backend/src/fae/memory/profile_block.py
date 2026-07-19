@@ -10,11 +10,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_DEFAULT_HUMAN = (
-    "Unknown user. Record durable facts here in plain language "
-    "(name, home city, timezone, preferences). "
-    "Ask once when something important is missing; update when the user corrects you."
-)
+from fae.memory.defaults import DEFAULT_HUMAN
+
+_DEFAULT_HUMAN = DEFAULT_HUMAN
 
 # Optional structured keys (still supported for tooling / migration).
 CITY_KEY = "City"

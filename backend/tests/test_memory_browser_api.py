@@ -77,6 +77,46 @@ def test_facts_404_and_search_requires_q(tmp_path: Path) -> None:
         assert bad.status_code == 400
 
 
+def test_persona_get_put_and_reset(tmp_path: Path) -> None:
+    with _app(tmp_path) as http:
+        got = http.get("/api/memory/persona")
+        assert got.status_code == 200
+        body = got.json()
+        assert body["persona"]
+        assert body["default"]
+        assert len(body["presets"]) >= 3
+        assert {p["id"] for p in body["presets"]} >= {"warm", "concise", "advisor"}
+
+        empty = http.put("/api/memory/persona", json={})
+        assert empty.status_code == 400
+
+        blank = http.put("/api/memory/persona", json={"persona": "   "})
+        assert blank.status_code == 400
+
+        custom = "You are FAE. Always greet with a gentle check-in."
+        saved = http.put("/api/memory/persona", json={"persona": custom})
+        assert saved.status_code == 200
+        assert saved.json()["persona"] == custom
+
+        again = http.get("/api/memory/persona")
+        assert again.status_code == 200
+        assert again.json()["persona"] == custom
+
+        reset = http.put("/api/memory/persona", json={"reset": True})
+        assert reset.status_code == 200
+        assert reset.json()["persona"] == reset.json()["default"]
+
+        # Persona and human stay independent
+        http.put(
+            "/api/memory/profile",
+            json={"human": "Name: 小明\nLives in 北京."},
+        )
+        persona_after = http.get("/api/memory/persona")
+        assert persona_after.json()["persona"] == persona_after.json()["default"]
+        profile = http.get("/api/memory/profile")
+        assert "小明" in profile.json()["human"]
+
+
 def test_profile_get_and_put(tmp_path: Path) -> None:
     with _app(tmp_path) as http:
         empty = http.put("/api/memory/profile", json={})

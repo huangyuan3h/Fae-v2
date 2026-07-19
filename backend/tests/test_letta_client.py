@@ -20,12 +20,19 @@ def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])
     if path.rstrip("/").endswith("/v1/agents") and request.method == "POST":
         return httpx.Response(200, json={"id": "agent-1", "name": "fae-main"})
+    if "/core-memory/blocks/persona" in path and request.method == "GET":
+        return httpx.Response(
+            200,
+            json={"label": "persona", "value": "You are FAE, a warm companion."},
+        )
     if "/core-memory/blocks/human" in path and request.method == "GET":
         return httpx.Response(200, json={"label": "human", "value": "Name: 小明"})
     if "/core-memory/blocks/current" in path and request.method == "GET":
         return httpx.Response(200, json={"label": "current", "value": ""})
     if "/core-memory/blocks/human" in path and request.method == "PATCH":
         return httpx.Response(200, json={"label": "human", "value": "ok"})
+    if "/core-memory/blocks/persona" in path and request.method == "PATCH":
+        return httpx.Response(200, json={"label": "persona", "value": "ok"})
     if path.endswith("/archival-memory") and request.method == "POST":
         return httpx.Response(200, json={"id": "p1", "text": "fact"})
     if "archival-memory" in path and request.method == "GET":
@@ -58,6 +65,8 @@ async def test_ensure_agent_create_and_recall() -> None:
     assert hits and "小明" in hits[0].content
     prompt = await client.recall_for_prompt("我叫什么")
     assert "小明" in prompt
+    assert "[persona]" in prompt
+    assert "warm companion" in prompt
     await client.close()
 
 
