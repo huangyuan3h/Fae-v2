@@ -95,6 +95,12 @@ class LocalTTSClient:
             return f"{self.base_url}/voices"
         return f"{self.base_url}/v1/voices"
 
+    @property
+    def health_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url[:-3]}/health"
+        return f"{self.base_url.rstrip('/')}/health"
+
     async def health(self) -> bool:
         """Return True only if an OpenAI-compatible TTS surface is present."""
         async with _http_client(3.0) as client:
@@ -109,6 +115,29 @@ class LocalTTSClient:
             except ValueError:
                 return False
             return isinstance(body, dict) and isinstance(body.get("data"), list)
+
+    async def upstream_status(self) -> dict[str, Any] | None:
+        """Fetch upstream /health for backend name + model_id (best-effort)."""
+        async with _http_client(3.0) as client:
+            try:
+                resp = await client.get(self.health_url)
+            except httpx.HTTPError:
+                return None
+        if resp.status_code >= 400:
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict):
+            return None
+        backend = body.get("backend")
+        device = body.get("device")
+        return {
+            "status": body.get("status"),
+            "backend": backend if isinstance(backend, dict) else {},
+            "device": device if isinstance(device, dict) else {},
+        }
 
     async def list_voices(self) -> dict[str, Any]:
         """Return {voices, languages, source} from upstream or builtins."""

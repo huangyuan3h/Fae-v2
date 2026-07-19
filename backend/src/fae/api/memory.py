@@ -16,6 +16,9 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
 class ProfileUpdate(BaseModel):
+    """Prefer ``human`` (full freeform block). Field upserts remain for convenience."""
+
+    human: str | None = None
     display_name: str | None = None
     city: str | None = None
     timezone: str | None = None
@@ -33,7 +36,7 @@ class ProfileOut(BaseModel):
 
 @router.get("/profile", response_model=ProfileOut)
 async def memory_get_profile(request: Request) -> ProfileOut:
-    """Read Name / City / Timezone from the core human block."""
+    """Read the unstructured human memory block (+ parsed hints)."""
     memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
     if memory is None or memory.client is None:
         raise HTTPException(status_code=503, detail="memory unavailable")
@@ -52,10 +55,26 @@ async def memory_get_profile(request: Request) -> ProfileOut:
 
 @router.put("/profile", response_model=ProfileOut)
 async def memory_put_profile(body: ProfileUpdate, request: Request) -> ProfileOut:
-    """Upsert display name, city, and timezone into the human block."""
+    """Replace or merge the human memory block (important freeform facts)."""
     memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
     if memory is None or memory.client is None:
         raise HTTPException(status_code=503, detail="memory unavailable")
+
+    if body.human is not None:
+        text = body.human.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="human block cannot be empty")
+        await memory.client.set_block("human", text)
+        parsed = parse_human_profile(text)
+        if parsed.city:
+            await memory.client.save_fact(
+                FactIn(
+                    content=f"User lives in {parsed.city}",
+                    tags=["identity", "location", "city"],
+                )
+            )
+        return await memory_get_profile(request)
+
     prefs: dict[str, str] = {}
     if body.city is not None:
         city = body.city.strip()

@@ -1,18 +1,44 @@
-"""Parse / merge the core-memory human block (Name, City, Timezone, …)."""
+"""Core-memory ``human`` block: unstructured important user notes.
+
+The human block is plain-language durable identity (name, home city, prefs).
+Optional ``Key: value`` lines are still recognized when present, but the
+primary store is freeform prose that conversation can create and correct.
+"""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
-_DEFAULT_HUMAN = "Unknown user. Learn and remember their name and preferences."
+_DEFAULT_HUMAN = (
+    "Unknown user. Record durable facts here in plain language "
+    "(name, home city, timezone, preferences). "
+    "Ask once when something important is missing; update when the user corrects you."
+)
 
-# Preference keys stored as "Key: value" lines in the human block.
+# Optional structured keys (still supported for tooling / migration).
 CITY_KEY = "City"
 TIMEZONE_KEY = "Timezone"
 NAME_KEY = "Name"
 
 _KEY_LINE = re.compile(r"^([A-Za-z][\w ]{0,40}):\s*(.+)$")
+
+# Freeform location lines we write / replace.
+_LOCATION_LINE = re.compile(
+    r"(?i)^(?:lives?\s+in|home(?:\s+city)?|located\s+in|住在|家在)[:\s]+(.+?)\.?$"
+)
+_NAME_LINE_FREE = re.compile(
+    r"(?i)^(?:name|called|叫|名字)[:\s]+(.+?)\.?$"
+)
+_TZ_LINE_FREE = re.compile(
+    r"(?i)^(?:timezone|time\s*zone|时区)[:\s]+([A-Za-z][\w/\-+]{2,40})\.?$"
+)
+
+# Inline mentions inside longer notes
+_INLINE_LIVES = re.compile(
+    r"(?i)(?:lives?\s+in|home\s+city\s+is|located\s+in|住在|家在)\s+"
+    r"([^\s，。,.!！？?;；]{1,32})"
+)
 
 
 @dataclass
@@ -25,8 +51,12 @@ class ParsedHumanProfile:
     raw: str = ""
 
 
+def default_human_text() -> str:
+    return _DEFAULT_HUMAN
+
+
 def parse_human_profile(text: str) -> ParsedHumanProfile:
-    """Parse Name / City / Timezone and other Key: value preferences."""
+    """Parse structured keys and freeform location/name/timezone lines."""
     raw = text or ""
     out = ParsedHumanProfile(raw=raw)
     for line in raw.splitlines():
@@ -34,25 +64,105 @@ def parse_human_profile(text: str) -> ParsedHumanProfile:
         if not stripped:
             continue
         m = _KEY_LINE.match(stripped)
-        if not m:
-            out.notes.append(stripped)
+        if m:
+            key, value = m.group(1).strip(), m.group(2).strip()
+            if not value:
+                continue
+            key_norm = key.lower()
+            if key_norm == "name":
+                out.display_name = value
+            elif key_norm == "city":
+                out.city = value
+                out.preferences[CITY_KEY] = value
+            elif key_norm in {"timezone", "tz", "time zone"}:
+                out.timezone = value
+                out.preferences[TIMEZONE_KEY] = value
+            else:
+                out.preferences[key] = value
             continue
-        key, value = m.group(1).strip(), m.group(2).strip()
-        if not value:
+
+        loc = _LOCATION_LINE.match(stripped)
+        if loc and not out.city:
+            out.city = loc.group(1).strip(" \"'.")
             continue
-        key_norm = key.lower()
-        if key_norm == "name":
-            out.display_name = value
-        elif key_norm == "city":
-            out.city = value
-            out.preferences[CITY_KEY] = value
-        elif key_norm in {"timezone", "tz", "time zone"}:
-            out.timezone = value
-            out.preferences[TIMEZONE_KEY] = value
-        else:
-            # Preserve original capitalization for unknown keys
-            out.preferences[key] = value
+        nm = _NAME_LINE_FREE.match(stripped)
+        if nm and not out.display_name:
+            out.display_name = nm.group(1).strip(" \"'.")
+            continue
+        tz = _TZ_LINE_FREE.match(stripped)
+        if tz and not out.timezone:
+            out.timezone = tz.group(1).strip()
+            continue
+        out.notes.append(stripped)
+
+    if not out.city:
+        for note in out.notes:
+            inline = _INLINE_LIVES.search(note)
+            if inline:
+                out.city = inline.group(1).strip(" \"'.")
+                break
     return out
+
+
+def _is_location_line(line: str) -> bool:
+    s = line.strip()
+    if _LOCATION_LINE.match(s):
+        return True
+    if s.lower().startswith("city:"):
+        return True
+    return False
+
+
+def _is_name_line(line: str) -> bool:
+    s = line.strip()
+    if s.lower().startswith("name:"):
+        return True
+    return bool(_NAME_LINE_FREE.match(s))
+
+
+def _is_timezone_line(line: str) -> bool:
+    s = line.strip()
+    if s.lower().startswith("timezone:") or s.lower().startswith("tz:"):
+        return True
+    return bool(_TZ_LINE_FREE.match(s))
+
+
+def upsert_location_note(existing: str, city: str) -> str:
+    """Write/replace a freeform 'Lives in {city}.' note in the human block."""
+    city = (city or "").strip()
+    if not city:
+        return (existing or "").strip() or _DEFAULT_HUMAN
+    lines = [ln for ln in (existing or "").splitlines() if ln.strip()]
+    # Drop placeholder default when learning the first real fact.
+    if len(lines) == 1 and "Unknown user" in lines[0]:
+        lines = []
+    kept = [ln for ln in lines if not _is_location_line(ln)]
+    kept.append(f"Lives in {city}.")
+    return "\n".join(kept).strip() or _DEFAULT_HUMAN
+
+
+def upsert_name_note(existing: str, name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        return (existing or "").strip() or _DEFAULT_HUMAN
+    lines = [ln for ln in (existing or "").splitlines() if ln.strip()]
+    if len(lines) == 1 and "Unknown user" in lines[0]:
+        lines = []
+    kept = [ln for ln in lines if not _is_name_line(ln)]
+    kept.insert(0, f"Name: {name}")
+    return "\n".join(kept).strip() or _DEFAULT_HUMAN
+
+
+def upsert_timezone_note(existing: str, timezone: str) -> str:
+    timezone = (timezone or "").strip()
+    if not timezone:
+        return (existing or "").strip() or _DEFAULT_HUMAN
+    lines = [ln for ln in (existing or "").splitlines() if ln.strip()]
+    if len(lines) == 1 and "Unknown user" in lines[0]:
+        lines = []
+    kept = [ln for ln in lines if not _is_timezone_line(ln)]
+    kept.append(f"Timezone: {timezone}")
+    return "\n".join(kept).strip() or _DEFAULT_HUMAN
 
 
 def merge_human_profile(
@@ -63,25 +173,29 @@ def merge_human_profile(
     notes: str | None = None,
 ) -> str:
     """Merge profile fields into the human block without clobbering other lines."""
+    text = existing or ""
     prefs = dict(preferences or {})
-    # Normalize canonical keys
-    for src, canon in (
-        ("city", CITY_KEY),
-        ("City", CITY_KEY),
-        ("timezone", TIMEZONE_KEY),
-        ("Timezone", TIMEZONE_KEY),
-        ("tz", TIMEZONE_KEY),
-    ):
-        if src in prefs and canon not in prefs:
-            prefs[canon] = prefs.pop(src)
-        elif src in prefs and src != canon:
-            prefs[canon] = prefs.pop(src)
 
-    lines = [ln for ln in (existing or "").splitlines() if ln.strip()]
-    if not lines and not display_name and not prefs and not notes:
+    # Normalize city/timezone keys into freeform upserts.
+    city = prefs.pop(CITY_KEY, None) or prefs.pop("city", None) or prefs.pop("City", None)
+    timezone = (
+        prefs.pop(TIMEZONE_KEY, None)
+        or prefs.pop("timezone", None)
+        or prefs.pop("Timezone", None)
+        or prefs.pop("tz", None)
+    )
+    if display_name:
+        text = upsert_name_note(text, display_name)
+    if city:
+        text = upsert_location_note(text, city)
+    if timezone:
+        text = upsert_timezone_note(text, timezone)
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines and not prefs and not notes:
         return _DEFAULT_HUMAN
 
-    def _upsert(prefix: str, value: str) -> None:
+    def _upsert_key(prefix: str, value: str) -> None:
         nonlocal lines
         rebuilt: list[str] = []
         found = False
@@ -93,24 +207,16 @@ def merge_human_profile(
             else:
                 rebuilt.append(line)
         if not found:
-            # Keep Name first when present
-            if prefix == NAME_KEY:
-                rebuilt.insert(0, f"{prefix}: {value}")
-            else:
-                rebuilt.append(f"{prefix}: {value}")
+            rebuilt.append(f"{prefix}: {value}")
         lines = rebuilt
 
-    if display_name:
-        _upsert(NAME_KEY, display_name.strip())
     for key, value in prefs.items():
         val = (value or "").strip()
-        if not val:
-            continue
-        _upsert(key, val)
+        if val:
+            _upsert_key(key, val)
     if notes and notes.strip():
         note = notes.strip()
         if note not in lines:
             lines.append(note)
 
-    text = "\n".join(lines).strip()
-    return text or _DEFAULT_HUMAN
+    return "\n".join(lines).strip() or _DEFAULT_HUMAN

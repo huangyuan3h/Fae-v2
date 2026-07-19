@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start OpenAI-compatible Qwen3-TTS on :8880 for npm run dev.
-# Apple Silicon defaults to MLX 8bit + TTS_MAX_CONCURRENT=2.
+# Apple Silicon defaults to MLX 1.7B CustomVoice bf16 (less quant noise than 8bit).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -17,9 +17,11 @@ if [[ "$OS" == "Darwin" && "$ARCH" == "arm64" ]]; then
 fi
 
 # Desired defaults (overridable via env).
+# bf16 ≈ full MLX precision (~4.5GB); 8bit is smaller/faster but sandier.
+DEFAULT_MLX_MODEL="mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16"
 if [[ "$IS_APPLE_SILICON" -eq 1 ]]; then
   export TTS_BACKEND="${TTS_BACKEND:-mlx}"
-  export MLX_MODEL_ID="${MLX_MODEL_ID:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit}"
+  export MLX_MODEL_ID="${MLX_MODEL_ID:-$DEFAULT_MLX_MODEL}"
   export TTS_MODEL_NAME="${TTS_MODEL_NAME:-$MLX_MODEL_ID}"
   # mlx-audio 0.3/0.4 can wedge the whole process if two gens overlap — keep 1.
   export TTS_MAX_CONCURRENT="${TTS_MAX_CONCURRENT:-1}"
@@ -42,9 +44,11 @@ tts_models_ok() {
     | grep -q '"object"[[:space:]]*:[[:space:]]*"list"'
 }
 
-tts_backend_name() {
+tts_health_field() {
+  # Usage: tts_health_field name|model_id
+  local field="$1"
   curl -sf --max-time 2 "http://${HOST}:${PORT}/health" 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("backend") or {}).get("name") or "")' \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("backend") or {}; print(b.get(sys.argv[1]) or "")' "$field" \
     2>/dev/null || true
 }
 
@@ -83,18 +87,22 @@ ensure_setup() {
 
 ensure_setup
 
-# Reuse only if healthy AND already on the desired backend (avoid keeping old pytorch).
+# Reuse only if healthy AND backend+model already match (avoid keeping 0.6B / pytorch).
 if tts_models_ok; then
-  current="$(tts_backend_name)"
-  if [[ -n "$current" && "$current" == "$TTS_BACKEND" ]]; then
-    echo "[fae-tts] already healthy on http://${HOST}:${PORT} backend=$current — reusing"
+  current_backend="$(tts_health_field name)"
+  current_model="$(tts_health_field model_id)"
+  want_model="${MLX_MODEL_ID:-$TTS_MODEL_NAME}"
+  if [[ "$current_backend" == "$TTS_BACKEND" ]] && \
+     { [[ "$TTS_BACKEND" != "mlx" ]] || [[ "$current_model" == "$want_model" ]]; }; then
+    echo "[fae-tts] already healthy on http://${HOST}:${PORT} backend=$current_backend model=${current_model:-n/a} — reusing"
     echo "[fae-tts] (Ctrl+C stops npm run dev only; TTS process stays up)"
     while tts_models_ok; do
       sleep 30
     done
     echo "[fae-tts] upstream gone — will start a new server"
   else
-    echo "[fae-tts] :${PORT} is up but backend='${current:-unknown}' (want $TTS_BACKEND) — restarting"
+    echo "[fae-tts] :${PORT} is up but backend='${current_backend:-unknown}' model='${current_model:-unknown}'"
+    echo "[fae-tts] want backend=$TTS_BACKEND model=$want_model — restarting"
     free_stale_listener
   fi
 fi

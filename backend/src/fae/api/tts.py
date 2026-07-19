@@ -53,6 +53,11 @@ def _local_client(settings: Settings) -> LocalTTSClient:
 async def tts_status(settings: Annotated[Settings, Depends(_live_settings)]) -> dict:
     client = _local_client(settings)
     reachable = await client.health()
+    upstream = await client.upstream_status() if reachable else None
+    up_backend = (upstream or {}).get("backend") or {}
+    up_device = (upstream or {}).get("device") or {}
+    upstream_engine = str(up_backend.get("name") or "") or None
+    upstream_model = str(up_backend.get("model_id") or "") or None
     return {
         "backend": "local",
         "configured": reachable,
@@ -65,8 +70,13 @@ async def tts_status(settings: Annotated[Settings, Depends(_live_settings)]) -> 
         "sample_rate": settings.tts_sample_rate,
         "url": settings.vllm_tts_url,
         "speech_url": client.speech_url,
+        # Real checkpoint running on :8880 (e.g. mlx-community/...-1.7B-...-8bit)
+        "upstream_engine": upstream_engine,
+        "upstream_model": upstream_model,
+        "upstream_device": up_device.get("type") or up_device.get("gpu_name"),
         "hint": (
             f"Local TTS ready at {settings.vllm_tts_url}"
+            + (f" · {upstream_engine} · {upstream_model}" if upstream_model else "")
             if reachable
             else (
                 f"No TTS server at {client.speech_url}. "

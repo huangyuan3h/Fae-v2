@@ -85,9 +85,7 @@ def test_profile_get_and_put(tmp_path: Path) -> None:
         saved = http.put(
             "/api/memory/profile",
             json={
-                "display_name": "小明",
-                "city": "北京",
-                "timezone": "Asia/Shanghai",
+                "human": "Name: 小明\nLives in 北京.\nTimezone: Asia/Shanghai\n喜欢简洁回答。"
             },
         )
         assert saved.status_code == 200
@@ -95,13 +93,23 @@ def test_profile_get_and_put(tmp_path: Path) -> None:
         assert body["display_name"] == "小明"
         assert body["city"] == "北京"
         assert body["timezone"] == "Asia/Shanghai"
-        assert "City: 北京" in body["human"]
+        assert "Lives in 北京." in body["human"]
 
         got = http.get("/api/memory/profile")
         assert got.status_code == 200
         assert got.json()["city"] == "北京"
 
-        updated = http.put("/api/memory/profile", json={"city": "上海"})
+        # Correction via freeform replace
+        updated = http.put(
+            "/api/memory/profile",
+            json={"human": "Name: 小明\nLives in 上海.\n喜欢简洁回答。"},
+        )
         assert updated.status_code == 200
         assert updated.json()["city"] == "上海"
         assert updated.json()["display_name"] == "小明"
+
+        # Field upsert still writes freeform Lives in …
+        via_city = http.put("/api/memory/profile", json={"city": "杭州"})
+        assert via_city.status_code == 200
+        assert via_city.json()["city"] == "杭州"
+        assert "Lives in 杭州." in via_city.json()["human"]

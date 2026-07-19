@@ -150,8 +150,10 @@ class LettaMemoryService:
             return request
         block = (
             f"{_MEMORY_TAG_OPEN}\n"
-            "The following are durable memories and recent conversation. "
-            "Use them when the user asks about prior topics or identity.\n"
+            "Durable memories and recent conversation. "
+            "[human] is plain-language important user facts "
+            "(name, home city, preferences) — use and update via conversation; "
+            "ask once when a needed fact is missing.\n"
             f"{text}\n"
             f"{_MEMORY_TAG_CLOSE}"
         )
@@ -167,8 +169,10 @@ class LettaMemoryService:
             "role": "system",
             "content": (
                 f"{_MEMORY_TAG_OPEN}\n"
-                "The following are durable memories and recent conversation. "
-                "Use them when the user asks about prior topics or identity.\n"
+                "Durable memories and recent conversation. "
+                "[human] is plain-language important user facts "
+                "(name, home city, preferences) — use and update via conversation; "
+                "ask once when a needed fact is missing.\n"
                 f"{text}\n"
                 f"{_MEMORY_TAG_CLOSE}"
             ),
@@ -194,10 +198,19 @@ class LettaMemoryService:
         if self._client is None:
             return
         try:
-            await self._client.append_recall(session_id, user_text, assistant_text)
+            # Previous assistant turn (before this reply) — used to detect
+            # "which city?" → short answer "上海" for human-memory extraction.
+            prev_assistant = ""
+            try:
+                recent = await self._client.list_recall(session_id, limit=1)
+                if recent:
+                    prev_assistant = recent[0].assistant_text or ""
+            except Exception:  # noqa: BLE001
+                prev_assistant = ""
+
             profile, facts = facts_from_turn(
                 user_text=user_text,
-                assistant_text=assistant_text,
+                assistant_text=prev_assistant,
                 session_id=session_id or None,
             )
             if profile is not None:
@@ -206,6 +219,8 @@ class LettaMemoryService:
             for fact in facts:
                 saved = await self._client.save_fact(fact)
                 saved_facts.append(saved)
+
+            await self._client.append_recall(session_id, user_text, assistant_text)
             await self._persist_episodes(session_id, user_text, saved_facts)
             if self._compactor is not None:
                 await self._compactor.maybe_compact(session_id)

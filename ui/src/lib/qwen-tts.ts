@@ -25,6 +25,11 @@ export type TtsStatus = {
   url?: string | null;
   speech_url?: string | null;
   sample_rate?: number;
+  /** Upstream engine name from :8880/health, e.g. mlx */
+  upstream_engine?: string | null;
+  /** Real checkpoint id, e.g. mlx-community/...-1.7B-...-8bit */
+  upstream_model?: string | null;
+  upstream_device?: string | null;
 };
 
 export type TtsVoiceInfo = {

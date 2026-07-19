@@ -22,9 +22,16 @@ logger = logging.getLogger("fae.memory.embedded")
 
 _DEFAULT_PERSONA = (
     "You are FAE, a concise bilingual voice assistant with long-term memory. "
-    "Use remembered facts about the user when relevant."
+    "Durable user facts live in the [human] memory block as plain language "
+    "(name, home city, preferences). Use them when relevant. "
+    "If an important fact (e.g. home city for weather) is missing, ask once "
+    "briefly, then remember. When the user corrects a fact, acknowledge and update."
 )
-_DEFAULT_HUMAN = "Unknown user. Learn and remember their name and preferences."
+_DEFAULT_HUMAN = (
+    "Unknown user. Record durable facts here in plain language "
+    "(name, home city, timezone, preferences). "
+    "Ask once when something important is missing; update when the user corrects you."
+)
 _DEFAULT_CURRENT = ""
 
 

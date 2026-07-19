@@ -127,6 +127,7 @@ export function fetchProfile() {
 }
 
 export function updateProfile(body: {
+  human?: string;
   display_name?: string;
   city?: string;
   timezone?: string;

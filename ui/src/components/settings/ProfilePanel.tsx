@@ -8,21 +8,9 @@ import {
   type UserProfile,
 } from "@/lib/memory-api";
 
-const TZ_SUGGESTIONS = [
-  "Asia/Shanghai",
-  "Asia/Hong_Kong",
-  "Asia/Tokyo",
-  "America/New_York",
-  "America/Los_Angeles",
-  "Europe/London",
-  "UTC",
-];
-
 export function ProfilePanel() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [displayName, setDisplayName] = useState("");
-  const [city, setCity] = useState("");
-  const [timezone, setTimezone] = useState("");
+  const [human, setHuman] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,9 +23,7 @@ export function ProfilePanel() {
       .then((p) => {
         if (cancelled) return;
         setProfile(p);
-        setDisplayName(p.display_name || "");
-        setCity(p.city || "");
-        setTimezone(p.timezone || "");
+        setHuman(p.human || "");
         setError(null);
       })
       .catch((e) => {
@@ -58,15 +44,9 @@ export function ProfilePanel() {
     setSaved(false);
     setError(null);
     try {
-      const next = await updateProfile({
-        display_name: displayName.trim() || undefined,
-        city: city.trim() || undefined,
-        timezone: timezone.trim() || undefined,
-      });
+      const next = await updateProfile({ human: human.trim() });
       setProfile(next);
-      setDisplayName(next.display_name || "");
-      setCity(next.city || "");
-      setTimezone(next.timezone || "");
+      setHuman(next.human || "");
       setSaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -76,8 +56,14 @@ export function ProfilePanel() {
   }
 
   if (loading) {
-    return <p className="text-sm text-[var(--ink-soft)]">加载个人资料…</p>;
+    return <p className="text-sm text-[var(--ink-soft)]">加载重要信息…</p>;
   }
+
+  const hints = [
+    profile?.display_name ? `姓名：${profile.display_name}` : null,
+    profile?.city ? `城市：${profile.city}` : null,
+    profile?.timezone ? `时区：${profile.timezone}` : null,
+  ].filter(Boolean);
 
   return (
     <section className="space-y-5">
@@ -86,10 +72,11 @@ export function ProfilePanel() {
           className="text-lg font-semibold text-[var(--ink)]"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          个人资料
+          重要信息
         </h2>
         <p className="mt-1 text-sm text-[var(--ink-soft)]">
-          城市与时区会注入对话上下文；问天气时优先使用这里的城市。
+          对应记忆里的 human
+          块：用自然语言记下姓名、常住城市、偏好等。对话里说「我住在北京」或更正「不对，是上海」也会自动更新；天气等能力会从这里读取。
         </p>
       </div>
 
@@ -99,47 +86,30 @@ export function ProfilePanel() {
         </p>
       )}
 
-      <label className="block space-y-1.5">
-        <span className="text-sm text-[var(--ink-soft)]">显示名</span>
-        <input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="例如：小明"
-          className="w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
-        />
-      </label>
+      {hints.length > 0 && (
+        <p className="text-sm text-[var(--ink-soft)]">
+          已识别：{hints.join(" · ")}
+        </p>
+      )}
 
       <label className="block space-y-1.5">
-        <span className="text-sm text-[var(--ink-soft)]">默认城市</span>
-        <input
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          placeholder="例如：北京 / Shanghai"
-          className="w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+        <span className="text-sm text-[var(--ink-soft)]">human 记忆（非结构化）</span>
+        <textarea
+          value={human}
+          onChange={(e) => setHuman(e.target.value)}
+          rows={10}
+          placeholder={
+            "例如：\nName: 小明\nLives in 北京.\n喜欢简洁回答，中英都可。"
+          }
+          className="w-full resize-y rounded-md border border-black/10 bg-white px-3 py-2 font-mono text-sm leading-relaxed text-[var(--ink)] outline-none focus:border-[var(--accent)]"
         />
-      </label>
-
-      <label className="block space-y-1.5">
-        <span className="text-sm text-[var(--ink-soft)]">时区</span>
-        <input
-          list="fae-tz-list"
-          value={timezone}
-          onChange={(e) => setTimezone(e.target.value)}
-          placeholder="例如：Asia/Shanghai"
-          className="w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
-        />
-        <datalist id="fae-tz-list">
-          {TZ_SUGGESTIONS.map((tz) => (
-            <option key={tz} value={tz} />
-          ))}
-        </datalist>
       </label>
 
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={() => void onSave()}
-          disabled={saving}
+          disabled={saving || !human.trim()}
           className="rounded-md px-4 py-2 text-sm text-white disabled:opacity-60"
           style={{ background: "var(--accent)" }}
         >
@@ -149,15 +119,6 @@ export function ProfilePanel() {
           <span className="text-sm text-[var(--ink-soft)]">已保存</span>
         )}
       </div>
-
-      {profile?.human ? (
-        <details className="text-sm text-[var(--ink-soft)]">
-          <summary className="cursor-pointer">查看 human 记忆块</summary>
-          <pre className="mt-2 whitespace-pre-wrap rounded-md border border-black/5 bg-black/[0.03] p-3 text-xs">
-            {profile.human}
-          </pre>
-        </details>
-      ) : null}
     </section>
   );
 }

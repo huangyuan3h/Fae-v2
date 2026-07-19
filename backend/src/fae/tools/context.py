@@ -1,4 +1,4 @@
-"""Inject local time / default city into the chat system prompt."""
+"""Inject local time; resolve home city from unstructured human memory."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ async def resolve_location_defaults(
     env_city: str = "",
     env_timezone: str = "",
 ) -> tuple[str | None, str | None]:
-    """Resolve (city, timezone) from env overrides then human memory block."""
+    """Resolve (city, timezone) from env then freeform human memory."""
     city = (env_city or "").strip() or None
     timezone = (env_timezone or "").strip() or None
     if memory is None or not memory.enabled or memory.client is None:
@@ -67,11 +67,18 @@ def build_context_block(
         f"- Timezone: {tz_label}",
     ]
     if resolved_city:
-        lines.append(f"- Default city: {resolved_city}")
+        lines.append(f"- Home city (from human memory): {resolved_city}")
     else:
-        lines.append("- Default city: (unknown — ask the user if needed)")
+        lines.append(
+            "- Home city: unknown — if needed for weather, ask once briefly, "
+            "then remember the answer in human memory."
+        )
     lines.append(
         "- For live weather, call get_weather. Do not claim you lack weather access."
+    )
+    lines.append(
+        "- Important user facts are plain-language notes in [human] memory; "
+        "accept corrections in conversation."
     )
     return f"{_CONTEXT_OPEN}\n" + "\n".join(lines) + f"\n{_CONTEXT_CLOSE}"
 

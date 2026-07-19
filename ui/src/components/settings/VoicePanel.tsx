@@ -139,10 +139,22 @@ export function VoicePanel() {
             {statusError
               ? "无法检测"
               : ttsReady
-                ? `已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Vivian"}`
+                ? `已连接 · ${ttsStatus?.upstream_engine ?? "local"} / 音色 ${prefs.voice}`
                 : "未连接"}
           </span>
         </p>
+        <p className="text-xs text-[var(--ink)]">
+          <span className="text-[var(--ink-soft)]">当前模型：</span>
+          <code className="break-all text-[12px]">
+            {ttsStatus?.upstream_model ??
+              (ttsReady ? "（未上报 model_id，请确认 :8880/health）" : "—")}
+          </code>
+        </p>
+        {ttsStatus?.upstream_device && (
+          <p className="text-xs text-[var(--ink-soft)]">
+            设备：{ttsStatus.upstream_device}
+          </p>
+        )}
         <p className="text-xs text-[var(--ink-soft)] break-all">
           VLLM_TTS_URL: {ttsUrl}
         </p>
@@ -183,6 +195,12 @@ export function VoicePanel() {
             value={prefs.speed}
             onChange={(e) => updatePrefs({ speed: Number(e.target.value) })}
           />
+          {prefs.speed !== 1 && (
+            <span className="mt-1 block text-xs text-[var(--ink-soft)]">
+              语速 ≠ 1.0 时上游会做 time_stretch，可能加重「沙沙声」；听感优先建议调回
+              1.0 再试听。
+            </span>
+          )}
         </label>
 
         <label className="block text-sm text-[var(--ink)]">

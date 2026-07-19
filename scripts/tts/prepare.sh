@@ -9,7 +9,7 @@ HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-${FAE_TTS_PORT:-8880}}"
 
 if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
-  MODEL="${MLX_MODEL_ID:-${TTS_MODEL_NAME:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit}}"
+  MODEL="${MLX_MODEL_ID:-${TTS_MODEL_NAME:-mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16}}"
   VENV_BIN="$DEP_DIR/.venv-mlx/bin/activate"
 else
   MODEL="${TTS_MODEL_NAME:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"

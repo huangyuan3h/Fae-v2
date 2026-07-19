@@ -115,9 +115,24 @@ def test_tts_status_reports_upstream(monkeypatch) -> None:  # noqa: ANN001
     from fae import config as config_module
 
     config_module.get_settings.cache_clear()
-    with patch(
-        "fae.api.tts.LocalTTSClient.health",
-        new=AsyncMock(return_value=True),
+    with (
+        patch(
+            "fae.api.tts.LocalTTSClient.health",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "fae.api.tts.LocalTTSClient.upstream_status",
+            new=AsyncMock(
+                return_value={
+                    "status": "healthy",
+                    "backend": {
+                        "name": "mlx",
+                        "model_id": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                    },
+                    "device": {"type": "metal"},
+                }
+            ),
+        ),
     ):
         client = TestClient(create_app())
         resp = client.get("/api/tts/status")
@@ -128,6 +143,9 @@ def test_tts_status_reports_upstream(monkeypatch) -> None:  # noqa: ANN001
     assert body["url"] == "http://127.0.0.1:8880/v1"
     assert body["speech_url"].endswith("/audio/speech")
     assert body["speed"] == 1.2
+    assert body["upstream_engine"] == "mlx"
+    assert "1.7B" in body["upstream_model"]
+    assert body["upstream_device"] == "metal"
 
 
 def test_tts_voices_builtin_fallback(monkeypatch) -> None:  # noqa: ANN001

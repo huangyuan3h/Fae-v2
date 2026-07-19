@@ -113,25 +113,27 @@ def test_extract_city_and_facts() -> None:
 
 def test_parse_and_merge_profile() -> None:
     text = merge_human_profile(
-        "Name: 小明\nUnknown user.",
+        "Name: 小明",
         preferences={"City": "北京", "Timezone": "Asia/Shanghai"},
     )
     parsed = parse_human_profile(text)
     assert parsed.display_name == "小明"
     assert parsed.city == "北京"
     assert parsed.timezone == "Asia/Shanghai"
+    assert "Lives in 北京." in text
     # Update city without clobbering name
     text2 = merge_human_profile(text, preferences={"City": "上海"})
     parsed2 = parse_human_profile(text2)
     assert parsed2.display_name == "小明"
     assert parsed2.city == "上海"
+    assert text2.count("Lives in") == 1
 
 
 def test_build_context_includes_city() -> None:
     block = build_context_block(
-        human_block="Name: A\nCity: 北京\nTimezone: Asia/Shanghai"
+        human_block="Name: A\nLives in 北京.\nTimezone: Asia/Shanghai"
     )
-    assert "Default city: 北京" in block
+    assert "Home city (from human memory): 北京" in block
     assert "get_weather" in block
     assert "<fae_context>" in block
 

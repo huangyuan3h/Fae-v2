@@ -65,8 +65,8 @@ curl -s -X POST http://127.0.0.1:8880/v1/audio/speech \
 (M1/M2/M3/M4). It runs models on the Mac GPU/Neural Engine with memory sharing
 that fits unified memory well. For TTS we use the **MLX backend** of
 Qwen3-TTS (`TTS_BACKEND=mlx`) plus an **8-bit** checkpoint
-(`mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit`), which is usually
-faster and lighter than PyTorch MPS float32 on the same Mac.
+(`mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16` by default — near-full
+precision on MLX). The `-8bit` variant is smaller/faster but often sandier.
 
 MLX needs a **separate Python venv** (`.deps/qwen3-tts/.venv-mlx`) because
 `mlx-audio` wants Transformers 5 while the official stack pins 4.57.3.
@@ -78,7 +78,7 @@ MLX needs a **separate Python venv** (`.deps/qwen3-tts/.venv-mlx`) because
 |---|---|
 | Port | `8880` |
 | Backend | **`mlx`** (via `npm run dev` → `scripts/tts/run.sh`) |
-| Model | `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit` |
+| Model | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16` |
 | Concurrency | `TTS_MAX_CONCURRENT=1` (MLX must stay serial — overlapping gens can wedge) |
 | Voice | `Vivian` |
 
@@ -90,7 +90,8 @@ Override:
 
 ```bash
 TTS_BACKEND=pytorch TTS_DEVICE=mps npm run dev:tts   # old MPS path
-MLX_MODEL_ID=mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit npm run dev:tts
+MLX_MODEL_ID=mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit npm run dev:tts  # smaller / sandier
+MLX_MODEL_ID=mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit npm run dev:tts  # fastest / thinnest
 ```
 
 If Network shows many `speak` **503** with `MLX backend previously wedged`, the process

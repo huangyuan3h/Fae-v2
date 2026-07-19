@@ -31,7 +31,7 @@ export default function SettingsPage() {
       <nav className="mb-8 flex flex-wrap gap-2 border-b border-black/10 pb-4">
         {(
           [
-            { id: "profile" as const, label: "资料" },
+            { id: "profile" as const, label: "重要信息" },
             { id: "models" as const, label: "模型" },
             { id: "voice" as const, label: "语音" },
             { id: "notifications" as const, label: "通知" },
