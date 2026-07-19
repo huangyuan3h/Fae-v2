@@ -2,6 +2,12 @@ import type { AgentConfig } from "./config";
 import { backendWsBase } from "./config";
 
 export type WsServerMessage =
+  | {
+      type: "skills";
+      active: string[];
+      lazy_catalog?: string[];
+      scores?: Record<string, number>;
+    }
   | { type: "token"; content: string }
   | { type: "done"; usage: unknown; session_id?: string }
   | { type: "error"; code: string; message: string };
@@ -10,6 +16,7 @@ export type StreamHandlers = {
   onToken: (token: string) => void;
   onDone: () => void;
   onError: (code: string, message: string) => void;
+  onSkills?: (active: string[]) => void;
 };
 
 export class ChatAbortedError extends Error {
@@ -58,7 +65,9 @@ export class WsChatClient {
         } catch {
           return;
         }
-        if (msg.type === "token") {
+        if (msg.type === "skills") {
+          handlers.onSkills?.(msg.active ?? []);
+        } else if (msg.type === "token") {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {
           cleanup();

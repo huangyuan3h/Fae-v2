@@ -93,6 +93,7 @@ async def create_voice_session(
             handle.interrupt_pipeline = interrupt_fn
 
         memory = getattr(request.app.state, "memory", None)
+        skills = getattr(request.app.state, "skills", None)
         runtime.spawn(
             session.id,
             run_daily_bot(
@@ -105,6 +106,7 @@ async def create_voice_session(
                 on_ready=_bind_interrupt,
                 memory=memory,
                 session_id=session.id,
+                skills=skills,
             ),
         )
         return VoiceSessionOut(

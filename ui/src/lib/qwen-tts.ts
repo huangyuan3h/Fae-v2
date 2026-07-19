@@ -1,4 +1,5 @@
 import { backendHttpBase } from "@/lib/config";
+import { formatNetworkError } from "@/lib/network-error";
 
 let currentAudio: HTMLAudioElement | null = null;
 let currentUrl: string | null = null;
@@ -40,11 +41,16 @@ export async function speakWithQwenTts(text: string): Promise<void> {
 
   stopQwenTts();
 
-  const res = await fetch(`${backendHttpBase()}/api/tts/speak`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: trimmed }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${backendHttpBase()}/api/tts/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: trimmed }),
+    });
+  } catch (err) {
+    throw new Error(formatNetworkError(err, "/api/tts/speak"));
+  }
 
   if (!res.ok) {
     let message = `TTS HTTP ${res.status}`;

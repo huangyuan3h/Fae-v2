@@ -15,6 +15,7 @@ from fae.llm.types import (
     ChatRequest,
     ChatResponse,
     LLMConfig,
+    ToolCall,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "LLMConfig",
     "LLMError",
     "OpenAICompatibleProvider",
+    "ToolCall",
 ]

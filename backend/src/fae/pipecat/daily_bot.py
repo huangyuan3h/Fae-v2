@@ -34,6 +34,7 @@ async def run_daily_bot(
     on_ready: ReadyFn | None = None,
     memory: LettaMemoryService | None = None,
     session_id: str | None = None,
+    skills: object | None = None,
 ) -> None:
     """Join a Daily room and run the voice pipeline until the call ends."""
     from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -93,6 +94,7 @@ async def run_daily_bot(
         memory=memory,
         session_id=sid,
         add_message=context.add_message,
+        skills=skills,
     )
 
     # Silero VAD + default UserTurnStrategies (stop uses LocalSmartTurnAnalyzerV3).

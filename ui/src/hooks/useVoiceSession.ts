@@ -15,6 +15,7 @@ import {
   CONFIG_CHANGED_EVENT,
   syncActiveConfig,
 } from "@/lib/models";
+import { formatNetworkError } from "@/lib/network-error";
 import { createVoiceSession } from "@/lib/pipecat-client";
 import { speakWithQwenTts } from "@/lib/qwen-tts";
 import {
@@ -60,6 +61,7 @@ export function useVoiceSession() {
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
   const [ttsMode, setTtsMode] = useState<TtsMode>("none");
+  const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [preferDaily, setPreferDailyState] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support, setSupport] = useState({ stt: false, tts: false });
@@ -94,8 +96,9 @@ export function useVoiceSession() {
         setVoiceSessionId(s.sessionId);
         setMode(s.mode);
       })
-      .catch(() => {
-        /* backend optional at first paint */
+      .catch((err) => {
+        // Surface connection issues early; chat/TTS will fail the same way.
+        setError(formatNetworkError(err, "backend :8000"));
       });
 
     const onConfigChanged = () => setConfigState(loadConfig());
@@ -205,10 +208,12 @@ export function useVoiceSession() {
       ]);
 
       try {
+        setActiveSkills([]);
         await wsRef.current.chat(
           userText,
           config,
           {
+            onSkills: (names) => setActiveSkills(names),
             onToken: (token) => {
               assistantBuf.current += token;
               const visible = stripThinking(assistantBuf.current);
@@ -239,8 +244,19 @@ export function useVoiceSession() {
               await speak(reply);
               const msg =
                 ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
-              if (msg.includes("DASHSCOPE") || msg.includes("not set")) {
-                setError("Qwen3-TTS 未配置，已降级浏览器朗读（需 DASHSCOPE_API_KEY）");
+              if (
+                msg.includes("DASHSCOPE") ||
+                msg.includes("not set") ||
+                msg.includes("tts_not_configured")
+              ) {
+                setError(
+                  "Qwen3-TTS 未配置，已降级浏览器朗读。请在根目录 .env 设置 DASHSCOPE_API_KEY 并重启后端",
+                );
+              } else if (
+                msg.includes("无法连接后端") ||
+                msg.includes("Failed to fetch")
+              ) {
+                setError(formatNetworkError(ttsErr, "/api/tts/speak"));
               }
             } else {
               throw ttsErr;
@@ -253,7 +269,7 @@ export function useVoiceSession() {
           setOrb("idle");
           return;
         }
-        setError(e instanceof Error ? e.message : String(e));
+        setError(formatNetworkError(e, "chat / voice"));
         setOrb("idle");
       }
     },
@@ -338,6 +354,7 @@ export function useVoiceSession() {
     voiceSessionId,
     mode,
     ttsMode,
+    activeSkills,
     preferDaily,
     setPreferDaily,
     dailyConnected,

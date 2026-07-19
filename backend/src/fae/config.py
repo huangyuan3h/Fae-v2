@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Resolve .env relative to the repo root (one level above backend/), so the
 # same .env works whether you run from backend/ or from the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = _REPO_ROOT
 _ENV_FILE = _REPO_ROOT / ".env"
 
 
@@ -92,6 +93,12 @@ class Settings(BaseSettings):
 
     # Optional Daily API key for future WebRTC / Pipecat transport
     daily_api_key: str = ""
+
+    # Skills (Phase 3) — markdown playbooks under backend/src/skills
+    skills_enabled: bool = True
+    skills_dir: str = ""  # empty → default next to package src/skills
+    skills_state_path: str = ".data/fae-skills-state.json"
+    skills_max_active: int = Field(default=2, ge=1, le=10)
 
     # Security
     secret_key: str = "change-me"

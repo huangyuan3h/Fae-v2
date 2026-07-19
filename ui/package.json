@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@daily-co/daily-js": "^0.91.0",
+    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.101.2",
     "framer-motion": "^12.42.2",
     "next": "15.5.20",

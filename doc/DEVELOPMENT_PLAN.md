@@ -12,8 +12,8 @@
 |---|---|---|---|
 | Phase 1 | MVP | ✅ 完成 | 浏览器语音对话 + Docker 一键起 |
 | Phase 2 | 记忆深化 | ✅ 完成 | 三层记忆 + 记忆浏览器 UI |
-| **Phase 2.6** | **本地语音栈** | 🔜 **下一优先** | **浏览器 STT + `/ws/chat` + 本地 TTS 播报；不依赖 Daily** |
-| Phase 3 | Skills 体系 | 待开始 | Markdown skill 自动触发 + 5 个内置 skill |
+| Phase 2.6 | Qwen3-TTS 默认播报 | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
+| Phase 3 | Skills 体系 | ✅ 完成 | Markdown skill 自动触发 + 6 内置 + `/skills` |
 | Phase 4 | 主动 Loop | 待开始 | 心跳 + 定时任务 + 主动问候 |
 | Phase 5 | 上限扩展 | 待开始 | MCP / Subagent / 多端 / 第三方 channel |
 
@@ -114,50 +114,37 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 ---
 
-## Phase 3 · Skills 体系（接在 2.6 之后）
+## Phase 3 · Skills 体系 — ✅ 完成
 
-> 目标：Skill = Markdown，按需加载。落地 5+ 内置 skill + 编辑器。  
-> 依赖：Phase 2.6 默认对话体验稳定（避免一边改语音一边改 skill）。
+> Skill = Markdown 剧本，按需加载。6 个内置 skill + `/skills` 编辑器。
 
 ### 3.1 Skill 格式 & 加载器
 
-- [ ] 定义 `SkillMetadata` Pydantic schema（见架构 3.4）
-- [ ] 实现 `backend/src/fae/agent/skills.py`
-  - [ ] YAML frontmatter 解析（用 `pyyaml`）
-  - [ ] 目录扫描 `backend/src/skills/`
-  - [ ] 元数据缓存（避免每次重读文件）
-- [ ] 实现加载策略枚举：`ALWAYS_ON` / `TRIGGER_BASED` / `MANUAL` / `LAZY`
-- [ ] 触发器匹配：关键词 + 简单 embedding 余弦（不引重型模型）
+- [x] `SkillMetadata` / `Skill`（`fae.agent.skills_schema`）
+- [x] `SkillsLoader`：YAML frontmatter + `backend/src/skills/*.md` + mtime 缓存
+- [x] 加载策略：`always_on` / `trigger_based` / `manual` / `lazy`
+- [x] 触发匹配：关键词 + token Jaccard（无重型 embedding）
 
-### 3.2 内置 Skills（累计 ≥ 5 个）
+### 3.2 内置 Skills（6 个）
 
-- [ ] `daily_check_in.md`：每日问候 + 行程确认
-- [ ] `technical_debugging.md`：stack trace 解析 + 排查
-- [ ] `travel_planning.md`：行程规划（结合记忆）
-- [ ] `reading_companion.md`：一起读文章 / 总结
-- [ ] `writing_assistant.md`：写作助手
-- [ ] `proactive_outreach.md`：主动发起话题（Phase 4 会深度用）
-
-> 每个 skill 都要写：触发条件、依赖工具、边界（不做什么）、冷却时间。
+- [x] `daily_check_in.md` / `technical_debugging.md` / `travel_planning.md`
+- [x] `reading_companion.md` / `writing_assistant.md` / `proactive_outreach.md`（lazy）
 
 ### 3.3 自动触发 + 优先级
 
-- [ ] 实现 trigger matcher：同时匹配多个 skill 时按 `priority` 选
-- [ ] 注入到 LLM 的 system prompt：`<active_skills>...</active_skills>`
-- [ ] LLM 主动 `request_skill(name)` 工具（LAZY 模式）
-- [ ] 冷却机制：`cooldown_seconds` 内同一 skill 不重复触发
+- [x] `SkillRuntime`：priority + cooldown（按 session）
+- [x] 注入 `<active_skills>`（记忆 system 之后）
+- [x] LAZY：`request_skill` 一轮 tool（`fae.agent.llm_turn`）
+- [x] WS 事件 `{"type":"skills","active":[...]}`；接 `/api/chat` + Daily seed
 
-> **冒烟测试**（M3-1）：贴一段 stack trace → 10s 内看到 `technical_debugging` 被加载。
+> **冒烟**（M3-1）：贴 Traceback → 首页「已加载：technical_debugging」或 `POST /api/skills/test-trigger`。
 
 ### 3.4 Skill 编辑器 UI
 
-- [ ] 路由 `src/app/skills/page.tsx`
-- [ ] 列表：所有 skill、状态（enabled/disabled）、最近触发时间
-- [ ] 编辑：Monaco Editor 写 markdown，实时校验 frontmatter
-- [ ] 启用/停用 + `requires_approval` 开关
-- [ ] "测试触发"按钮：输入一句话看哪些 skill 会被加载
+- [x] `/skills`：列表、启停、Monaco 编辑、测试触发
+- [x] REST：`GET/PUT/PATCH /api/skills` + `POST /api/skills/test-trigger`
 
-> **Phase 3 收尾验收**：演示 3 个 skill 场景各 1 分钟。
+> **Phase 3 收尾验收**：stack trace / 旅行 / 写作 三场景可演示。
 
 ---
 
@@ -290,7 +277,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 | M2-1 / M2-2 | 跨会话记忆 + `/memory` | ✅ |
 | **M2.6-1** | **无 Daily Key，本地 TTS stub 播报 3 轮** | 🔜 |
 | **M2.6-2** | **真本地模型 TTS，主观明显好于系统朗读** | 🔜 |
-| M3-1 / M3-2 | skill 触发 + 编辑器 | 待 |
+| M3-1 / M3-2 | skill 触发 + 编辑器 | ✅ |
 | M4-1 / M4-2 | 定时任务 + 主动 loop | 待 |
 | M5+ | MCP / Subagent / 本地 ASR / 可选 WebRTC | 按需 |
 
@@ -313,24 +300,21 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 - [x] Phase 1 完成
 - [x] Phase 2 完成
-- [ ] **Phase 2.6 完成（M2.6-1 / M2.6-2）** ← **当前主线**
-- [ ] Phase 3 完成
-- [ ] Phase 4 完成
+- [x] Phase 2.6 首版（Qwen3-TTS `/api/tts/speak`；真·本机模型后续）
+- [x] Phase 3 完成（M3-1 / M3-2）
+- [ ] **Phase 4 完成** ← **下一主线**
 - [ ] Phase 5 持续推进
 
 ---
 
 ## 近期执行顺序（建议）
 
-1. **2.6.1** 后端 `/api/tts/speak` + local client  
-2. **2.6.2** TTS stub + compose / `.env`  
-3. **2.6.3** UI 默认播本地 TTS + Settings 文案纠正  
-4. **2.6.4** 文档换真模型  
-5. **2.6.5** 对齐 `ARCHITECTURE.md`  
-6. 再进入 Phase 3 Skills  
+1. Phase 4 主动 Loop（heartbeat / schedules / 通知）
+2. Phase 2.6.3+：可选本机 TTS URL / 流式首包
+3. 同步 `ARCHITECTURE.md` 语音与 Skills 默认路径
 
 ---
 
-**最后更新**：2026-07-19（重排：Phase 2.6 本地 TTS 为主路径；Daily / DashScope TTS 降为可选）  
-**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)（待 2.6.5 同步）  
+**最后更新**：2026-07-19（Phase 3 Skills 落地）  
+**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)  
 **反馈**：GitHub Issues / PR

@@ -16,22 +16,31 @@ async def seed_daily_memory(
     memory: LettaMemoryService | None,
     session_id: str,
     add_message: Any,
+    skills: Any | None = None,
 ) -> str:
-    """Recall memories and push a system message into LLMContext.
+    """Recall memories (+ optional skills) and push system messages into LLMContext.
 
     `add_message` is `LLMContext.add_message`. Returns the memory text used.
     """
-    if memory is None or not memory.enabled:
-        return ""
-    try:
-        text = await memory.recall_context("", session_id=session_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("Daily memory seed failed")
-        return ""
-    msg = memory.memory_system_message(text)
-    if msg is not None:
-        add_message(msg)
-    return text
+    memory_text = ""
+    if memory is not None and memory.enabled:
+        try:
+            memory_text = await memory.recall_context("", session_id=session_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Daily memory seed failed")
+            memory_text = ""
+        msg = memory.memory_system_message(memory_text)
+        if msg is not None:
+            add_message(msg)
+
+    if skills is not None and getattr(skills, "enabled", False):
+        try:
+            skill_msg = skills.system_message_dict("", session_id)
+            if skill_msg is not None:
+                add_message(skill_msg)
+        except Exception:  # noqa: BLE001
+            logger.exception("Daily skills seed failed")
+    return memory_text
 
 
 async def persist_daily_turn(

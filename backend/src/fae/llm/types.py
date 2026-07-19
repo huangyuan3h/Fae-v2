@@ -33,6 +33,14 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ToolCall(BaseModel):
+    """One OpenAI-compatible tool call from the model."""
+
+    id: str = ""
+    name: str
+    arguments: str = "{}"
+
+
 class ChatRequest(BaseModel):
     """Text-only chat completion request.
 
@@ -45,6 +53,9 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1)
     # Optional memory bucket id (not sent to the LLM provider).
     session_id: str | None = None
+    # Optional OpenAI-compatible tools (Phase 3 request_skill).
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
 
 
 class ChatResponse(BaseModel):
@@ -53,3 +64,4 @@ class ChatResponse(BaseModel):
     content: str
     model: str
     usage: dict[str, int] | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)

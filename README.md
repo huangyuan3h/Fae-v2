@@ -26,6 +26,7 @@
 | sleeptime 闲时整理 | ✅ Phase 2.4（idle/daily + `POST /api/memory/consolidate`） |
 | Episodic 事件 + archival 降权 | ✅ Phase 2.3b（`GET /api/memory/events`；180 天未访问降权） |
 | 记忆浏览器 UI | ✅ Phase 2.5（`/memory` 时间线 · 事实 CRUD · 搜索） |
+| Skills 体系 | ✅ Phase 3（Markdown skills · 自动触发 · `/skills` 编辑器） |
 
 ## 快速开始
 
@@ -56,7 +57,8 @@ open http://localhost:3000
 3. **默认路径**：说话或打字 → 流式回复 + **Qwen3-TTS** 播报（失败才降级浏览器朗读）  
 4. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily（需 `DAILY_API_KEY`）  
 5. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
-6. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边
+6. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边  
+7. **Skills**：贴一段 `Traceback` → 首页显示「已加载：technical_debugging」；或打开 `/skills` 测试触发
 
 LLM API Key / Base URL / Model 保存在浏览器 localStorage（Settings），不必写进根目录 `.env`。
 

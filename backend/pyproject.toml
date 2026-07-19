@@ -20,6 +20,7 @@ dependencies = [
     # Voice stack (Daily bot + Silero/SmartTurn + DashScope TTS)
     "pipecat-ai[daily,silero,soundfile]>=0.0.92",
     "dashscope>=1.20",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

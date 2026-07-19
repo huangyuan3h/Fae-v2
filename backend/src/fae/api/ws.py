@@ -7,6 +7,7 @@ Protocol (JSON over text frames):
     {"type": "cancel"}
 
   server -> client:
+    {"type": "skills", "active": ["technical_debugging"], "lazy_catalog": [...]}
     {"type": "token", "content": "你"}
     {"type": "done",  "usage": {...} | null, "session_id": "..."}
     {"type": "error", "code": "auth", "message": "..."}
@@ -26,6 +27,9 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
+from fae.agent.llm_turn import stream_assistant_turn
+from fae.agent.prepare import prepare_chat_request
+from fae.agent.skills_runtime import SkillRuntime
 from fae.api.deps import get_llm_client
 from fae.llm import ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -61,6 +65,11 @@ def _memory_from_app(ws: WebSocket) -> LettaMemoryService | None:
     return memory if isinstance(memory, LettaMemoryService) else None
 
 
+def _skills_from_app(ws: WebSocket) -> SkillRuntime | None:
+    skills = getattr(ws.app.state, "skills", None)
+    return skills if isinstance(skills, SkillRuntime) else None
+
+
 def _resolve_session_id(
     raw: dict[str, Any],
     request: ChatRequest,
@@ -81,6 +90,7 @@ async def _run_stream(
     client: LLMClient,
     request: ChatRequest,
     memory: LettaMemoryService | None,
+    skills: SkillRuntime | None,
     session_id: str,
 ) -> None:
     """Pump tokens from the provider to the client until done or cancelled."""
@@ -90,15 +100,27 @@ async def _run_stream(
             user_text = msg.content
             break
 
-    stream_request = request
-    if memory is not None and memory.enabled:
-        stream_request = await memory.prepare_request(
-            request, session_id=session_id
+    try:
+        stream_request, activation = await prepare_chat_request(
+            request,
+            session_id=session_id,
+            memory=memory,
+            skills=skills,
+        )
+        await _send(
+            ws,
+            {
+                "type": "skills",
+                "active": activation.active,
+                "lazy_catalog": activation.lazy_catalog,
+                "scores": activation.scores,
+            },
         )
 
-    assistant_parts: list[str] = []
-    try:
-        async for token in client.stream(stream_request):
+        assistant_parts: list[str] = []
+        async for token, activation in stream_assistant_turn(
+            client, stream_request, activation, skills
+        ):
             assistant_parts.append(token)
             await _send(ws, {"type": "token", "content": token})
         if memory is not None and memory.enabled and user_text:
@@ -191,9 +213,15 @@ async def ws_chat(
                     raw, request, connection_session_id
                 )
                 memory = _memory_from_app(websocket)
+                skills = _skills_from_app(websocket)
                 active = asyncio.create_task(
                     _run_stream(
-                        websocket, client, request, memory, session_id
+                        websocket,
+                        client,
+                        request,
+                        memory,
+                        skills,
+                        session_id,
                     )
                 )
                 continue

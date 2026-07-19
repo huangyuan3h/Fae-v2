@@ -18,11 +18,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from fae.api.deps import get_llm_client
+from fae.agent.prepare import prepare_chat_request
+from fae.agent.skills_loader import default_skills_dir
+from fae.agent.skills_runtime import SkillRuntime
 from fae.api.pipeline import router as pipeline_router
+from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
-from fae.config import Settings, get_settings
+from pathlib import Path
+
+from fae.config import REPO_ROOT, Settings, get_settings
 from fae.llm import (
     ChatRequest,
     ChatResponse,
@@ -85,6 +91,8 @@ async def lifespan(app: FastAPI):
 
     if getattr(app.state, "sleeptime", None) is None:
         app.state.sleeptime = None
+
+    # Skills runtime is created in create_app (available without lifespan).
 
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
@@ -219,6 +227,19 @@ def create_app(
     app.state.archival = None
     app.state.episodic = None
     app.state.sleeptime = None
+    skills_dir = (
+        Path(settings.skills_dir) if settings.skills_dir else default_skills_dir()
+    )
+    state_path = Path(settings.skills_state_path)
+    if not state_path.is_absolute():
+        state_path = REPO_ROOT / state_path
+    app.state.skills = SkillRuntime(
+        skills_dir=skills_dir,
+        state_path=state_path,
+        max_active=settings.skills_max_active,
+        enabled=settings.skills_enabled,
+        repo_root=REPO_ROOT,
+    )
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
@@ -294,7 +315,7 @@ def create_app(
         memory: LettaMemoryService | None = getattr(
             request.app.state, "memory", None
         )
-        prepared = body
+        skills_rt = getattr(request.app.state, "skills", None)
         # Never share a global "http" bucket across anonymous callers.
         session_id = (body.session_id or "").strip() or str(uuid.uuid4())
         user_text = ""
@@ -303,11 +324,27 @@ def create_app(
                 user_text = msg.content
                 break
         try:
-            if memory is not None and memory.enabled:
-                prepared = await memory.prepare_request(
-                    body, session_id=session_id
+            prepared, activation = await prepare_chat_request(
+                body,
+                session_id=session_id,
+                memory=memory,
+                skills=skills_rt if isinstance(skills_rt, SkillRuntime) else None,
+            )
+            from fae.agent.llm_turn import apply_lazy_skill_tool
+
+            early: str | None = None
+            if isinstance(skills_rt, SkillRuntime) and activation.tools:
+                prepared, activation, early = await apply_lazy_skill_tool(
+                    client, prepared, activation, skills_rt
                 )
-            response = await client.chat(prepared)
+            if early is not None:
+                response = ChatResponse(
+                    content=early,
+                    model=prepared.config.model,
+                    usage=None,
+                )
+            else:
+                response = await client.chat(prepared)
             if memory is not None and memory.enabled and user_text:
                 await memory.persist_turn(
                     session_id=session_id,
@@ -642,6 +679,9 @@ def create_app(
 
     # ── Qwen3-TTS (no Daily required) ──────────────────────────────────
     app.include_router(tts_router)
+
+    # ── Phase 3: Skills ────────────────────────────────────────────────
+    app.include_router(skills_router)
 
     return app
 

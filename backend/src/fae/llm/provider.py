@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover — only on stripped openai builds
     LengthFinishReasonError = None  # type: ignore[assignment,misc]
 
 from fae.llm.errors import LLMError
-from fae.llm.types import ChatRequest, ChatResponse
+from fae.llm.types import ChatRequest, ChatResponse, ToolCall
 
 logger = logging.getLogger("fae.llm")
 
@@ -157,13 +157,18 @@ class OpenAICompatibleProvider:
         cfg = request.config
         client = self._client_for(request)
         try:
+            kwargs: dict = {
+                "model": cfg.model,
+                "messages": [m.model_dump() for m in request.messages],
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+            }
+            if request.tools:
+                kwargs["tools"] = request.tools
+                if request.tool_choice is not None:
+                    kwargs["tool_choice"] = request.tool_choice
             try:
-                resp = await client.chat.completions.create(
-                    model=cfg.model,
-                    messages=[m.model_dump() for m in request.messages],
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                )
+                resp = await client.chat.completions.create(**kwargs)
             except Exception as e:  # noqa: BLE001 — normalised below
                 raise _map_openai_error(
                     e,
@@ -177,7 +182,20 @@ class OpenAICompatibleProvider:
                     code="empty_response",
                     message="LLM returned no choices",
                 )
-            content = resp.choices[0].message.content or ""
+            message = resp.choices[0].message
+            content = message.content or ""
+            tool_calls: list[ToolCall] = []
+            for tc in getattr(message, "tool_calls", None) or []:
+                fn = getattr(tc, "function", None)
+                if fn is None:
+                    continue
+                tool_calls.append(
+                    ToolCall(
+                        id=getattr(tc, "id", "") or "",
+                        name=getattr(fn, "name", "") or "",
+                        arguments=getattr(fn, "arguments", None) or "{}",
+                    )
+                )
             usage: dict[str, int] | None = None
             if resp.usage is not None:
                 usage = {
@@ -185,7 +203,12 @@ class OpenAICompatibleProvider:
                     "completion_tokens": resp.usage.completion_tokens,
                     "total_tokens": resp.usage.total_tokens,
                 }
-            return ChatResponse(content=content, model=resp.model, usage=usage)
+            return ChatResponse(
+                content=content,
+                model=resp.model,
+                usage=usage,
+                tool_calls=tool_calls,
+            )
         finally:
             await _aclose(client)
 
@@ -256,11 +279,13 @@ class FakeProvider:
         error: Exception | None = None,
         echo: bool = False,
         tokens: list[str] | None = None,
+        tool_call_responses: list[list[ToolCall]] | None = None,
     ) -> None:
         # If `echo` is set, the provider echoes back the last user message
         # (handy for trivial "is the wire working" smoke tests).
         self._responses = list(responses or [])
         self._tokens = list(tokens or [])
+        self._tool_call_responses = list(tool_call_responses or [])
         self._error = error
         self._echo = echo
         self.calls: list[ChatRequest] = []  # observability for tests
@@ -270,18 +295,28 @@ class FakeProvider:
         self.calls.append(request)
         if self._error is not None:
             raise self._error
+        tool_calls: list[ToolCall] = []
+        if self._tool_call_responses:
+            tool_calls = self._tool_call_responses.pop(0)
         if self._echo:
             last_user = next(
                 (m.content for m in reversed(request.messages) if m.role == "user"),
                 "",
             )
-            return ChatResponse(content=last_user, model="fake-model", usage=None)
-        if not self._responses:
+            return ChatResponse(
+                content=last_user,
+                model="fake-model",
+                usage=None,
+                tool_calls=tool_calls,
+            )
+        if not self._responses and not tool_calls:
             return ChatResponse(content="", model="fake-model", usage=None)
+        content = self._responses.pop(0) if self._responses else ""
         return ChatResponse(
-            content=self._responses.pop(0),
+            content=content,
             model="fake-model",
             usage=None,
+            tool_calls=tool_calls,
         )
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:

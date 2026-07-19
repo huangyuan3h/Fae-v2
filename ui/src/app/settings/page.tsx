@@ -61,6 +61,12 @@ export default function SettingsPage() {
         >
           记忆 →
         </Link>
+        <Link
+          href="/skills"
+          className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-[var(--ink-soft)]"
+        >
+          Skills →
+        </Link>
       </nav>
 
       {tab === "models" ? <ModelsPanel /> : <VoicePanel />}

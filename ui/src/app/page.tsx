@@ -21,6 +21,7 @@ export default function HomePage() {
     sessionId,
     mode,
     ttsMode,
+    activeSkills,
     dailyConnected,
     support,
     sendText,
@@ -72,7 +73,19 @@ export default function HomePage() {
           >
             记忆
           </Link>
+          <span className="text-black/20">·</span>
+          <Link
+            href="/skills"
+            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+          >
+            Skills
+          </Link>
         </div>
+        {activeSkills.length > 0 && (
+          <p className="mt-2 text-xs text-[var(--accent)]">
+            已加载：{activeSkills.join(", ")}
+          </p>
+        )}
         {active && (
           <p className="mt-2 text-xs text-[var(--ink-soft)]">
             当前模型：{active.name}
