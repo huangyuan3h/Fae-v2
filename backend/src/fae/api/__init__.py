@@ -16,6 +16,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from pathlib import Path
@@ -392,7 +393,7 @@ def create_app(
     settings = settings or get_settings()
     app = FastAPI(
         title="FAE-v2 Backend",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -451,8 +452,13 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/ready")
-    async def ready(request: Request) -> dict[str, str]:
-        """Readiness probe: config loaded; Letta status is informational."""
+    async def ready(request: Request) -> JSONResponse:
+        """Readiness probe for always-on Core.
+
+        Values use ok|down|off|skipped|misconfigured.
+        Memory ``down`` → HTTP 503 and ``status=degraded``; Telegram
+        misconfiguration alone does not fail the probe.
+        """
         app_settings: Settings = request.app.state.settings
         memory: LettaMemoryService | None = getattr(
             request.app.state, "memory", None
@@ -470,11 +476,47 @@ def create_app(
                 letta_status = "ok"
             else:
                 letta_status = "down"
-        return {
-            "status": "ready",
+        memory_status = letta_status
+
+        proactive = getattr(request.app.state, "proactive", None)
+        if not getattr(app_settings, "scheduler_enabled", False):
+            scheduler_status = "off"
+        elif isinstance(proactive, ProactiveLoop) and proactive._started:
+            scheduler_status = "ok"
+        else:
+            scheduler_status = "down"
+
+        if not getattr(app_settings, "telegram_enabled", True):
+            telegram_status = "off"
+        elif not telegram_ready(app_settings):
+            telegram_status = "misconfigured"
+        else:
+            tg_task = getattr(request.app.state, "telegram_task", None)
+            if tg_task is not None and not tg_task.done():
+                telegram_status = "ok"
+            else:
+                telegram_status = "down"
+
+        key = (
+            (getattr(app_settings, "proactive_llm_api_key", "") or "").strip()
+            or (getattr(app_settings, "dashscope_api_key", "") or "").strip()
+        )
+        proactive_llm_status = (
+            "ok" if key and key != "unused" else "misconfigured"
+        )
+
+        overall = "degraded" if memory_status == "down" else "ready"
+        payload = {
+            "status": overall,
             "app": app_settings.app_name,
             "letta": letta_status,
+            "memory": memory_status,
+            "scheduler": scheduler_status,
+            "telegram": telegram_status,
+            "proactive_llm": proactive_llm_status,
         }
+        code = 503 if memory_status == "down" else 200
+        return JSONResponse(payload, status_code=code)
 
     # ── Checkpoint 2 endpoints ────────────────────────────────────────
     @app.post("/api/test-connection", response_model=dict[str, str])

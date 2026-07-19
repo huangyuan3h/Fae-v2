@@ -19,13 +19,20 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-RUN useradd --create-home --uid 10001 fae
+RUN useradd --create-home --uid 10001 fae \
+    && mkdir -p /app/.data \
+    && chown -R fae:fae /app/.data
+
 COPY --from=builder /app/.venv /app/.venv
 COPY backend/src /app/src
+COPY deploy/docker/backend-entrypoint.sh /usr/local/bin/backend-entrypoint.sh
+RUN chmod +x /usr/local/bin/backend-entrypoint.sh
 
-USER fae
+# Entrypoint runs as root to chown the named volume, then drops to fae.
+USER root
 EXPOSE 8000
-HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
+ENTRYPOINT ["/usr/local/bin/backend-entrypoint.sh"]
 CMD ["uvicorn", "fae.api:app", "--host", "0.0.0.0", "--port", "8000"]

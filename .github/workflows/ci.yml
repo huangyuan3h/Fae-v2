@@ -22,6 +22,14 @@ jobs:
           uv sync --group dev
           uv run pytest
 
+  backend-image:
+    name: Backend Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f deploy/docker/backend.Dockerfile .
+
   ui:
     name: UI lint + build
     runs-on: ubuntu-latest

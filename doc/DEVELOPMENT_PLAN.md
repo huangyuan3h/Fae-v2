@@ -75,8 +75,8 @@
 | 阶段 | 名称 | 状态 | Demo-Ready |
 |---|---|---|---|
 | P0～P5.2 | 骨架 + 质量 + 多端首版 | 已归档 | `v0.2.0` |
-| **P6** | **Core 常驻 & 快速部署** | 下一主线 | 一台机器 compose up → API 可用；GitHub Release |
-| **P7** | **Client 契约 & 壳化** | 待开始 | 任意 client 只依赖 OpenAPI/WS；Web 降级为参考壳 |
+| **P6** | **Core 常驻 & 快速部署** | ✅ 完成 | 一台机器 compose up → API 可用；GitHub Release `v0.3.0` |
+| **P7** | **Client 契约 & 壳化** | **下一主线** | 任意 client 只依赖 OpenAPI/WS；Web 降级为参考壳 |
 | **P8** | **Tool Runtime & 连接器** | 待开始 | 插件式工具 + 权限；接 3～5 个你真用的工具 |
 | **P9** | **任务可靠性 & 主动助理** | 待开始 | 长任务状态、失败可追、外出也能闭环 |
 | **P10** | **可选增强** | 按需 | 本地 ASR、更深语音、第二 channel、MCP 适配器 |
@@ -85,21 +85,21 @@
 
 ## 3. Phase 细节
 
-### P6 · Core 常驻 & 快速部署 ← 下一主线
+### P6 · Core 常驻 & 快速部署 ✅
 
 **为什么先做**：没有「常驻 Core」，「任何地点」和「FE 是壳」都是空话。
 
-- [ ] **配置外置**：服务端为唯一真相源（LLM / TTS / 记忆 / Telegram / tools）；浏览器 Key 仅作本地开发捷径，文档标明「远程模式不依赖 localStorage」
-- [ ] **部署契约**：`docker compose`（或等价）一键起 API +（可选）TTS stub；`.env.example` = 生产清单
-- [ ] **GitHub**：推送 `init`/`main` + tag；Release 附部署说明；CI 绿才能合
-- [ ] **健康与就绪**：`/health` `/ready` 含 memory / scheduler / channel 状态；失败可诊断
-- [ ] **远程访问最小集**：反向代理 / Tailscale / Cloudflare Tunnel 三选一写进文档（个人助理优先私有网络，不默认裸奔公网）
+- [x] **配置外置**：服务端为唯一真相源（LLM / TTS / 记忆 / Telegram / tools）；浏览器 Key 仅作本地开发捷径；常驻路径见 `doc/DEPLOY.md`（Telegram/Loop 不需浏览器 Key；浏览器自动注入留给 P7）
+- [x] **部署契约**：`docker-compose.core.yml` + `deploy/scripts/start-core.sh`；可选 profile `tts`；`.env.example` Always-on Core 块
+- [x] **GitHub**：Release `v0.3.0` 附部署说明；CI 含 backend image build
+- [x] **健康与就绪**：`GET /ready` 含 `memory` / `scheduler` / `telegram` / `proactive_llm`；memory down → 503
+- [x] **远程访问最小集**：主推 Tailscale；附录 Cloudflare Tunnel（`doc/DEPLOY.md`）
 
-**验收（M6）**：笔记本休眠时，云端或家里常驻机上的 Core 仍响应 Telegram；新机器按 README 30 分钟内起得来。
+**验收（M6）**：笔记本休眠时，云端或家里常驻机上的 Core 仍响应 Telegram；新机器按 `doc/DEPLOY.md` 30 分钟内起得来。
 
 ---
 
-### P7 · Client 契约 & 壳化
+### P7 · Client 契约 & 壳化 ← 下一主线
 
 **为什么**：FE 必须可替换；否则永远困在 Next 页。
 
@@ -177,11 +177,10 @@
 
 ## 6. 近期执行顺序（建议）
 
-1. **P6** Core 常驻 & 快速部署（含把当前仓库推到 GitHub、Release 流程跑顺）
-2. **P7** Client 契约 & Web 壳化
-3. **P8** 按你真实工具清单接连接器（先 3 个最高频）
-4. **P9** 任务可靠性，闭环「外出一天」
-5. P10 按痛点插入
+1. **P7** Client 契约 & Web 壳化 ← 当前主线
+2. **P8** 按你真实工具清单接连接器（先 3 个最高频）
+3. **P9** 任务可靠性，闭环「外出一天」
+4. P10 按痛点插入
 
 ---
 
@@ -190,12 +189,12 @@
 | ID | 验收 | 状态 |
 |---|---|---|
 | M0～M5.2 | 见归档计划 / `v0.2.0` | 完成 |
-| **M6** | 常驻 Core + 快速部署 + 远程 Telegram 闭环 | 下一主线 |
-| **M7** | 无 Web 也可完整使用（API + 至少一 IM client） | 待定 |
+| **M6** | 常驻 Core + 快速部署 + 远程 Telegram 闭环 | ✅ `v0.3.0` |
+| **M7** | 无 Web 也可完整使用（API + 至少一 IM client） | 下一主线 |
 | **M8** | ≥3 个个人真实工具 + 权限 | 待定 |
 | **M9** | 外出一天仅靠手机办完提醒/记忆/一工具任务 | 待定 |
 
 ---
 
-**最后更新**：2026-07-19  
-**关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`archive/DEVELOPMENT_PLAN_through_v0.2.md`](./archive/DEVELOPMENT_PLAN_through_v0.2.md) · [`../CHANGELOG.md`](../CHANGELOG.md) · [`../README.md`](../README.md)
+**最后更新**：2026-07-19（P6 / M6 完成）  
+**关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`DEPLOY.md`](./DEPLOY.md) · [`archive/DEVELOPMENT_PLAN_through_v0.2.md`](./archive/DEVELOPMENT_PLAN_through_v0.2.md) · [`../CHANGELOG.md`](../CHANGELOG.md) · [`../README.md`](../README.md)

@@ -26,6 +26,10 @@ def test_ready_endpoint() -> None:
     assert body["status"] == "ready"
     assert body["app"] == "fae-v2"
     assert body.get("letta") == "off"
+    assert body.get("memory") == "off"
+    assert body.get("scheduler") == "off"
+    assert body.get("telegram") == "misconfigured"
+    assert body.get("proactive_llm") == "misconfigured"
 
 
 def test_create_app_uses_provided_settings() -> None:
@@ -60,4 +64,4 @@ def test_module_level_app_is_well_formed() -> None:
     # Trigger any lazy module-level work.
     _ = api_module.app
     assert api_module.app.title == "FAE-v2 Backend"
-    assert api_module.app.version == "0.2.0"
+    assert api_module.app.version == "0.3.0"

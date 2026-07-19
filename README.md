@@ -1,26 +1,28 @@
 # FAE-v2
 
-> **F**ully **A**utonomous **E**cho · v2 · **stable 0.2.0**  
+> **F**ully **A**utonomous **E**cho · v2 · **stable 0.3.0**  
 > 有长期记忆、能主动 loop、可本地部署的语音 Agent。  
 > 变更摘要见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 文档
 
 - [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) — 架构真相源
-- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — **Personal Assistant 计划（P6 起）**
+- [doc/DEPLOY.md](./doc/DEPLOY.md) — **常驻 Core 部署**（compose slim / Tailscale / `/ready`）
+- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — **Personal Assistant 计划（P7 起下一主线）**
 - [doc/archive/DEVELOPMENT_PLAN_through_v0.2.md](./doc/archive/DEVELOPMENT_PLAN_through_v0.2.md) — 已完成至 v0.2.0 的旧清单归档
 - [doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md) — 本机 TTS
 - [evals/README.md](./evals/README.md) — 最小评测集
 - [CHANGELOG.md](./CHANGELOG.md) — 版本摘要
 
-## 质量状态（stable 0.2.0）
+## 质量状态（stable 0.3.0）
 
 | 里程碑 | 状态 |
 |---|---|
 | Phase 1～4 骨架 + Phase Q 质量 | ✅ |
 | 5.1 多端 & Telegram | ✅ M5-1 |
 | 5.2 Subagents | ✅ M5-2 |
-| **下一主线** | **P6 · Core 常驻 & 快速部署**（见新 DEVELOPMENT_PLAN） |
+| P6 Core 常驻 & 快速部署 | ✅ M6 |
+| **下一主线** | **P7 · Client 契约 & 壳化**（见 DEVELOPMENT_PLAN） |
 
 MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 
@@ -40,6 +42,16 @@ MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 | Docker Compose / CI | ✅ |
 
 ## 快速开始
+
+**常驻 Agent Core（推荐生产 / Telegram）** — 见 [doc/DEPLOY.md](./doc/DEPLOY.md)：
+
+```bash
+cp .env.example .env   # 填 Always-on Core 块
+./deploy/scripts/start-core.sh
+curl -s http://127.0.0.1:8000/ready | jq
+```
+
+**本机开发（UI + 热重载）**：
 
 ```bash
 git clone https://github.com/huangyuan3h/Fae-v2.git

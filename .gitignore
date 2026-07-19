@@ -26,6 +26,7 @@ out/
 .DS_Store
 
 # Project
+.compose-core-tts.override.yml
 data/
 .data/
 .deps/

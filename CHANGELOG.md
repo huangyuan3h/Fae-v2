@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 — 2026-07-19 (P6 Core always-on)
+
+Always-on Agent Core deploy path: slim compose, richer `/ready`, Tailscale-oriented docs, GitHub Release.
+
+### Highlights
+
+- **`docker-compose.core.yml`**: embedded Letta + named volume `fae-data` + `restart: unless-stopped`; optional TTS stub profile
+- **`deploy/scripts/start-core.sh`**: build/up + poll `/ready`
+- **`GET /ready`**: `memory` / `scheduler` / `telegram` / `proactive_llm` (+ legacy `letta`); memory `down` → HTTP 503
+- **Docs**: `doc/DEPLOY.md` 30-minute checklist; `.env.example` Always-on Core block; README pointer
+- **CI**: backend Docker image build step (no full-stack compose)
+
+### Notes
+
+- Browser `/ws/chat` still uses client Key (P7); Telegram / Loop use server `DASHSCOPE_API_KEY` / `PROACTIVE_LLM_*`
+- Full-stack `docker-compose.yml` remains the Letta-remote **dev** path
+
 ## 0.2.0 — 2026-07-19 (stable cut)
 
 Stable snapshot after Phase Q quality hardening and Phase 5.1–5.2 ceiling work.

@@ -1,0 +1,70 @@
+# FAE-v2 always-on Agent Core (slim stack).
+# Memory: embedded SQLite under volume fae-data.
+# Does NOT pull Letta/ASR/Redis/Qdrant/UI — use docker-compose.yml for full dev stack.
+#
+# Usage:
+#   cp .env.example .env   # fill Always-on Core block
+#   ./deploy/scripts/start-core.sh
+#   curl -s http://127.0.0.1:8000/ready | jq
+#
+# Optional TTS stub:
+#   docker compose -f docker-compose.core.yml --profile tts up -d --build
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Defaults for resident Core; .env can override.
+      LETTA_MODE: ${LETTA_MODE:-embedded}
+      LETTA_EMBEDDED_PATH: /app/.data/fae-memory.db
+      RECALL_DB_PATH: /app/.data/fae-recall.db
+      EPISODIC_DB_PATH: /app/.data/fae-episodic.db
+      SCHEDULES_DB_PATH: /app/.data/fae-schedules.db
+      SKILLS_STATE_PATH: /app/.data/fae-skills-state.json
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      # When profile tts is enabled, override via compose merge below is not automatic;
+      # set VLLM_TTS_URL in .env to http://tts:8880/v1 if using --profile tts.
+      VLLM_TTS_URL: ${VLLM_TTS_URL:-http://127.0.0.1:8880/v1}
+    volumes:
+      - fae-data:/app/.data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+
+  tts:
+    profiles: ["tts"]
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+    command:
+      [
+        "python",
+        "-m",
+        "fae.tts.stub_server",
+      ]
+    environment:
+      FAE_TTS_STUB_HOST: "0.0.0.0"
+      FAE_TTS_STUB_PORT: "8880"
+    ports:
+      - "8880:8880"
+    restart: unless-stopped
+
+volumes:
+  fae-data:
