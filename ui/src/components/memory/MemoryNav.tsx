@@ -13,12 +13,6 @@ export function MemoryNav() {
   const pathname = usePathname();
   return (
     <nav className="flex flex-wrap items-center gap-2 border-b border-black/10 pb-4">
-      <Link
-        href="/"
-        className="mr-2 text-sm text-[var(--ink-soft)] underline-offset-2 hover:underline"
-      >
-        ← FAE
-      </Link>
       {LINKS.map((link) => {
         const active = pathname === link.href;
         return (

@@ -481,73 +481,46 @@ async def on_user_speech_during_playback():
 ```text
 FAE-v2/
 ├── README.md
-├── ARCHITECTURE.md                  # 本文档
-├── LICENSE                          # Apache 2.0
-├── docker-compose.yml               # 一键起所有服务
+├── ARCHITECTURE.md                  # → points to doc/ARCHITECTURE.md
+├── docker-compose.yml
 ├── .env.example
+├── doc/
+│   ├── ARCHITECTURE.md              # 本文档（权威）
+│   ├── DEVELOPMENT_PLAN.md          # 阶段 checklist
+│   └── LOCAL_TTS.md
 │
-├── backend/                         # Python 后端
+├── backend/
 │   ├── pyproject.toml
 │   ├── src/
 │   │   ├── fae/
-│   │   │   ├── __init__.py
-│   │   │   ├── config.py            # 配置加载
-│   │   │   │
-│   │   │   ├── pipecat/             # 语音管道
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── bot.py           # 主 pipeline
-│   │   │   │   ├── services/
-│   │   │   │   │   ├── qwen3_asr.py
-│   │   │   │   │   ├── qwen3_tts.py
-│   │   │   │   │   ├── qwen3_llm.py
-│   │   │   │   │   └── letta_memory.py
-│   │   │   │   └── transport.py
-│   │   │   │
-│   │   │   ├── agent/               # Agent 核心
-│   │   │   │   ├── core.py
-│   │   │   │   ├── skills.py        # Skills 加载器
-│   │   │   │   ├── tools.py         # 工具注册表
-│   │   │   │   └── prompts.py
-│   │   │   │
-│   │   │   ├── memory/              # 记忆系统
-│   │   │   │   ├── letta_client.py
-│   │   │   │   ├── episodic.py      # 事件记忆扩展
-│   │   │   │   ├── consolidation.py # sleeptime 整理
-│   │   │   │   └── embeddings.py
-│   │   │   │
-│   │   │   ├── scheduler/           # 主动 loop
-│   │   │   │   ├── heartbeat.py
-│   │   │   │   ├── proactive.py
-│   │   │   │   └── jobs.py
-│   │   │   │
-│   │   │   ├── tools/               # 具体工具实现
-│   │   │   │   ├── memory.py
-│   │   │   │   ├── search.py
-│   │   │   │   ├── file_ops.py
-│   │   │   │   ├── shell.py
-│   │   │   │   └── schedule.py
-│   │   │   │
-│   │   │   └── api.py               # FastAPI 入口
-│   │   │
-│   │   └── skills/                  # Markdown skills
-│   │       ├── daily_check_in.md
-│   │       ├── technical_debugging.md
-│   │       ├── travel_planning.md
-│   │       ├── reading_companion.md
-│   │       ├── writing_assistant.md
-│   │       └── proactive_outreach.md
-│   │
+│   │   │   ├── config.py
+│   │   │   ├── api/                 # FastAPI package
+│   │   │   │   ├── __init__.py      # create_app + lifespan
+│   │   │   │   ├── ws.py / chat paths
+│   │   │   │   ├── memory.py        # /api/memory/*
+│   │   │   │   ├── skills.py        # /api/skills/*
+│   │   │   │   ├── tts.py / voice.py / pipeline.py
+│   │   │   │   └── (schedules.py — Phase 4)
+│   │   │   ├── agent/               # Skills + turn prep
+│   │   │   │   ├── skills_schema.py / skills_loader.py
+│   │   │   │   ├── skills_matcher.py / skills_runtime.py
+│   │   │   │   ├── prepare.py / llm_turn.py
+│   │   │   ├── memory/              # Letta + recall/archival/episodic
+│   │   │   │   └── consolidation.py # SleeptimeScheduler (≠ proactive)
+│   │   │   ├── scheduler/           # Phase 4 proactive loop
+│   │   │   │   ├── activity.py / heartbeat.py
+│   │   │   │   ├── proactive.py / jobs.py
+│   │   │   ├── tts/                  # local OpenAI-compatible client + stub
+│   │   │   ├── llm/ / pipecat/
+│   │   └── skills/                  # Markdown skills (6 built-ins)
 │   └── tests/
 │
-├── ui/                              # Next.js 前端
+├── ui/
 │   ├── package.json
-│   ├── next.config.ts
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
 │   ├── src/
-│   │   ├── app/                     # 见 3.7 路由表
+│   │   ├── app/                     # /  /settings  /memory  /skills  (/schedules Phase 4)
 │   │   ├── components/
-│   │   │   ├── ui/                  # shadcn 组件
+│   │   │   ├── AppNav.tsx            # shared primary nav
 │   │   │   ├── voice/
 │   │   │   │   ├── VoiceOrb.tsx
 │   │   │   │   ├── MicButton.tsx
@@ -751,21 +724,21 @@ evals/
 
 ### Phase 2: 记忆深化（第 3-4 周）
 
-- [ ] 三层记忆架构（core/recall/archival）
+- [x] 三层记忆架构（core/recall/archival）
 - [x] Episodic memory 事件日志
 - [x] 记忆浏览器 UI
 - [x] sleeptime 整理任务
 
 ### Phase 3: Skills 体系（第 5-6 周）
 
-- [ ] Markdown skill 格式规范
-- [ ] Skill 自动触发 + 优先级调度
-- [ ] 5+ 内置 skills
-- [ ] Skill 编辑器（UI）
+- [x] Markdown skill 格式规范
+- [x] Skill 自动触发 + 优先级调度
+- [x] 5+ 内置 skills
+- [x] Skill 编辑器（UI）
 
 ### Phase 4: 主动 Loop（第 7-8 周）
 
-- [ ] APScheduler + Heartbeat
+- [ ] APScheduler + Heartbeat（脚手架已就位：`fae/scheduler/`）
 - [ ] 定时任务 UI
 - [ ] Proactive outreach（主动发起话题）
 - [ ] 通知通道（Web Push / 桌面通知）

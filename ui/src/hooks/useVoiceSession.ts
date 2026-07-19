@@ -35,7 +35,7 @@ import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
-export type TtsMode = "qwen3-tts" | "browser" | "none";
+export type TtsMode = "local-tts" | "qwen3-tts" | "browser" | "none";
 
 export type ChatLine = {
   id: string;
@@ -101,6 +101,19 @@ export function useVoiceSession() {
         setError(formatNetworkError(err, "backend :8000"));
       });
 
+    // Stale Daily preference (no server key) → clear so mic won't show Daily errors.
+    void fetch(`${backendHttpBase()}/api/voice/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((st: { daily_configured?: boolean } | null) => {
+        if (st && !st.daily_configured && loadPreferDaily()) {
+          savePreferDaily(false);
+          setPreferDailyState(false);
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      });
+
     const onConfigChanged = () => setConfigState(loadConfig());
     const onPreferDailyChanged = () => setPreferDailyState(loadPreferDaily());
     window.addEventListener(CONFIG_CHANGED_EVENT, onConfigChanged);
@@ -140,11 +153,11 @@ export function useVoiceSession() {
     }
   }, []);
 
-  const connectDaily = useCallback(async () => {
-    if (connectingDaily.current || dailyConnected) return;
+  const connectDaily = useCallback(async (): Promise<boolean> => {
+    if (connectingDaily.current || dailyConnected) return dailyConnected;
     if (!config.apiKey.trim()) {
       setError("Daily 模式仍需要在 Settings → 模型 中配置 API Key");
-      return;
+      return false;
     }
     connectingDaily.current = true;
     setError(null);
@@ -157,9 +170,11 @@ export function useVoiceSession() {
       setVoiceSessionId(session.sessionId);
       setMode(session.mode);
       if (session.mode !== "daily" || !session.roomUrl || !session.token) {
-        setError(session.detail || "服务端未启用 Daily，已保持浏览器模式");
+        // No Daily key / room — stay on browser STT + Qwen3-TTS. Do not alarm.
+        setPreferDaily(false);
+        setMode("browser");
         setOrb("idle");
-        return;
+        return false;
       }
       const call = await joinDailyRoom(session.roomUrl, session.token);
       dailyRef.current = call;
@@ -169,13 +184,15 @@ export function useVoiceSession() {
         setDailyConnected(false);
         setOrb("idle");
       });
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setOrb("idle");
+      return false;
     } finally {
       connectingDaily.current = false;
     }
-  }, [config, dailyConnected]);
+  }, [config, dailyConnected, setPreferDaily]);
 
   const disconnectDaily = useCallback(async () => {
     await leaveDailyRoom(dailyRef.current);
@@ -236,21 +253,22 @@ export function useVoiceSession() {
           setOrb("speaking");
           try {
             await speakWithQwenTts(reply);
-            setTtsMode("qwen3-tts");
+            setTtsMode("local-tts");
           } catch (ttsErr) {
-            // Fallback to browser speech when DashScope TTS is unavailable.
+            // Fallback when local TTS is unavailable.
             if (support.tts) {
               setTtsMode("browser");
               await speak(reply);
               const msg =
                 ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
               if (
-                msg.includes("DASHSCOPE") ||
-                msg.includes("not set") ||
+                msg.includes("local_tts") ||
+                msg.includes("Cannot reach") ||
+                msg.includes("503") ||
                 msg.includes("tts_not_configured")
               ) {
                 setError(
-                  "Qwen3-TTS 未配置，已降级浏览器朗读。请在根目录 .env 设置 DASHSCOPE_API_KEY 并重启后端",
+                  "本机 TTS 不可用，已降级浏览器朗读。请确认 npm run dev 已启动，或按 doc/LOCAL_TTS.md 配置真模型",
                 );
               } else if (
                 msg.includes("无法连接后端") ||
@@ -294,11 +312,7 @@ export function useVoiceSession() {
     [appendLine, dailyConnected, mode, runAssistant],
   );
 
-  const startListening = useCallback(() => {
-    if (preferDaily || mode === "daily") {
-      void connectDaily();
-      return;
-    }
+  const startBrowserListening = useCallback(() => {
     if (!support.stt) {
       setError("当前浏览器不支持语音识别，请用 Chrome，或改用文字输入");
       return;
@@ -323,7 +337,22 @@ export function useVoiceSession() {
         setOrb("idle");
       },
     );
-  }, [connectDaily, mode, preferDaily, sendText, support.stt]);
+  }, [sendText, support.stt]);
+
+  const startListening = useCallback(() => {
+    if (preferDaily || mode === "daily") {
+      void connectDaily().then((ok) => {
+        if (!ok) startBrowserListening();
+      });
+      return;
+    }
+    startBrowserListening();
+  }, [
+    connectDaily,
+    mode,
+    preferDaily,
+    startBrowserListening,
+  ]);
 
   const stopListening = useCallback(() => {
     if (dailyConnected) {

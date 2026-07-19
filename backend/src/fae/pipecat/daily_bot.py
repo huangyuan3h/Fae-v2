@@ -2,7 +2,7 @@
 
 Pipeline:
   Daily in → Silero VAD / SmartTurn → OpenAI-compatible STT (ASR URL)
-  → LLM (DashScope-compatible) → DashScope TTS → Daily out
+  → LLM (OpenAI-compatible) → Local TTS → Daily out
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ async def run_daily_bot(
     from pipecat.transports.daily.transport import DailyParams, DailyTransport
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-    from fae.pipecat.services.dashscope_tts import DashScopeTTSService
+    from fae.pipecat.services.local_tts_service import LocalTTSService
 
     api_key = llm_api_key or settings.dashscope_api_key
     base_url = llm_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -87,7 +87,14 @@ async def run_daily_bot(
             ),
         ),
     )
-    tts = DashScopeTTSService(api_key=settings.dashscope_api_key or api_key or "")
+    tts = LocalTTSService(
+        base_url=settings.vllm_tts_url,
+        model=settings.tts_model,
+        voice=settings.tts_voice,
+        sample_rate=settings.tts_sample_rate,
+        response_format=settings.tts_response_format,
+        timeout_s=settings.tts_timeout_s,
+    )
 
     context = LLMContext()
     await seed_daily_memory(

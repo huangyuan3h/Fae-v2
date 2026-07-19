@@ -13,8 +13,8 @@
 | Phase 1 | MVP | ✅ 完成 | 浏览器语音对话 + Docker 一键起 |
 | Phase 2 | 记忆深化 | ✅ 完成 | 三层记忆 + 记忆浏览器 UI |
 | Phase 2.6 | Qwen3-TTS 默认播报 | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
-| Phase 3 | Skills 体系 | ✅ 完成 | Markdown skill 自动触发 + 6 内置 + `/skills` |
-| Phase 4 | 主动 Loop | 待开始 | 心跳 + 定时任务 + 主动问候 |
+| Phase 3 | Skills 体系 | ✅ 完成（有已知残留） | Markdown skill 自动触发 + 6 内置 + `/skills` |
+| Phase 4 | 主动 Loop | 🔜 脚手架就绪 | 心跳 + 定时任务 + 主动问候 |
 | Phase 5 | 上限扩展 | 待开始 | MCP / Subagent / 多端 / 第三方 channel |
 
 ### 0.1 现状快照（2026-07-19）
@@ -32,8 +32,7 @@
 **已知缺口（驱动 Phase 2.6）**
 
 - 默认 TTS 是系统朗读，不自然；且曾误以为勾选 Daily = 本地 TTS
-- Daily 路径需要 `DAILY_API_KEY`（WebRTC 房间）+ 云端 `DASHSCOPE_API_KEY`（TTS）——**不是本地 TTS**
-- 架构愿景里的「本地 TTS」尚未接到默认产品路径
+- Daily 仅为可选 WebRTC；TTS **始终**走本机 `VLLM_TTS_URL`（无云端 TTS）
 
 ### 0.2 语音策略修订（相对旧计划）
 
@@ -41,7 +40,7 @@
 |---|---|---|
 | 默认 TTS | 浏览器 `speechSynthesis`；可选 Daily + DashScope | **本地 TTS 服务（OpenAI-compatible HTTP）** |
 | Daily | 增强主路径之一 | **可选 / 降级**：仅在需要 WebRTC 全双工时启用 |
-| DashScope TTS | Pipecat Daily 默认合成 | **可选云端 fallback**；不再作为本地开发前提 |
+| 云端 TTS | Pipecat Daily 默认 DashScope | **已移除**；只保留本机权重 / stub |
 | STT（近期） | 浏览器 Web Speech 可接受 | **先保持浏览器 STT**；本地 ASR（vLLM-Omni）并行可选 |
 | 传输 | Daily WebRTC 或浏览器 | **默认：HTTP/WS 文本 + 本地 TTS 音频回放**（无 Daily Key） |
 
@@ -65,7 +64,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 - [x] 基础设施 / FastAPI / Pipecat 最小管线 / 最小 UI / 部署闭环
 - [x] 浏览器路径：Web Speech STT/TTS + `/ws/chat`
-- [x] Daily 可选路径（云端 TTS）— **Phase 2.6 起不再作为默认推荐**
+- [x] Daily 可选路径（WebRTC）— TTS 已统一为本机服务
 
 ---
 
@@ -86,14 +85,15 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 > 目标：开发者 **零 Daily Key** 即可听到自然、本地合成的中文语音。  
 > 默认路径：`Mic/文字 →（浏览器 STT 可选）→ /ws/chat → 本地 TTS → 浏览器播放`。
 
-### 2.6.1 后端：Qwen3-TTS（无 Daily）— ✅ 进行中/首版
+### 2.6.1 后端：本机 TTS（无 Daily）— ✅
 
-- [x] 配置：`DASHSCOPE_API_KEY` + `TTS_MODEL` / `TTS_VOICE` / `TTS_LANGUAGE` / `TTS_SAMPLE_RATE`
-- [x] `POST /api/tts/speak`：strip think/markdown → Qwen3-TTS → `audio/wav`
+- [x] 配置：`VLLM_TTS_URL` + `TTS_MODEL` / `TTS_VOICE` / `TTS_LANGUAGE` / `TTS_SAMPLE_RATE`
+- [x] `POST /api/tts/speak`：strip think/markdown → 本机 TTS → `audio/wav`
 - [x] `GET /api/tts/status`
-- [x] 单测：`test_tts_api.py`（无 Key 503、WAV 头、speakable）
+- [x] 单测：`test_tts_api.py`（不可达 503、WAV 头、speakable）
+- [x] **已移除** DashScope / 云端 TTS 路径（避免误选）
 
-> **验收**：`.env` 设 `DASHSCOPE_API_KEY` 后  
+> **验收**：`npm run dev`（含 TTS stub）后  
 > `curl -X POST localhost:8000/api/tts/speak -H 'Content-Type: application/json' -d '{"text":"你好"}' --output /tmp/a.wav`
 
 ### 2.6.2 UI：默认播 Qwen3-TTS — ✅ 首版
@@ -105,12 +105,14 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 > **冒烟测试**（M2.6-1）：不设 `DAILY_API_KEY`，文字聊 3 轮听到 Qwen 音色；打断立即停。
 
-### 2.6.3 后续（真·本机模型，可选）
+### 2.6.3 本机 TTS（权重自推理）— ✅ 适配层
 
-- [ ] OpenAI-compatible 本地 TTS URL（`VLLM_TTS_URL`）与 Qwen 云端切换
-- [ ] compose TTS stub / 自托管 Qwen3-TTS
+- [x] `VLLM_TTS_URL` OpenAI-compatible 客户端（唯一 TTS 后端）
+- [x] TTS stub **内嵌** backend（`TTS_EMBED_STUB=true`）；`npm run dev` = backend+UI
+- [x] 云端 TTS 已删除；真模型：`TTS_EMBED_STUB=false` + 外部 URL（`doc/LOCAL_TTS.md`）
 - [ ] 流式首包优化
 - [ ] 同步 `ARCHITECTURE.md` 默认路径说明
+- [ ] 仓库内一键拉起真实 Qwen3-TTS 权重（GPU Dockerfile，后续）
 
 ---
 
@@ -146,6 +148,17 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 > **Phase 3 收尾验收**：stack trace / 旅行 / 写作 三场景可演示。
 
+### 3.5 Phase 3 审计残留（不阻塞 Phase 4）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| Schema / Loader / Matcher / 6 skills / `/skills` UI / REST | ✅ | `test_skills.py` 覆盖主路径 |
+| WS + `/api/chat` skills 注入 | ✅ | lazy 后会重发 `skills` 事件 |
+| `SkillRuntime.activate()` | ✅ | Phase 4 cron / proactive 强制注入 |
+| Daily 路径按轮 match | ⚠ 弱 | seed 用空文本；全双工路径后续对齐 |
+| `max_context_tokens` / `requires_tools` / approval UI | ⚠ 未接 | metadata 预留，非 Phase 4 阻塞 |
+| `proactive_outreach` 剧本 | ✅ | 调度强制加载用 `activate()`，勿赌 LLM `request_skill` |
+
 ---
 
 ## Phase 4 · 主动 Loop
@@ -153,15 +166,29 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 > 目标：心跳、定时任务、主动问候、桌面通知。  
 > 主动触达默认 **通知 + 文字**；若用户在线且本地 TTS 可用，可再播一句短语音（不依赖 Daily）。
 
+### 4.0 开工前置（脚手架）— ✅ 2026-07-19
+
+- [x] `fae/scheduler/`：`activity` / `heartbeat` / `proactive` / `jobs`（规则 + builtin specs）
+- [x] 边界约定：`SleeptimeScheduler`（记忆整理）≠ `fae.scheduler`（主动 Loop）
+- [x] `ActivityTracker` 接入 lifespan `on_persist`（与 sleeptime.touch 并列）
+- [x] `SkillRuntime.activate` / `prepare_activated_request` 供 cron 强制加载 skill
+- [x] `apscheduler` 写入 `pyproject.toml`；`SCHEDULER_ENABLED=false` 默认
+- [x] `.env.example`：heartbeat / outreach / VAPID 占位
+- [x] UI：`AppNav`（含「日程」占位）+ Settings「通知」tab 槽位
+- [x] `api/memory.py` 从 `api/__init__.py` 抽出（为 `api/schedules.py` 腾位置）
+- [ ] `api/schedules.py` + APScheduler 真正 start/stop（4.1）
+- [ ] `/schedules` 页面（4.3）
+
 ### 4.1 APScheduler + Heartbeat
 
-- [ ] 实现 `backend/src/fae/scheduler/heartbeat.py`：每 30s 检查
-- [ ] 实现 `backend/src/fae/scheduler/jobs.py`：注册 job 的统一入口
-- [ ] 实现 `backend/src/fae/scheduler/proactive.py`
-  - [ ] 用户超过 6h 未交互 + 有未回应话题 → 主动发起
-  - [ ] `outreach_cooldown = 12h`，每天最多 1 次主动问候
+- [x] 脚手架 `backend/src/fae/scheduler/heartbeat.py`（`HeartbeatLoop.evaluate/tick`）
+- [x] 脚手架 `backend/src/fae/scheduler/jobs.py`：builtin job specs
+- [x] 脚手架 `backend/src/fae/scheduler/proactive.py`：`should_outreach` 规则
+  - [x] 规则常量：6h idle / 12h cooldown / max 1/day
+  - [ ] 接 lifespan：`SCHEDULER_ENABLED` 时启动 `AsyncIOScheduler`
   - [ ] "待办到期"检测：扫 Episodic Memory
 - [ ] 与 LLM 的桥接：心跳默认走「桌面通知 + 文字」；可选本地 TTS 短播报
+- [ ] 主动触达调用 `skills.activate(["proactive_outreach"], …)` + 投递通知
 
 ### 4.2 内置 cron 任务
 
@@ -226,7 +253,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 ### 5.6 Daily / LiveKit（可选增强）
 
 - [ ] 仅当需要低延迟全双工 WebRTC 时启用
-- [ ] Daily bot 的 TTS 改为调用 **同一套本地 TTS 客户端**（不再默认 DashScope）
+- [x] Daily bot TTS 已接同一套本机 `LocalTTSService`
 
 ---
 
@@ -290,7 +317,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 | 本地 TTS VRAM / 机型不够 | 中 | 高 | stub 保开发；文档写清最低配置；可换小模型 |
 | 本地 TTS 首包慢于云端 | 高 | 中 | 句子级合成 + 可接受延迟；流式后续 |
 | 误把 Daily 当本地 TTS | — | — | **产品文案 + Settings 状态已规划改正（2.6.3/2.6.5）** |
-| DashScope / Daily 授权或网络 | 低 | 低 | 已降为 optional |
+| Daily 授权或网络（可选） | 低 | 低 | 默认不依赖 Daily |
 | Letta API 变动 | 中 | 中 | embedded 模式 + client 抽象 |
 | 主动 loop 误触 | 中 | 中 | cooldown + 勿扰 |
 
@@ -300,21 +327,32 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 - [x] Phase 1 完成
 - [x] Phase 2 完成
-- [x] Phase 2.6 首版（Qwen3-TTS `/api/tts/speak`；真·本机模型后续）
-- [x] Phase 3 完成（M3-1 / M3-2）
-- [ ] **Phase 4 完成** ← **下一主线**
+- [x] Phase 2.6 首版（本地 TTS `/api/tts/speak`；真·本机模型后续）
+- [x] Phase 3 完成（M3-1 / M3-2；见 3.5 残留）
+- [ ] **Phase 4 完成** ← **下一主线**（4.0 脚手架已就绪）
 - [ ] Phase 5 持续推进
 
 ---
 
 ## 近期执行顺序（建议）
 
-1. Phase 4 主动 Loop（heartbeat / schedules / 通知）
-2. Phase 2.6.3+：可选本机 TTS URL / 流式首包
-3. 同步 `ARCHITECTURE.md` 语音与 Skills 默认路径
+1. **Phase 4.1**：`AsyncIOScheduler` 接入 lifespan + `HeartbeatLoop` 真跑
+2. **Phase 4.2–4.3**：builtin cron + `/schedules` UI + `api/schedules.py`
+3. **Phase 4.4**：Web Push / Notification + Settings 通知面板
+4. Phase 2.6.3+：流式首包；补齐 `ARCHITECTURE` 语音默认路径细节
+
+### Phase 4 建议落地顺序（实现时）
+
+```text
+1. api/schedules.py (CRUD stub) + include_router
+2. lifespan: if settings.scheduler_enabled → AsyncIOScheduler + HeartbeatLoop
+3. outreach handler: activate(proactive_outreach) → notify channel
+4. ui/app/schedules + schedules-api.ts
+5. Web Push subscribe + NotificationsPanel
+```
 
 ---
 
-**最后更新**：2026-07-19（Phase 3 Skills 落地）  
-**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)  
+**最后更新**：2026-07-19（Phase 3 审计 + Phase 4 脚手架）  
+**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

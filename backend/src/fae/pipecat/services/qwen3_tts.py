@@ -1,14 +1,16 @@
-"""Qwen3-TTS service (standalone + DashScope).
+"""Local Qwen3-TTS client for TextPipelineBot.
 
-Used by TextPipelineBot. When `api_key` is set, synthesizes via DashScope
-qwen3-tts-flash; otherwise returns short silent PCM for offline tests.
+Calls the OpenAI-compatible local TTS server. When `base_url` is empty,
+returns short silent PCM for offline / unit tests.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
 import struct
+
+from fae.tts.local_client import LocalTTSClient, LocalTTSError
+from fae.tts.wav import wav_to_pcm16_mono
 
 logger = logging.getLogger("fae.pipecat.tts")
 
@@ -16,60 +18,67 @@ logger = logging.getLogger("fae.pipecat.tts")
 class Qwen3TTSService:
     def __init__(
         self,
-        api_key: str = "",
+        *,
+        base_url: str = "",
         sample_rate: int = 24000,
-        model: str = "qwen3-tts-flash",
+        model: str = "qwen3-tts",
         voice: str = "Cherry",
+        response_format: str = "wav",
+        timeout_s: float = 60.0,
+        # Deprecated no-op kept so older call sites / tests do not break.
+        api_key: str = "",
         language_type: str = "Chinese",
     ) -> None:
-        self._api_key = api_key
+        del api_key, language_type
+        self._base_url = (base_url or "").strip()
         self._sample_rate = sample_rate
         self._model = model
         self._voice = voice
-        self._language_type = language_type
+        self._response_format = response_format
+        self._timeout_s = timeout_s
 
     @property
     def configured(self) -> bool:
-        return bool(self._api_key)
+        return bool(self._base_url)
+
+    def _silence(self, text: str) -> bytes:
+        frames = max(1, len(text) * int(self._sample_rate * 0.04))
+        return struct.pack(f"<{frames}h", *([0] * frames))
 
     async def synthesize(
         self, text: str, *, raise_on_error: bool = False
     ) -> bytes:
         if not text.strip():
             return b""
-        if not self._api_key:
+        if not self._base_url:
             if raise_on_error:
-                raise RuntimeError("DashScope API key not configured")
-            frames = max(1, len(text) * int(self._sample_rate * 0.04))
-            return struct.pack(f"<{frames}h", *([0] * frames))
+                raise RuntimeError("Local TTS URL not configured")
+            return self._silence(text)
 
+        client = LocalTTSClient(
+            base_url=self._base_url,
+            model=self._model,
+            voice=self._voice,
+            sample_rate=self._sample_rate,
+            response_format=self._response_format,
+            timeout_s=self._timeout_s,
+        )
         try:
-            import dashscope
-
-            chunks: list[bytes] = []
-            response = dashscope.MultiModalConversation.call(
-                api_key=self._api_key,
-                model=self._model,
-                text=text,
-                voice=self._voice,
-                language_type=self._language_type,
-                stream=True,
-            )
-            for chunk in response:
-                if chunk is None or getattr(chunk, "output", None) is None:
-                    continue
-                audio = chunk.output.audio
-                data_b64 = getattr(audio, "data", None) if audio else None
-                if data_b64:
-                    chunks.append(base64.b64decode(data_b64))
-            pcm = b"".join(chunks)
-            logger.debug("DashScope TTS bytes=%d text=%r", len(pcm), text[:40])
+            audio, _ctype = await client.synthesize(text, voice=self._voice)
+            pcm = wav_to_pcm16_mono(audio)
+            logger.debug("Local TTS bytes=%d text=%r", len(pcm), text[:40])
             if raise_on_error and not pcm:
-                raise RuntimeError("Qwen3-TTS returned empty audio")
+                raise RuntimeError("Local TTS returned empty audio")
             return pcm
+        except LocalTTSError:
+            if raise_on_error:
+                raise
+            logger.exception("Local TTS failed — returning silence")
+            frames = max(1, int(self._sample_rate * 0.1))
+            return struct.pack(f"<{frames}h", *([0] * frames))
         except Exception:
             if raise_on_error:
                 raise
-            logger.exception("DashScope TTS failed — returning silence")
+            logger.exception("Local TTS failed — returning silence")
             frames = max(1, int(self._sample_rate * 0.1))
             return struct.pack(f"<{frames}h", *([0] * frames))

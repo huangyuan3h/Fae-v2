@@ -10,6 +10,8 @@ export type TtsStatus = {
   model: string;
   voice: string;
   hint: string;
+  url?: string | null;
+  sample_rate?: number;
 };
 
 export async function fetchTtsStatus(): Promise<TtsStatus> {

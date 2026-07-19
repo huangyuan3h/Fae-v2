@@ -24,6 +24,8 @@ async def apply_lazy_skill_tool(
     request: ChatRequest,
     activation: SkillActivationInfo,
     skills: SkillRuntime,
+    *,
+    session_id: str = "default",
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
@@ -48,7 +50,9 @@ async def apply_lazy_skill_tool(
         if not name:
             continue
         logger.info("LAZY request_skill name=%s", name)
-        new_req, new_act = skills.load_lazy_into_request(request, name, activation)
+        new_req, new_act = skills.load_lazy_into_request(
+            request, name, activation, session_id=session_id
+        )
         return _strip_tools(new_req), new_act, None
 
     if (probe.content or "").strip():
@@ -61,13 +65,17 @@ async def stream_assistant_turn(
     request: ChatRequest,
     activation: SkillActivationInfo,
     skills: SkillRuntime | None,
+    *,
+    session_id: str = "default",
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after LAZY."""
     act = activation
     req = request
     early: str | None = None
     if skills is not None and act.tools:
-        req, act, early = await apply_lazy_skill_tool(client, req, act, skills)
+        req, act, early = await apply_lazy_skill_tool(
+            client, req, act, skills, session_id=session_id
+        )
         # Emit a zero-width marker token path: caller sees updated activation
         # via the paired activation on each yield.
     if early is not None:

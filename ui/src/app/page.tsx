@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
+import { AppNav } from "@/components/AppNav";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
 import { MicButton } from "@/components/voice/MicButton";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
@@ -59,28 +59,7 @@ export default function HomePage() {
         <p className="mt-2 max-w-md text-sm text-[var(--ink-soft)]">
           说话或打字。浏览器语音识别 + 流式回复 + 语音播报。
         </p>
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-sm">
-          <Link
-            href="/settings"
-            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-          >
-            Settings
-          </Link>
-          <span className="text-black/20">·</span>
-          <Link
-            href="/memory"
-            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-          >
-            记忆
-          </Link>
-          <span className="text-black/20">·</span>
-          <Link
-            href="/skills"
-            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-          >
-            Skills
-          </Link>
-        </div>
+        <AppNav className="mt-4" />
         {activeSkills.length > 0 && (
           <p className="mt-2 text-xs text-[var(--accent)]">
             已加载：{activeSkills.join(", ")}
@@ -92,8 +71,8 @@ export default function HomePage() {
             {sessionId ? ` · ${sessionId.slice(0, 8)}` : ""} · {mode}
             {mode === "daily"
               ? " · Daily"
-              : ttsMode === "qwen3-tts"
-                ? " · Qwen3-TTS"
+              : ttsMode === "local-tts" || ttsMode === "qwen3-tts"
+                ? " · 本机 TTS"
                 : ttsMode === "browser"
                   ? " · 浏览器朗读"
                   : ""}

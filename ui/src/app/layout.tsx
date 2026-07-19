@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Sans, Syne } from "next/font/google";
+
+import { QueryProvider } from "@/providers/QueryProvider";
 import "./globals.css";
 
 const display = Syne({
@@ -35,7 +37,7 @@ export default function RootLayout({
           } as React.CSSProperties
         }
       >
-        {children}
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );

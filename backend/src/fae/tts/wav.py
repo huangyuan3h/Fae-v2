@@ -1,4 +1,4 @@
-"""Wrap raw PCM16 LE mono into a WAV container for browser <audio>."""
+"""Wrap / unwrap PCM16 LE mono WAV for browser <audio> and Pipecat."""
 
 from __future__ import annotations
 
@@ -31,3 +31,23 @@ def pcm16_mono_to_wav(pcm: bytes, sample_rate: int = 24000) -> bytes:
         data_size,
     )
     return header + pcm
+
+
+def wav_to_pcm16_mono(wav: bytes) -> bytes:
+    """Extract PCM payload from a simple RIFF/WAVE; pass through non-WAV bytes."""
+    if not wav:
+        return b""
+    if not wav.startswith(b"RIFF") or len(wav) < 12:
+        return wav
+    offset = 12
+    while offset + 8 <= len(wav):
+        chunk_id = wav[offset : offset + 4]
+        chunk_size = struct.unpack_from("<I", wav, offset + 4)[0]
+        data_start = offset + 8
+        data_end = data_start + chunk_size
+        if chunk_id == b"data":
+            return wav[data_start:data_end]
+        # RIFF chunks are word-aligned
+        offset = data_end + (chunk_size % 2)
+    # Fallback: standard 44-byte PCM header
+    return wav[44:] if len(wav) > 44 else b""

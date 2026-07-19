@@ -5,7 +5,7 @@
 
 ## 文档
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) · [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)
 - [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)
 
 ## Phase 1（完整）· Phase 2.1（记忆 M2-1）
@@ -19,7 +19,7 @@
 | Next.js UI（VoiceOrb / Mic / 文字回退） | ✅ |
 | 浏览器语音（Web Speech + `/ws/chat`） | ✅ 默认 |
 | Daily + Pipecat 全链路（可选） | ✅ 需 `DAILY_API_KEY` |
-| DashScope Qwen3-TTS | ✅ 需 `DASHSCOPE_API_KEY` |
+| 本机 TTS（Qwen3-TTS / CosyVoice / stub） | ✅ `VLLM_TTS_URL`（无云端 TTS） |
 | 长期记忆（Letta remote / embedded SQLite） | ✅ Phase 2.1 · M2-1 |
 | 会话 Recall + Daily 记忆注入 | ✅ Phase 2.2 · M2-2 |
 | 统一 Recall + Archival 压缩 | ✅ Phase 2.3（超 N 轮 → Qdrant/`fae_archival`；`GET /api/memory/stats`） |
@@ -35,11 +35,10 @@ git clone https://github.com/huangyuan3h/Fae-v2.git
 cd Fae-v2
 cp .env.example .env
 # 推荐：.env → LETTA_MODE=embedded
-# TTS / Daily 再填 DASHSCOPE_API_KEY、DAILY_API_KEY
+# 可选：LLM Key（Settings 也可配）；Daily 填 DAILY_API_KEY
 
 # 首次安装依赖
-npm install          # 根目录：concurrently
-npm run setup        # backend (uv) + ui (pnpm)
+npm run setup        # root npm + backend (uv) + ui (pnpm)
 
 # 一条命令同时起 backend(:8000) + UI(:3000)
 npm run dev
@@ -53,8 +52,8 @@ open http://localhost:3000
 ### 演示
 
 1. 打开 http://localhost:3000 → **Settings → 模型**，添加 OpenAI / Ollama 配置并设为当前使用  
-2. 根目录 `.env` 设置 `DASHSCOPE_API_KEY`（**Qwen3-TTS**，不需要 Daily）并重启后端  
-3. **默认路径**：说话或打字 → 流式回复 + **Qwen3-TTS** 播报（失败才降级浏览器朗读）  
+2. `npm run dev` 起 backend + UI；**TTS stub 已内嵌在 backend**（`:8000`）；真模型见 [doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md)  
+3. **默认路径**：说话或打字 → 流式回复 + **本机 TTS**（失败才降级浏览器朗读）  
 4. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily（需 `DAILY_API_KEY`）  
 5. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
 6. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边  
@@ -66,7 +65,8 @@ LLM API Key / Base URL / Model 保存在浏览器 localStorage（Settings），�
 
 | 变量 | 用途 |
 |---|---|
-| `DASHSCOPE_API_KEY` | 服务端 TTS（及未走 UI 配置时的默认 LLM） |
+| `TTS_EMBED_STUB` / `VLLM_TTS_URL` | 默认内嵌 stub；真模型时 `false` + 外部 URL（见 `doc/LOCAL_TTS.md`） |
+| `DASHSCOPE_API_KEY` | 可选，仅 LLM 聊天（与 TTS 无关） |
 | `LETTA_MODE` | `remote`（Compose Letta）/ `embedded`（本地 SQLite）/ `off` |
 | `LETTA_SERVER_URL` | remote 时的 Letta 地址（默认 `http://localhost:8283`） |
 | `LETTA_AGENT_NAME` | 默认 `fae-main` |

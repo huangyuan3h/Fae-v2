@@ -41,22 +41,34 @@ def _runtime(request: Request) -> VoiceRuntime:
 
 @router.get("/status")
 async def voice_status(request: Request) -> dict[str, bool | str]:
-    """Voice path readiness: Qwen3-TTS (default) + optional Daily."""
+    """Voice path readiness: local TTS + optional Daily."""
     settings = request.app.state.settings
     daily = bool((settings.daily_api_key or "").strip())
-    dashscope = bool((settings.dashscope_api_key or "").strip())
+    local_url = settings.vllm_tts_url
+    if settings.tts_embed_stub:
+        local_ok = True
+        hint = f"Embedded TTS stub ready ({local_url})"
+    else:
+        from fae.tts.local_client import LocalTTSClient
+
+        local_ok = await LocalTTSClient(base_url=local_url).health()
+        hint = (
+            f"Local TTS ready ({local_url})"
+            if local_ok
+            else (
+                "Start local TTS server and set VLLM_TTS_URL — doc/LOCAL_TTS.md"
+            )
+        )
     return {
         "daily_configured": daily,
-        "dashscope_tts_configured": dashscope,
-        "qwen_tts_configured": dashscope,
+        "qwen_tts_configured": local_ok,
+        "tts_backend": "local",
+        "tts_embedded": settings.tts_embed_stub,
+        "tts_url": local_url,
         "tts_model": settings.tts_model,
         "tts_voice": settings.tts_voice,
-        "default_path": "qwen3-tts" if dashscope else "browser",
-        "hint": (
-            "Qwen3-TTS ready — home page plays server audio after each reply"
-            if dashscope
-            else "Set DASHSCOPE_API_KEY for Qwen3-TTS; Daily is optional WebRTC only"
-        ),
+        "default_path": "local-tts" if local_ok else "browser",
+        "hint": hint,
     }
 
 

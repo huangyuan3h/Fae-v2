@@ -118,9 +118,25 @@ async def _run_stream(
         )
 
         assistant_parts: list[str] = []
+        last_active = list(activation.active)
         async for token, activation in stream_assistant_turn(
-            client, stream_request, activation, skills
+            client,
+            stream_request,
+            activation,
+            skills,
+            session_id=session_id,
         ):
+            if activation.active != last_active:
+                last_active = list(activation.active)
+                await _send(
+                    ws,
+                    {
+                        "type": "skills",
+                        "active": activation.active,
+                        "lazy_catalog": activation.lazy_catalog,
+                        "scores": activation.scores,
+                    },
+                )
             assistant_parts.append(token)
             await _send(ws, {"type": "token", "content": token})
         if memory is not None and memory.enabled and user_text:
@@ -130,7 +146,13 @@ async def _run_stream(
                 assistant_text="".join(assistant_parts),
             )
         await _send(
-            ws, {"type": "done", "usage": None, "session_id": session_id}
+            ws,
+            {
+                "type": "done",
+                "usage": None,
+                "session_id": session_id,
+                "active_skills": last_active,
+            },
         )
     except LLMError as e:
         await _send(ws, {"type": "error", "code": e.code, "message": e.message})

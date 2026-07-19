@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 
+import { AppNav } from "@/components/AppNav";
 import { ModelsPanel } from "@/components/settings/ModelsPanel";
 import { VoicePanel } from "@/components/settings/VoicePanel";
 
-type Tab = "models" | "voice";
+type Tab = "models" | "voice" | "notifications";
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("models");
@@ -14,12 +14,7 @@ export default function SettingsPage() {
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-4 pb-16 pt-10">
       <header className="mb-6">
-        <Link
-          href="/"
-          className="text-sm text-[var(--ink-soft)] underline-offset-2 hover:underline"
-        >
-          ← FAE
-        </Link>
+        <AppNav className="mb-4 justify-start" />
         <h1
           className="mt-3 text-3xl font-extrabold tracking-tight text-[var(--ink)] md:text-4xl"
           style={{ fontFamily: "var(--font-display)" }}
@@ -36,6 +31,7 @@ export default function SettingsPage() {
           [
             { id: "models" as const, label: "模型" },
             { id: "voice" as const, label: "语音" },
+            { id: "notifications" as const, label: "通知" },
           ] as const
         ).map((item) => {
           const active = tab === item.id;
@@ -55,21 +51,16 @@ export default function SettingsPage() {
             </button>
           );
         })}
-        <Link
-          href="/memory"
-          className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-[var(--ink-soft)]"
-        >
-          记忆 →
-        </Link>
-        <Link
-          href="/skills"
-          className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-[var(--ink-soft)]"
-        >
-          Skills →
-        </Link>
       </nav>
 
-      {tab === "models" ? <ModelsPanel /> : <VoicePanel />}
+      {tab === "models" && <ModelsPanel />}
+      {tab === "voice" && <VoicePanel />}
+      {tab === "notifications" && (
+        <section className="space-y-3 text-sm text-[var(--ink-soft)]">
+          <p>Phase 4：Web Push / 浏览器通知 / 勿扰时段将挂在此处。</p>
+          <p>当前主动 Loop 默认关闭（SCHEDULER_ENABLED=false）。</p>
+        </section>
+      )}
     </main>
   );
 }

@@ -66,7 +66,7 @@ class SkillRuntime:
         root = repo_root or Path(__file__).resolve().parents[4]
         path = state_path or (root / ".data" / "fae-skills-state.json")
         self.state = SkillsStateStore(path)
-        # session_id -> skill_name -> last trigger monotonic time
+        # session_id -> skill_name -> last trigger wall-clock time
         self._cooldown: dict[str, dict[str, float]] = {}
 
     def list_effective(self) -> list[tuple[Skill, SkillMetadata]]:
@@ -274,11 +274,71 @@ class SkillRuntime:
         activation = self.select(text or "", session_id=session_id)
         return self.inject(request, activation), activation
 
+    def activate(
+        self,
+        names: list[str],
+        *,
+        session_id: str = "default",
+        respect_cooldown: bool = True,
+        record_trigger: bool = True,
+    ) -> SkillActivationInfo:
+        """Force-activate skills by name (Phase 4 cron / proactive).
+
+        Ignores ``load_strategy`` so lazy skills (e.g. proactive_outreach)
+        can be injected without waiting for ``request_skill``.
+        """
+        if not self.enabled:
+            return SkillActivationInfo()
+        skills = self._skills_with_meta()
+        by_name = {s.meta.name: s for s in skills}
+        now = time.time()
+        active: list[Skill] = []
+        scores: dict[str, float] = {}
+        for name in names:
+            skill = by_name.get(name)
+            if skill is None or not skill.meta.enabled:
+                continue
+            if skill.meta.requires_approval:
+                continue
+            if respect_cooldown and not self._cooldown_ok(session_id, skill, now):
+                continue
+            if skill not in active:
+                active.append(skill)
+                scores[name] = 1.0
+        final_names = [s.meta.name for s in active]
+        if final_names and record_trigger:
+            self._mark_triggered(session_id, final_names, now)
+        return SkillActivationInfo(
+            active=final_names,
+            lazy_catalog=[],
+            scores=scores,
+            tools=[],
+        )
+
+    def prepare_activated_request(
+        self,
+        request: ChatRequest,
+        names: list[str],
+        *,
+        session_id: str = "default",
+        respect_cooldown: bool = True,
+    ) -> tuple[ChatRequest, SkillActivationInfo]:
+        """Inject force-activated skills into a ChatRequest (Phase 4)."""
+        activation = self.activate(
+            names,
+            session_id=session_id,
+            respect_cooldown=respect_cooldown,
+        )
+        return self.inject(request, activation, include_lazy_catalog=False), activation
+
     def load_lazy_into_request(
         self,
         request: ChatRequest,
         skill_name: str,
         activation: SkillActivationInfo,
+        *,
+        session_id: str = "default",
+        respect_cooldown: bool = True,
     ) -> tuple[ChatRequest, SkillActivationInfo]:
         """Add a lazy skill body and drop tools catalog for the final stream."""
         skill = self.loader.get(skill_name)
@@ -286,6 +346,11 @@ class SkillRuntime:
             return request, activation
         meta = self._effective_meta(skill)
         if not meta.enabled or meta.load_strategy != LoadStrategy.LAZY:
+            return request, activation
+        now = time.time()
+        # Use effective meta so cooldown overlays apply.
+        skill_eff = skill.model_copy(update={"meta": meta})
+        if respect_cooldown and not self._cooldown_ok(session_id, skill_eff, now):
             return request, activation
         new_active = list(activation.active)
         if skill_name not in new_active:
@@ -296,6 +361,7 @@ class SkillRuntime:
             scores={**activation.scores, skill_name: 1.0},
             tools=[],
         )
+        self._mark_triggered(session_id, [skill_name], now)
         # Strip prior skill system messages then re-inject
         messages = [
             m

@@ -40,12 +40,21 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ── Voice / LLM ─────────────────────────────────────────────────────
-    # DashScope — used for Qwen3-TTS (default browser-path playback)
+    # Optional LLM API key (OpenAI-compatible providers, including DashScope chat)
     dashscope_api_key: str = ""
-    tts_model: str = "qwen3-tts-flash"
+    # Local OpenAI-compatible TTS only (Qwen3-TTS / CosyVoice / stub) — no cloud TTS
+    # When True, stub routes mount on this backend (npm run dev needs no extra process).
+    # Set False + point vllm_tts_url at a real GPU/CPU TTS server for natural speech.
+    tts_embed_stub: bool = True
+    # OpenAI-compatible base, with or without trailing /v1
+    # Default matches embedded stub on the FAE backend (:8000).
+    vllm_tts_url: str = "http://127.0.0.1:8000/v1"
+    tts_model: str = "qwen3-tts"
     tts_voice: str = "Cherry"
     tts_language: str = "Chinese"
     tts_sample_rate: int = Field(default=24000, ge=8000)
+    tts_response_format: str = "wav"
+    tts_timeout_s: float = Field(default=60.0, ge=5.0)
 
     # Letta (long-term memory)
     # remote | embedded | off
@@ -99,6 +108,17 @@ class Settings(BaseSettings):
     skills_dir: str = ""  # empty → default next to package src/skills
     skills_state_path: str = ".data/fae-skills-state.json"
     skills_max_active: int = Field(default=2, ge=1, le=10)
+
+    # Proactive scheduler (Phase 4) — off until heartbeat/jobs are wired
+    scheduler_enabled: bool = False
+    heartbeat_seconds: float = Field(default=30.0, ge=5.0)
+    outreach_idle_hours: float = Field(default=6.0, ge=0.5)
+    outreach_cooldown_hours: float = Field(default=12.0, ge=1.0)
+    outreach_max_per_day: int = Field(default=1, ge=0)
+    # Web Push (Phase 4.4) — optional; empty disables push
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:fae@localhost"
 
     # Security
     secret_key: str = "change-me"

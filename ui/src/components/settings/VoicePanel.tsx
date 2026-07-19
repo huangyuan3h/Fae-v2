@@ -9,7 +9,7 @@ import { loadPreferDaily, savePreferDaily } from "@/lib/voice-prefs";
 type VoiceStatus = {
   daily_configured: boolean;
   qwen_tts_configured?: boolean;
-  dashscope_tts_configured: boolean;
+  tts_url?: string;
   tts_model?: string;
   tts_voice?: string;
   hint: string;
@@ -33,18 +33,21 @@ export function VoicePanel() {
       .then(([voice, tts]) => {
         setVoiceStatus(voice);
         setTtsStatus(tts);
+        if (loadPreferDaily() && !voice.daily_configured) {
+          savePreferDaily(false);
+          setPreferDaily(false);
+        }
       })
       .catch((e) =>
         setStatusError(e instanceof Error ? e.message : String(e)),
       );
   }, []);
 
-  const qwenReady =
-    ttsStatus?.configured ??
-    voiceStatus?.qwen_tts_configured ??
-    voiceStatus?.dashscope_tts_configured ??
-    false;
+  const ttsReady =
+    ttsStatus?.configured ?? voiceStatus?.qwen_tts_configured ?? false;
   const dailyReady = voiceStatus?.daily_configured ?? false;
+  const ttsUrl =
+    ttsStatus?.url ?? voiceStatus?.tts_url ?? "http://127.0.0.1:8003/v1";
 
   return (
     <section>
@@ -55,58 +58,55 @@ export function VoicePanel() {
         语音
       </h2>
       <p className="mt-1 text-sm text-[var(--ink-soft)]">
-        默认用服务端 <strong>Qwen3-TTS</strong> 播报（不需要 Daily）。识别仍用浏览器。
+        仅本机 TTS。默认随 <code>npm run dev</code>{" "}
+        内嵌 stub（短提示音）；真模型见 <code>doc/LOCAL_TTS.md</code>
+        。不提供云端语音合成。
       </p>
 
       <div className="mt-4 grid gap-2 border border-black/8 bg-white/50 px-4 py-3 text-sm">
         <p>
-          Qwen3-TTS：{" "}
-          <span style={{ color: qwenReady ? "var(--accent)" : "var(--danger)" }}>
+          本机服务：{" "}
+          <span style={{ color: ttsReady ? "var(--accent)" : "var(--danger)" }}>
             {statusError
-              ? "无法检测（后端未启动？）"
-              : qwenReady
-                ? `已配置 · ${ttsStatus?.model ?? "qwen3-tts-flash"} / ${ttsStatus?.voice ?? "Cherry"}`
-                : "未配置"}
+              ? "无法检测"
+              : ttsReady
+                ? `已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Cherry"}`
+                : "未连接"}
           </span>
         </p>
-        <p>
-          Daily（可选 WebRTC）：{" "}
-          <span style={{ color: dailyReady ? "var(--accent)" : "var(--ink-soft)" }}>
-            {statusError ? "—" : dailyReady ? "已配置" : "未使用"}
-          </span>
-        </p>
-        {!statusError && ttsStatus?.hint && (
+        <p className="text-xs text-[var(--ink-soft)] break-all">URL: {ttsUrl}</p>
+        {ttsStatus?.hint && !statusError && (
           <p className="text-xs text-[var(--ink-soft)]">{ttsStatus.hint}</p>
         )}
       </div>
 
-      <ol className="mt-5 list-decimal space-y-2 pl-5 text-sm text-[var(--ink)]">
-        <li>
-          根目录 <code className="text-xs">.env</code> 设置：
-          <pre className="mt-1 overflow-x-auto border border-black/8 bg-white/60 px-3 py-2 text-xs text-[var(--ink-soft)]">
-            {`DASHSCOPE_API_KEY=sk-...
-# 可选
-# TTS_MODEL=qwen3-tts-flash
-# TTS_VOICE=Cherry`}
-          </pre>
-        </li>
-        <li>
-          重启后端（<code className="text-xs">npm run dev</code>），回首页说话或打字即可听到 Qwen 音色。
-        </li>
-      </ol>
+      {!ttsReady && !statusError && (
+        <div className="mt-4 border border-black/10 bg-white/60 px-4 py-3 text-sm">
+          <p className="font-medium text-[var(--ink)]">启动本机 TTS</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--ink-soft)]">
+            <li>
+              默认：根目录 <code>npm run dev</code>（backend 内嵌 stub）
+            </li>
+            <li>
+              真模型：<code>TTS_EMBED_STUB=false</code>，按{" "}
+              <code>doc/LOCAL_TTS.md</code> 起服务并设置{" "}
+              <code>VLLM_TTS_URL</code>
+            </li>
+            <li>重启 backend 后这里应显示「已连接」</li>
+          </ol>
+        </div>
+      )}
 
       <details className="mt-8 border-t border-black/8 pt-4">
         <summary className="cursor-pointer text-sm text-[var(--ink-soft)]">
           高级：Daily WebRTC（可选）
         </summary>
-        <p className="mt-2 text-xs text-[var(--ink-soft)]">
-          Daily 只负责房间传输；不配也能用 Qwen3-TTS。需要全双工 WebRTC 时再开。
-        </p>
         <label className="mt-4 flex items-start gap-3 text-sm text-[var(--ink)]">
           <input
             type="checkbox"
             className="mt-0.5"
             checked={preferDaily}
+            disabled={!dailyReady}
             onChange={(e) => {
               const v = e.target.checked;
               setPreferDaily(v);
@@ -114,9 +114,9 @@ export function VoicePanel() {
             }}
           />
           <span>
-            优先使用 Daily / Pipecat
+            优先 Daily / Pipecat
             <span className="mt-1 block text-xs text-[var(--ink-soft)]">
-              需 <code>DAILY_API_KEY</code>；未配置会回退浏览器路径 + Qwen3-TTS。
+              {dailyReady ? "已就绪" : "未配置，可忽略"}
             </span>
           </span>
         </label>

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from fae.api import create_app
 from fae.tts.speakable import to_speakable_text
-from fae.tts.wav import pcm16_mono_to_wav
+from fae.tts.wav import pcm16_mono_to_wav, wav_to_pcm16_mono
 
 
 def test_pcm_to_wav_header() -> None:
@@ -17,6 +17,10 @@ def test_pcm_to_wav_header() -> None:
     assert wav[:4] == b"RIFF"
     assert wav[8:12] == b"WAVE"
     assert wav.endswith(pcm)
+    assert wav_to_pcm16_mono(wav) == pcm
+    assert wav_to_pcm16_mono(b"") == b""
+    assert wav_to_pcm16_mono(b"not-riff") == b"not-riff"
+    assert pcm16_mono_to_wav(b"") == b""
 
 
 def test_to_speakable_strips_markdown_and_think() -> None:
@@ -24,8 +28,29 @@ def test_to_speakable_strips_markdown_and_think() -> None:
     assert to_speakable_text(raw) == "标题\n你好世界"
 
 
-def test_speak_requires_dashscope_key(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+def test_speak_embedded_stub(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TTS_EMBED_STUB", "true")
+    from fae import config as config_module
+
+    config_module.get_settings.cache_clear()
+    client = TestClient(create_app())
+    resp = client.post("/api/tts/speak", json={"text": "你好呀"})
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"RIFF"
+    assert resp.headers.get("x-fae-tts-backend") == "local-embedded"
+    # OpenAI-compatible route also mounted
+    assert client.get("/v1/models").status_code == 200
+    speech = client.post(
+        "/v1/audio/speech",
+        json={"input": "hi", "voice": "Cherry", "model": "qwen3-tts"},
+    )
+    assert speech.status_code == 200
+    assert speech.content[:4] == b"RIFF"
+
+
+def test_speak_local_unavailable(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TTS_EMBED_STUB", "false")
+    monkeypatch.setenv("VLLM_TTS_URL", "http://127.0.0.1:59999/v1")
     from fae import config as config_module
 
     config_module.get_settings.cache_clear()
@@ -34,25 +59,26 @@ def test_speak_requires_dashscope_key(monkeypatch) -> None:  # noqa: ANN001
     assert resp.status_code == 503
 
 
-def test_speak_returns_wav(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+def test_speak_local_returns_audio(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TTS_EMBED_STUB", "false")
     from fae import config as config_module
 
     config_module.get_settings.cache_clear()
-    fake_pcm = b"\x00\x00" * 240  # 10ms @ 24kHz
+    wav = pcm16_mono_to_wav(b"\x00\x00" * 240, sample_rate=24000)
     with patch(
-        "fae.api.tts.Qwen3TTSService.synthesize",
-        new=AsyncMock(return_value=fake_pcm),
+        "fae.api.tts.LocalTTSClient.synthesize",
+        new=AsyncMock(return_value=(wav, "audio/wav")),
     ):
         client = TestClient(create_app())
         resp = client.post("/api/tts/speak", json={"text": "你好呀"})
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("audio/wav")
     assert resp.content[:4] == b"RIFF"
+    assert resp.headers.get("x-fae-tts-backend") == "local"
 
 
-def test_tts_status(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+def test_tts_status_embedded(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TTS_EMBED_STUB", "true")
     from fae import config as config_module
 
     config_module.get_settings.cache_clear()
@@ -60,5 +86,24 @@ def test_tts_status(monkeypatch) -> None:  # noqa: ANN001
     resp = client.get("/api/tts/status")
     assert resp.status_code == 200
     body = resp.json()
+    assert body["backend"] == "local"
     assert body["configured"] is True
-    assert body["backend"] == "qwen3-tts"
+    assert body["embedded"] is True
+
+
+def test_tts_status_external(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TTS_EMBED_STUB", "false")
+    from fae import config as config_module
+
+    config_module.get_settings.cache_clear()
+    with patch(
+        "fae.api.tts.LocalTTSClient.health",
+        new=AsyncMock(return_value=True),
+    ):
+        client = TestClient(create_app())
+        resp = client.get("/api/tts/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"] == "local"
+    assert body["configured"] is True
+    assert body["embedded"] is False

@@ -17,17 +17,18 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from fae.api.deps import get_llm_client
+from pathlib import Path
+
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_loader import default_skills_dir
 from fae.agent.skills_runtime import SkillRuntime
+from fae.api.deps import get_llm_client
+from fae.api.memory import router as memory_router
 from fae.api.pipeline import router as pipeline_router
 from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
-from pathlib import Path
-
 from fae.config import REPO_ROOT, Settings, get_settings
 from fae.llm import (
     ChatRequest,
@@ -38,10 +39,9 @@ from fae.llm import (
     OpenAICompatibleProvider,
 )
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
-from fae.memory.core_budget import core_stats_from_client
 from fae.memory.factory import MemoryStack, create_memory_stack
-from fae.memory.schemas import FactIn
 from fae.pipecat.services.letta_memory import LettaMemoryService
+from fae.scheduler import ActivityTracker
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
 
@@ -93,6 +93,8 @@ async def lifespan(app: FastAPI):
         app.state.sleeptime = None
 
     # Skills runtime is created in create_app (available without lifespan).
+    activity: ActivityTracker = getattr(app.state, "activity", None) or ActivityTracker()
+    app.state.activity = activity
 
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
@@ -105,13 +107,19 @@ async def lifespan(app: FastAPI):
             app.state.episodic = stack.episodic
             scheduler = _build_sleeptime(settings, stack)
             app.state.sleeptime = scheduler
+
+            def _on_persist(session_id: str) -> None:
+                activity.touch(session_id)
+                if scheduler is not None:
+                    scheduler.touch(session_id)
+
             if stack.client is not None:
                 app.state.memory = LettaMemoryService(
                     stack.client,
                     archival=stack.archival,
                     compactor=stack.compactor,
                     episodic=stack.episodic,
-                    on_persist=scheduler.touch if scheduler else None,
+                    on_persist=_on_persist,
                 )
                 app.state.memory_client = stack.client
             else:
@@ -133,6 +141,9 @@ async def lifespan(app: FastAPI):
             app.state.archival = None
             app.state.episodic = None
             app.state.sleeptime = None
+
+    # Phase 4 proactive loop: wire when SCHEDULER_ENABLED=true (scaffold only).
+    app.state.proactive = getattr(app.state, "proactive", None)
 
     yield
 
@@ -206,7 +217,9 @@ def create_app(
       app.state.recall_store   — RecallStore | None
       app.state.archival       — ArchivalBackend | None
       app.state.episodic       — EpisodicStore | None
-      app.state.sleeptime      — SleeptimeScheduler | None
+      app.state.sleeptime      — SleeptimeScheduler | None (memory consolidation)
+      app.state.activity       — ActivityTracker (shared last-interaction clock)
+      app.state.proactive      — Phase 4 ProactiveLoop | None
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -227,6 +240,8 @@ def create_app(
     app.state.archival = None
     app.state.episodic = None
     app.state.sleeptime = None
+    app.state.activity = ActivityTracker()
+    app.state.proactive = None
     skills_dir = (
         Path(settings.skills_dir) if settings.skills_dir else default_skills_dir()
     )
@@ -335,7 +350,11 @@ def create_app(
             early: str | None = None
             if isinstance(skills_rt, SkillRuntime) and activation.tools:
                 prepared, activation, early = await apply_lazy_skill_tool(
-                    client, prepared, activation, skills_rt
+                    client,
+                    prepared,
+                    activation,
+                    skills_rt,
+                    session_id=session_id,
                 )
             if early is not None:
                 response = ChatResponse(
@@ -385,289 +404,6 @@ def create_app(
             id=session.id, created_at=session.created_at, mode=session.mode
         )
 
-    @app.get("/api/memory/stats")
-    async def memory_stats(request: Request) -> dict:
-        """Core block sizes, hot recall count, and archival health."""
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        client = memory.client if memory else None
-        recall = getattr(request.app.state, "recall_store", None)
-        archival = getattr(request.app.state, "archival", None)
-        core = await core_stats_from_client(client)
-        archival_status = "off"
-        if archival is not None:
-            try:
-                archival_status = await archival.health()
-            except Exception:  # noqa: BLE001
-                archival_status = "down"
-        episodic = getattr(request.app.state, "episodic", None)
-        return {
-            "recall_turns": recall.total_hot() if recall is not None else 0,
-            "core": core,
-            "archival": archival_status,
-            "events": episodic.count() if episodic is not None else 0,
-            "sleeptime": (
-                "on"
-                if getattr(request.app.state, "sleeptime", None) is not None
-                else "off"
-            ),
-        }
-
-    @app.get("/api/memory/events")
-    async def memory_events(
-        request: Request,
-        session_id: str | None = None,
-        limit: int = 50,
-        q: str | None = None,
-    ) -> dict:
-        """List episodic life events (optional session / text filter)."""
-        episodic = getattr(request.app.state, "episodic", None)
-        if episodic is None:
-            raise HTTPException(status_code=503, detail="episodic memory unavailable")
-        events = episodic.list_events(
-            session_id=session_id, limit=limit, query=q
-        )
-        return {
-            "events": [
-                {
-                    "id": e.id,
-                    "session_id": e.session_id,
-                    "kind": e.kind,
-                    "summary": e.summary,
-                    "raw_text": e.raw_text,
-                    "created_at": e.created_at.isoformat() if e.created_at else None,
-                    "links": [
-                        {
-                            "event_id": lk.event_id,
-                            "target_kind": lk.target_kind,
-                            "target_id": lk.target_id,
-                        }
-                        for lk in e.links
-                    ],
-                }
-                for e in events
-            ]
-        }
-
-    @app.get("/api/memory/facts")
-    async def memory_list_facts(
-        request: Request,
-        limit: int = 50,
-        q: str | None = None,
-    ) -> dict:
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        facts = await memory.client.list_facts(limit=limit, query=q)
-        return {
-            "facts": [
-                {
-                    "id": f.id,
-                    "content": f.content,
-                    "tags": f.tags,
-                    "session_id": f.session_id,
-                    "created_at": f.created_at.isoformat() if f.created_at else None,
-                }
-                for f in facts
-            ]
-        }
-
-    @app.post("/api/memory/facts")
-    async def memory_create_fact(body: FactIn, request: Request) -> dict:
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        fact = await memory.client.save_fact(body)
-        return {
-            "id": fact.id,
-            "content": fact.content,
-            "tags": fact.tags,
-            "session_id": fact.session_id,
-            "created_at": fact.created_at.isoformat() if fact.created_at else None,
-        }
-
-    @app.patch("/api/memory/facts/{fact_id}")
-    async def memory_update_fact(
-        fact_id: str, body: FactIn, request: Request
-    ) -> dict:
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        try:
-            fact = await memory.client.update_fact(fact_id, body)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail="fact not found") from e
-        return {
-            "id": fact.id,
-            "content": fact.content,
-            "tags": fact.tags,
-            "session_id": fact.session_id,
-            "created_at": fact.created_at.isoformat() if fact.created_at else None,
-        }
-
-    @app.delete("/api/memory/facts/{fact_id}")
-    async def memory_delete_fact(fact_id: str, request: Request) -> dict:
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        ok = await memory.client.delete_fact(fact_id)
-        if not ok:
-            raise HTTPException(status_code=404, detail="fact not found")
-        return {"ok": True, "id": fact_id}
-
-    @app.get("/api/memory/search")
-    async def memory_search(
-        request: Request,
-        q: str,
-        top_k: int = 10,
-        session_id: str | None = None,
-    ) -> dict:
-        """Unified search across facts, archival, and episodic events."""
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        query = (q or "").strip()
-        if not query:
-            raise HTTPException(status_code=400, detail="q is required")
-        facts = await memory.client.search(query, top_k=top_k)
-        sid_filter = (session_id or "").strip() or None
-        if sid_filter:
-            facts = [
-                f
-                for f in facts
-                if not f.session_id or f.session_id == sid_filter
-            ]
-        archival_hits = []
-        if memory.archival is not None:
-            archival_hits = await memory.archival.search(
-                query, top_k=top_k, session_id=session_id
-            )
-        events = []
-        episodic = getattr(request.app.state, "episodic", None)
-        if episodic is not None:
-            events = episodic.list_events(
-                session_id=session_id, limit=top_k, query=query
-            )
-        return {
-            "query": query,
-            "facts": [
-                {
-                    "id": f.id,
-                    "content": f.content,
-                    "tags": f.tags,
-                    "source": "fact",
-                }
-                for f in facts
-            ],
-            "archival": [
-                {
-                    "id": f.id,
-                    "content": f.content,
-                    "tags": f.tags,
-                    "source": "archival",
-                }
-                for f in archival_hits
-            ],
-            "events": [
-                {
-                    "id": e.id,
-                    "content": e.summary,
-                    "kind": e.kind,
-                    "source": "event",
-                    "created_at": e.created_at.isoformat() if e.created_at else None,
-                }
-                for e in events
-            ],
-        }
-
-    @app.get("/api/memory/timeline")
-    async def memory_timeline(
-        request: Request,
-        limit: int = 40,
-        session_id: str | None = None,
-    ) -> dict:
-        """Merged timeline points for the memory browser chart."""
-        memory: LettaMemoryService | None = getattr(
-            request.app.state, "memory", None
-        )
-        if memory is None or memory.client is None:
-            raise HTTPException(status_code=503, detail="memory unavailable")
-        points: list[dict] = []
-        facts = await memory.client.list_facts(limit=limit)
-        sid_filter = (session_id or "").strip() or None
-        for f in facts:
-            if sid_filter and f.session_id and f.session_id != sid_filter:
-                continue
-            points.append(
-                {
-                    "id": f.id,
-                    "kind": "fact",
-                    "label": f.content[:80],
-                    "at": f.created_at.isoformat() if f.created_at else None,
-                    "tags": f.tags,
-                }
-            )
-        episodic = getattr(request.app.state, "episodic", None)
-        if episodic is not None:
-            for e in episodic.list_events(session_id=session_id, limit=limit):
-                points.append(
-                    {
-                        "id": e.id,
-                        "kind": "event",
-                        "label": e.summary[:80],
-                        "at": e.created_at.isoformat() if e.created_at else None,
-                        "tags": [e.kind],
-                    }
-                )
-        points.sort(key=lambda p: p.get("at") or "", reverse=True)
-        return {"points": points[:limit]}
-
-    @app.post("/api/memory/consolidate")
-    async def memory_consolidate(
-        request: Request,
-        session_id: str = "default",
-    ) -> dict:
-        """Trigger sleeptime consolidation for a session (smoke / ops)."""
-        scheduler = getattr(request.app.state, "sleeptime", None)
-        if not isinstance(scheduler, SleeptimeScheduler):
-            # Allow on-demand consolidate even if background scheduler is off.
-            stack: MemoryStack = getattr(
-                request.app.state, "memory_stack", MemoryStack()
-            )
-            if stack.client is None or stack.recall is None:
-                raise HTTPException(status_code=503, detail="memory unavailable")
-            consolidator = MemoryConsolidator(
-                stack.client,
-                stack.recall,
-                archival=stack.archival,
-                compactor=stack.compactor,
-                current_char_limit=request.app.state.settings.core_current_char_limit,
-                max_runtime_s=request.app.state.settings.sleeptime_max_runtime_s,
-            )
-            result = await consolidator.consolidate(session_id)
-        else:
-            result = await scheduler.consolidate_now(session_id)
-        return {
-            "session_id": result.session_id,
-            "summarized_turns": result.summarized_turns,
-            "facts_saved": result.facts_saved,
-            "current_updated": result.current_updated,
-            "compacted": result.compacted,
-            "skipped": result.skipped,
-            "elapsed_s": round(result.elapsed_s, 3),
-        }
-
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
 
@@ -677,8 +413,19 @@ def create_app(
     # ── Phase 1.4: voice session bootstrap ─────────────────────────────
     app.include_router(voice_router)
 
-    # ── Qwen3-TTS (no Daily required) ──────────────────────────────────
+    # ── Local TTS ──────────────────────────────────────────────────────
     app.include_router(tts_router)
+    if settings.tts_embed_stub:
+        from fae.tts.stub_server import mount_stub_routes
+
+        mount_stub_routes(app)
+        logger.info(
+            "Embedded TTS stub at /v1/audio/speech (set TTS_EMBED_STUB=false "
+            "for a real local TTS server)"
+        )
+
+    # ── Phase 2: Memory browser ────────────────────────────────────────
+    app.include_router(memory_router)
 
     # ── Phase 3: Skills ────────────────────────────────────────────────
     app.include_router(skills_router)

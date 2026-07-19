@@ -1,4 +1,4 @@
-"""HTTP TTS surface — Qwen3-TTS (DashScope) without Daily."""
+"""HTTP TTS surface — local OpenAI-compatible only (no cloud TTS)."""
 
 from __future__ import annotations
 
@@ -10,15 +10,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from fae.config import Settings
-from fae.pipecat.services.qwen3_tts import Qwen3TTSService
+from fae.tts.local_client import LocalTTSClient, LocalTTSError
 from fae.tts.speakable import to_speakable_text
-from fae.tts.wav import pcm16_mono_to_wav
+from fae.tts.stub_server import synthesize_wav
 
 logger = logging.getLogger("fae.tts")
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
-# DashScope flash models are happier with shorter utterances.
 _MAX_CHARS = 2000
 
 
@@ -31,19 +30,52 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def _local_client(settings: Settings) -> LocalTTSClient:
+    return LocalTTSClient(
+        base_url=settings.vllm_tts_url,
+        model=settings.tts_model,
+        voice=settings.tts_voice,
+        sample_rate=settings.tts_sample_rate,
+        response_format=settings.tts_response_format,
+        timeout_s=settings.tts_timeout_s,
+    )
+
+
 @router.get("/status")
 async def tts_status(settings: Annotated[Settings, Depends(_settings)]) -> dict:
-    configured = bool((settings.dashscope_api_key or "").strip())
+    if settings.tts_embed_stub:
+        return {
+            "backend": "local",
+            "configured": True,
+            "embedded": True,
+            "model": settings.tts_model,
+            "voice": settings.tts_voice,
+            "sample_rate": settings.tts_sample_rate,
+            "url": settings.vllm_tts_url,
+            "hint": (
+                "Embedded TTS stub on this backend (tone only). "
+                "For natural speech set TTS_EMBED_STUB=false and point "
+                "VLLM_TTS_URL at a real Qwen3-TTS / CosyVoice server — "
+                "doc/LOCAL_TTS.md"
+            ),
+        }
+
+    client = _local_client(settings)
+    reachable = await client.health()
     return {
-        "backend": "qwen3-tts",
-        "configured": configured,
+        "backend": "local",
+        "configured": reachable,
+        "embedded": False,
         "model": settings.tts_model,
         "voice": settings.tts_voice,
         "sample_rate": settings.tts_sample_rate,
+        "url": settings.vllm_tts_url,
         "hint": (
-            "Qwen3-TTS ready"
-            if configured
-            else "Set DASHSCOPE_API_KEY in root .env and restart backend"
+            f"Local TTS ready at {settings.vllm_tts_url}"
+            if reachable
+            else (
+                f"Start local TTS at {settings.vllm_tts_url} — see doc/LOCAL_TTS.md"
+            )
         ),
     }
 
@@ -53,17 +85,7 @@ async def speak(
     body: SpeakRequest,
     settings: Annotated[Settings, Depends(_settings)],
 ) -> Response:
-    """Synthesize speakable text with Qwen3-TTS; return audio/wav."""
-    api_key = (settings.dashscope_api_key or "").strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "tts_not_configured",
-                "message": "DASHSCOPE_API_KEY not set",
-            },
-        )
-
+    """Synthesize speakable text; return audio for the browser player."""
     plain = to_speakable_text(body.text)
     if not plain:
         raise HTTPException(
@@ -74,34 +96,43 @@ async def speak(
         plain = plain[:_MAX_CHARS].rstrip() + "…"
 
     voice = (body.voice or settings.tts_voice or "Cherry").strip()
-    tts = Qwen3TTSService(
-        api_key=api_key,
-        sample_rate=settings.tts_sample_rate,
-        model=settings.tts_model,
-        voice=voice,
-        language_type=settings.tts_language,
-    )
+
+    if settings.tts_embed_stub:
+        audio = synthesize_wav(plain, sample_rate=settings.tts_sample_rate)
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={
+                "X-FAE-TTS-Backend": "local-embedded",
+                "X-FAE-TTS-Voice": voice,
+                "Cache-Control": "no-store",
+            },
+        )
+
+    client = _local_client(settings)
     try:
-        pcm = await tts.synthesize(plain, raise_on_error=True)
+        audio, media_type = await client.synthesize(plain, voice=voice)
+    except LocalTTSError as e:
+        logger.warning("Local TTS failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "local_tts_unavailable",
+                "message": str(e),
+            },
+        ) from e
     except Exception as e:  # noqa: BLE001
-        logger.exception("Qwen3-TTS failed")
+        logger.exception("Local TTS failed")
         raise HTTPException(
             status_code=502,
             detail={"code": "tts_failed", "message": str(e)},
         ) from e
 
-    if not pcm:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "tts_empty", "message": "TTS returned no audio"},
-        )
-
-    wav = pcm16_mono_to_wav(pcm, sample_rate=settings.tts_sample_rate)
     return Response(
-        content=wav,
-        media_type="audio/wav",
+        content=audio,
+        media_type=media_type or "audio/wav",
         headers={
-            "X-FAE-TTS-Backend": "qwen3-tts",
+            "X-FAE-TTS-Backend": "local",
             "X-FAE-TTS-Voice": voice,
             "Cache-Control": "no-store",
         },
