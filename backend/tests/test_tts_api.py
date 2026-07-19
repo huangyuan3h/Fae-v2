@@ -89,6 +89,7 @@ def test_tts_status_embedded(monkeypatch) -> None:  # noqa: ANN001
     assert body["backend"] == "local"
     assert body["configured"] is True
     assert body["embedded"] is True
+    assert body["natural_speech"] is False
 
 
 def test_tts_status_external(monkeypatch) -> None:  # noqa: ANN001

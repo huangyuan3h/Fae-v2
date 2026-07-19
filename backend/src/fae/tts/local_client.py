@@ -46,23 +46,32 @@ class LocalTTSClient:
             return f"{base}/audio/speech"
         return f"{base}/v1/audio/speech"
 
+    @property
+    def models_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/models"
+        return f"{self.base_url}/v1/models"
+
     async def health(self) -> bool:
-        candidates = [
-            self.base_url if self.base_url.endswith("/health") else None,
-            f"{self.base_url.rstrip('/v1').rstrip('/')}/health",
-            f"{self.base_url}/models" if self.base_url.endswith("/v1") else f"{self.base_url}/v1/models",
-        ]
+        """Return True only if an OpenAI-compatible TTS surface is present.
+
+        Do not treat a generic app `/health` (e.g. FAE backend) as TTS readiness.
+        """
         async with httpx.AsyncClient(timeout=3.0) as client:
-            for url in candidates:
-                if not url:
-                    continue
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code < 500:
-                        return True
-                except httpx.HTTPError:
-                    continue
-        return False
+            try:
+                resp = await client.get(self.models_url)
+            except httpx.HTTPError:
+                return False
+            if resp.status_code >= 400:
+                return False
+            try:
+                body = resp.json()
+            except ValueError:
+                return False
+            # OpenAI list: {"object":"list","data":[...]} or at least a data array
+            if isinstance(body, dict) and isinstance(body.get("data"), list):
+                return True
+            return False
 
     async def synthesize(
         self, text: str, *, voice: str | None = None

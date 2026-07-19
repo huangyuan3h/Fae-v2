@@ -34,7 +34,10 @@ async def test_local_client_against_stub(monkeypatch: pytest.MonkeyPatch) -> Non
         return Response(200, content=wav, headers={"content-type": "audio/wav"})
 
     async def fake_get(self, url, **kwargs):  # noqa: ANN001, ARG001
-        return Response(200, json={"status": "ok"})
+        assert str(url).endswith("/models")
+        return Response(
+            200, json={"object": "list", "data": [{"id": "qwen3-tts"}]}
+        )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -42,6 +45,22 @@ async def test_local_client_against_stub(monkeypatch: pytest.MonkeyPatch) -> Non
     data, ctype = await client.synthesize("hello", voice="Cherry")
     assert ctype.startswith("audio/")
     assert data[:4] == b"RIFF"
+
+
+@pytest.mark.asyncio
+async def test_local_client_health_ignores_generic_app_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FAE /health must not count as a TTS server."""
+    client = LocalTTSClient(base_url="http://127.0.0.1:8000/v1")
+
+    async def fake_get(self, url, **kwargs):  # noqa: ANN001, ARG001
+        if str(url).endswith("/models"):
+            return Response(404, json={"detail": "Not Found"})
+        return Response(200, json={"status": "ok"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    assert await client.health() is False
 
 
 @pytest.mark.asyncio

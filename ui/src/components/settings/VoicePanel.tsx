@@ -43,11 +43,13 @@ export function VoicePanel() {
       );
   }, []);
 
+  const stubOnly = Boolean(ttsStatus?.embedded);
   const ttsReady =
     ttsStatus?.configured ?? voiceStatus?.qwen_tts_configured ?? false;
+  const naturalReady = Boolean(ttsStatus?.natural_speech) && ttsReady && !stubOnly;
   const dailyReady = voiceStatus?.daily_configured ?? false;
   const ttsUrl =
-    ttsStatus?.url ?? voiceStatus?.tts_url ?? "http://127.0.0.1:8003/v1";
+    ttsStatus?.url ?? voiceStatus?.tts_url ?? "http://127.0.0.1:8000/v1";
 
   return (
     <section>
@@ -58,20 +60,32 @@ export function VoicePanel() {
         语音
       </h2>
       <p className="mt-1 text-sm text-[var(--ink-soft)]">
-        仅本机 TTS。默认随 <code>npm run dev</code>{" "}
-        内嵌 stub（短提示音）；真模型见 <code>doc/LOCAL_TTS.md</code>
-        。不提供云端语音合成。
+        默认开发 stub 不会读字（只会哔一声）；聊天会改用浏览器朗读。
+        要听自然本地语音，需加载本机 Qwen3-TTS / CosyVoice 权重（见{" "}
+        <code>doc/LOCAL_TTS.md</code>）。
       </p>
 
       <div className="mt-4 grid gap-2 border border-black/8 bg-white/50 px-4 py-3 text-sm">
         <p>
-          本机服务：{" "}
-          <span style={{ color: ttsReady ? "var(--accent)" : "var(--danger)" }}>
+          当前：{" "}
+          <span
+            style={{
+              color: statusError
+                ? "var(--danger)"
+                : naturalReady
+                  ? "var(--accent)"
+                  : stubOnly
+                    ? "var(--ink-soft)"
+                    : "var(--danger)",
+            }}
+          >
             {statusError
               ? "无法检测"
-              : ttsReady
-                ? `已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Cherry"}`
-                : "未连接"}
+              : naturalReady
+                ? `真模型已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Cherry"}`
+                : stubOnly
+                  ? "内嵌 stub · 提示音（聊天用浏览器读字）"
+                  : "未连接"}
           </span>
         </p>
         <p className="text-xs text-[var(--ink-soft)] break-all">URL: {ttsUrl}</p>
@@ -80,20 +94,29 @@ export function VoicePanel() {
         )}
       </div>
 
+      {stubOnly && !statusError && (
+        <div className="mt-4 border border-black/10 bg-white/60 px-4 py-3 text-sm">
+          <p className="font-medium text-[var(--ink)]">如何听到自然语音</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--ink-soft)]">
+            <li>
+              按 <code>doc/LOCAL_TTS.md</code> 本机启动 Qwen3-TTS / CosyVoice
+            </li>
+            <li>
+              <code>.env</code>：<code>TTS_EMBED_STUB=false</code>，
+              <code>VLLM_TTS_URL</code> 指向该服务
+            </li>
+            <li>重启 <code>npm run dev</code>，这里应显示「真模型已连接」</li>
+          </ol>
+        </div>
+      )}
+
       {!ttsReady && !statusError && (
         <div className="mt-4 border border-black/10 bg-white/60 px-4 py-3 text-sm">
           <p className="font-medium text-[var(--ink)]">启动本机 TTS</p>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--ink-soft)]">
-            <li>
-              默认：根目录 <code>npm run dev</code>（backend 内嵌 stub）
-            </li>
-            <li>
-              真模型：<code>TTS_EMBED_STUB=false</code>，按{" "}
-              <code>doc/LOCAL_TTS.md</code> 起服务并设置{" "}
-              <code>VLLM_TTS_URL</code>
-            </li>
-            <li>重启 backend 后这里应显示「已连接」</li>
-          </ol>
+          <p className="mt-2 text-xs text-[var(--ink-soft)]">
+            先 <code>npm run dev</code>；或按 <code>doc/LOCAL_TTS.md</code>{" "}
+            配置外部模型服务。
+          </p>
         </div>
       )}
 

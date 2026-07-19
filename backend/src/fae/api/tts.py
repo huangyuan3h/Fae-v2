@@ -48,14 +48,14 @@ async def tts_status(settings: Annotated[Settings, Depends(_settings)]) -> dict:
             "backend": "local",
             "configured": True,
             "embedded": True,
+            "natural_speech": False,
             "model": settings.tts_model,
             "voice": settings.tts_voice,
             "sample_rate": settings.tts_sample_rate,
             "url": settings.vllm_tts_url,
             "hint": (
-                "Embedded TTS stub on this backend (tone only). "
-                "For natural speech set TTS_EMBED_STUB=false and point "
-                "VLLM_TTS_URL at a real Qwen3-TTS / CosyVoice server — "
+                "Stub only (beep). UI uses browser speech for words. "
+                "For natural local TTS: TTS_EMBED_STUB=false + real server — "
                 "doc/LOCAL_TTS.md"
             ),
         }
@@ -66,6 +66,7 @@ async def tts_status(settings: Annotated[Settings, Depends(_settings)]) -> dict:
         "backend": "local",
         "configured": reachable,
         "embedded": False,
+        "natural_speech": reachable,
         "model": settings.tts_model,
         "voice": settings.tts_voice,
         "sample_rate": settings.tts_sample_rate,

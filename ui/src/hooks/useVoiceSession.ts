@@ -17,10 +17,9 @@ import {
 } from "@/lib/models";
 import { formatNetworkError } from "@/lib/network-error";
 import { createVoiceSession } from "@/lib/pipecat-client";
-import { speakWithQwenTts } from "@/lib/qwen-tts";
+import { speakAssistant } from "@/lib/qwen-tts";
 import {
   BrowserSTT,
-  speak,
   speechSupported,
   stopSpeaking,
 } from "@/lib/speech";
@@ -252,33 +251,19 @@ export function useVoiceSession() {
         if (reply) {
           setOrb("speaking");
           try {
-            await speakWithQwenTts(reply);
-            setTtsMode("local-tts");
-          } catch (ttsErr) {
-            // Fallback when local TTS is unavailable.
-            if (support.tts) {
-              setTtsMode("browser");
-              await speak(reply);
-              const msg =
-                ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
-              if (
-                msg.includes("local_tts") ||
-                msg.includes("Cannot reach") ||
-                msg.includes("503") ||
-                msg.includes("tts_not_configured")
-              ) {
-                setError(
-                  "本机 TTS 不可用，已降级浏览器朗读。请确认 npm run dev 已启动，或按 doc/LOCAL_TTS.md 配置真模型",
-                );
-              } else if (
-                msg.includes("无法连接后端") ||
-                msg.includes("Failed to fetch")
-              ) {
-                setError(formatNetworkError(ttsErr, "/api/tts/speak"));
-              }
-            } else {
-              throw ttsErr;
+            const result = await speakAssistant(reply);
+            setTtsMode(result.mode);
+            if (
+              result.mode === "browser" &&
+              result.fallbackReason &&
+              result.fallbackReason !== "embedded_stub"
+            ) {
+              setError(
+                "本机 TTS 不可用，已用浏览器朗读。请启动真模型服务，或将 TTS_EMBED_STUB=true（开发 stub）。见 doc/LOCAL_TTS.md",
+              );
             }
+          } catch (ttsErr) {
+            setError(formatNetworkError(ttsErr, "/api/tts/speak"));
           }
         }
         setOrb("idle");
