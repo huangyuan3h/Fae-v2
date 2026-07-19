@@ -11,6 +11,7 @@ import {
   putNotificationPrefs,
   registerPushSubscription,
 } from "@/lib/notifications-api";
+import { getSchedulerStatus } from "@/lib/schedules-api";
 
 export function NotificationsPanel() {
   const qc = useQueryClient();
@@ -21,6 +22,12 @@ export function NotificationsPanel() {
   const inboxQ = useQuery({
     queryKey: ["notifications"],
     queryFn: () => listNotifications(false),
+  });
+  const loopQ = useQuery({
+    queryKey: ["scheduler-status"],
+    queryFn: getSchedulerStatus,
+    refetchInterval: 15_000,
+    retry: false,
   });
   const [status, setStatus] = useState<string | null>(null);
   const [quietStart, setQuietStart] = useState("");
@@ -71,8 +78,45 @@ export function NotificationsPanel() {
     });
   };
 
+  const loop = loopQ.data;
+  const idleMin =
+    loop?.idle_seconds != null ? Math.floor(loop.idle_seconds / 60) : null;
+  const nextMin =
+    loop?.next_eligible_in_seconds != null
+      ? Math.ceil(loop.next_eligible_in_seconds / 60)
+      : null;
+
   return (
     <div className="space-y-8">
+      <section className="space-y-2 rounded-xl border border-black/10 bg-white/50 px-3 py-3 text-xs text-[var(--ink-soft)]">
+        <h2 className="text-sm font-semibold text-[var(--ink)]">主动 Loop 状态</h2>
+        {loopQ.isLoading && <p>加载中…</p>}
+        {loop && (
+          <ul className="space-y-1">
+            <li>
+              调度器：{loop.scheduler_enabled ? "运行中" : "未启用"} · 主动生成：
+              {loop.proactive_enabled ? "开" : "关"} · LLM：
+              {loop.proactive_llm_ready ? "已配置" : "未配置 Key"}
+            </li>
+            <li>
+              空闲：{idleMin != null ? `${idleMin} 分钟` : "尚无活动记录"}
+              {nextMin != null && nextMin > 0
+                ? ` · 约 ${nextMin} 分钟后可问候（阈值 ${loop.outreach_idle_hours}h）`
+                : idleMin != null
+                  ? " · 已达 idle 门槛（仍受 cooldown / 资格限制）"
+                  : ""}
+            </li>
+            <li>
+              今日 outreach：{loop.outreach_count_today}
+              {loop.last_outreach_at
+                ? ` · 上次 ${new Date(loop.last_outreach_at * 1000).toLocaleString()}`
+                : ""}
+            </li>
+            <li>未读收件箱：{loop.unread_inbox}</li>
+          </ul>
+        )}
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-[var(--ink)]">通知开关</h2>
         {!prefs && prefsQ.isLoading && (

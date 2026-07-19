@@ -72,6 +72,8 @@ export function useVoiceSession() {
   // Browser path always uses local TTS when available; do not wait for first enqueue.
   const [ttsMode, setTtsMode] = useState<TtsMode>("local-tts");
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const [skillScores, setSkillScores] = useState<Record<string, number>>({});
+  const [lastVoiceDebug, setLastVoiceDebug] = useState<string | null>(null);
   const [preferDaily, setPreferDailyState] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support, setSupport] = useState({ stt: false, tts: false });
@@ -355,6 +357,15 @@ export function useVoiceSession() {
       m.sttFinalAt != null && m.ttsFirstPlayAt != null
         ? Math.round(m.ttsFirstPlayAt - m.sttFinalAt)
         : null;
+    const summary = [
+      sttMs != null ? `stt=${sttMs}ms` : null,
+      llmTtftMs != null ? `llm_ttft=${llmTtftMs}ms` : null,
+      ttsFirstPlayMs != null ? `tts_play=${ttsFirstPlayMs}ms` : null,
+      e2eMs != null ? `e2e=${e2eMs}ms` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (summary) setLastVoiceDebug(summary);
     console.debug("[fae.voice]", {
       turn_id: m.turnId,
       stt_ms: sttMs,
@@ -438,11 +449,15 @@ export function useVoiceSession() {
 
       try {
         setActiveSkills([]);
+        setSkillScores({});
         await wsRef.current.chat(
           userText,
           config,
           {
-            onSkills: (names) => setActiveSkills(names),
+            onSkills: (names, scores) => {
+              setActiveSkills(names);
+              setSkillScores(scores ?? {});
+            },
             onToken: (token) => {
               if (metrics.llmFirstTokenAt == null) {
                 metrics.llmFirstTokenAt = performance.now();
@@ -636,6 +651,8 @@ export function useVoiceSession() {
     ttsMode,
     pathLabel,
     activeSkills,
+    skillScores,
+    lastVoiceDebug,
     preferDaily,
     setPreferDaily,
     dailyConnected,

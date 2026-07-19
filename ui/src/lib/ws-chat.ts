@@ -31,7 +31,11 @@ export type StreamHandlers = {
   onToken: (token: string) => void;
   onDone: () => void;
   onError: (code: string, message: string) => void;
-  onSkills?: (active: string[]) => void;
+  onSkills?: (
+    active: string[],
+    scores?: Record<string, number>,
+    lazyCatalog?: string[],
+  ) => void;
   onNotification?: NotifyHandler;
 };
 
@@ -97,7 +101,11 @@ export class WsChatClient {
           return;
         }
         if (msg.type === "skills") {
-          handlers.onSkills?.(msg.active ?? []);
+          handlers.onSkills?.(
+            msg.active ?? [],
+            msg.scores,
+            msg.lazy_catalog,
+          );
         } else if (msg.type === "notification") {
           handlers.onNotification?.(
             msg.title,

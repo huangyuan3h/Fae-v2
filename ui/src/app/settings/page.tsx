@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ModelsPanel } from "@/components/settings/ModelsPanel";
@@ -11,8 +12,18 @@ import { VoicePanel } from "@/components/settings/VoicePanel";
 
 type Tab = "persona" | "profile" | "models" | "voice" | "notifications";
 
-export default function SettingsPage() {
+const TABS: Tab[] = ["persona", "profile", "models", "voice", "notifications"];
+
+function SettingsInner() {
+  const search = useSearchParams();
   const [tab, setTab] = useState<Tab>("persona");
+
+  useEffect(() => {
+    const q = search.get("tab");
+    if (q && (TABS as string[]).includes(q)) {
+      setTab(q as Tab);
+    }
+  }, [search]);
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-4 pb-16 pt-10">
@@ -64,5 +75,13 @@ export default function SettingsPage() {
       {tab === "voice" && <VoicePanel />}
       {tab === "notifications" && <NotificationsPanel />}
     </main>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<main className="p-8 text-sm text-[var(--ink-soft)]">加载中…</main>}>
+      <SettingsInner />
+    </Suspense>
   );
 }

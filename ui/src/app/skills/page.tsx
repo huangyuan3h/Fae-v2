@@ -2,6 +2,7 @@
 
 import Editor from "@monaco-editor/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -13,15 +14,32 @@ import {
   type SkillListItem,
 } from "@/lib/skills-api";
 
+const MQ2_PRESETS = [
+  {
+    id: "traceback",
+    label: "Traceback",
+    text:
+      'Traceback (most recent call last):\n  File "app.py", line 10, in <module>\nTypeError: \'NoneType\' object is not subscriptable',
+  },
+  {
+    id: "travel",
+    label: "旅行",
+    text: "帮我规划下周去京都的旅行，预算中等，喜欢慢节奏",
+  },
+  {
+    id: "writing",
+    label: "写作",
+    text: "帮我写一封请假邮件，明天身体不适，语气正式一点",
+  },
+] as const;
+
 export default function SkillsPage() {
   const qc = useQueryClient();
   const listQ = useQuery({ queryKey: ["skills"], queryFn: listSkills });
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
-  const [testText, setTestText] = useState(
-    "Traceback (most recent call last):\n  File \"app.py\", line 1, in <module>\nTypeError: bad",
-  );
+  const [testText, setTestText] = useState(MQ2_PRESETS[0].text);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
@@ -117,6 +135,11 @@ export default function SkillsPage() {
                   }}
                 >
                   {skill.name}
+                  {skill.requires_approval && (
+                    <span className="ml-2 rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-normal text-[var(--ink-soft)]">
+                      需审批
+                    </span>
+                  )}
                   <span className="mt-0.5 block text-xs font-normal text-[var(--ink-soft)]">
                     {skill.load_strategy} · p{skill.priority} ·{" "}
                     {skill.description || "—"}
@@ -198,22 +221,46 @@ export default function SkillsPage() {
         </h2>
         <p className="mt-1 text-xs text-[var(--ink-soft)]">
           下面框里是<strong>模拟用户输入</strong>（不是页面报错）。点「测试」看会激活哪些
-          skill。
+          skill。MQ-2 三场景可一键填入。
         </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {MQ2_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setTestText(p.text);
+                setTestResult(null);
+              }}
+              className="rounded-full border border-black/10 px-3 py-1 text-xs"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <textarea
           value={testText}
           onChange={(e) => setTestText(e.target.value)}
           rows={4}
           className="mt-2 w-full border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
         />
-        <button
-          type="button"
-          onClick={() => void onTest()}
-          className="mt-2 rounded-full px-4 py-2 text-sm font-semibold text-white"
-          style={{ background: "var(--accent)" }}
-        >
-          测试
-        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void onTest()}
+            className="rounded-full px-4 py-2 text-sm font-semibold text-white"
+            style={{ background: "var(--accent)" }}
+          >
+            测试
+          </button>
+          <Link
+            href={`/?q=${encodeURIComponent(testText.slice(0, 200))}`}
+            className="text-xs text-[var(--accent)] underline"
+            title="复制到对话页需手动粘贴发送；此链打开首页"
+          >
+            去对话页验证
+          </Link>
+        </div>
         {testResult && (
           <pre className="mt-2 whitespace-pre-wrap text-xs text-[var(--ink-soft)]">
             {testResult}

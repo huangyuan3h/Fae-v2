@@ -25,3 +25,8 @@ Open a warm, low-pressure conversation when FAE reaches out first.
 - At most one proactive ping per cooldown window
 - Never guilt the user for being away
 - Prefer text/notification channels over long voice monologues
+
+## Acceptance dialogues
+1. Force-activated by proactive loop with human name in memory → short warm check-in mentioning name/topic.
+2. Force-activated with empty memory → still warm but generic; never invent facts.
+3. Not trigger-matched from chat (lazy only).

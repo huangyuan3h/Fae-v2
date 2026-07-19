@@ -22,6 +22,12 @@ const mdClassName =
   "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-black/[0.04] [&_pre]:p-3 " +
   "[&_code]:text-[0.9em]";
 
+function roleLabel(role: ChatLine["role"]): string {
+  if (role === "user") return "你";
+  if (role === "system") return "系统";
+  return "FAE";
+}
+
 export function ChatTranscript({
   lines,
   partial,
@@ -30,7 +36,10 @@ export function ChatTranscript({
   partial: string;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-3 px-4 py-2 text-left">
+    <div
+      className="mx-auto flex w-full max-w-xl flex-col gap-3 px-4 py-2 text-left"
+      data-testid="chat-transcript"
+    >
       {lines.map((line) => {
         const visible =
           line.role === "assistant"
@@ -38,23 +47,33 @@ export function ChatTranscript({
             : line.content;
         const thinking =
           line.role === "assistant" && isThinkingStreaming(line.content);
+        const isSystem = line.role === "system";
         return (
           <div
             key={line.id}
+            data-testid={`chat-line-${line.role}`}
             className="text-[15px] leading-relaxed"
             style={{
-              color: line.role === "user" ? "var(--ink)" : "var(--ink-soft)",
+              color: isSystem
+                ? "var(--ink-soft)"
+                : line.role === "user"
+                  ? "var(--ink)"
+                  : "var(--ink-soft)",
               fontFamily: "var(--font-body)",
+              opacity: isSystem ? 0.9 : 1,
+              background: isSystem ? "rgba(0,0,0,0.03)" : undefined,
+              borderRadius: isSystem ? 12 : undefined,
+              padding: isSystem ? "8px 12px" : undefined,
             }}
           >
             <span
               className="mr-2 text-xs uppercase tracking-wider"
               style={{
-                color: "var(--accent)",
+                color: isSystem ? "var(--ink-soft)" : "var(--accent)",
                 fontFamily: "var(--font-display)",
               }}
             >
-              {line.role === "user" ? "你" : "FAE"}
+              {roleLabel(line.role)}
             </span>
             {line.role === "assistant" ? (
               visible ? (

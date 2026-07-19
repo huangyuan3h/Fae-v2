@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from fae.config import Settings
 from fae.pipecat.memory_processor import (
     build_memory_turn_processor,
+    build_skills_turn_processor,
     seed_daily_memory,
 )
 from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -123,14 +124,21 @@ async def run_daily_bot(
     )
 
     mem_proc = build_memory_turn_processor(memory, sid)
-    # Place memory processor right after LLM so TranscriptionFrame + LLMTextFrame
-    # are observed before TTS/output sinks can drop them.
+    skills_proc = build_skills_turn_processor(skills, sid, context)  # type: ignore[arg-type]
+    # Skills rematch after STT / before user aggregator so context is updated
+    # before the LLM turn. Memory processor stays after LLM for persist.
     stages: list = [
         transport.input(),
         stt,
-        user_agg,
-        llm,
     ]
+    if skills_proc is not None:
+        stages.append(skills_proc)
+    stages.extend(
+        [
+            user_agg,
+            llm,
+        ]
+    )
     if mem_proc is not None:
         stages.append(mem_proc)
     stages.extend(

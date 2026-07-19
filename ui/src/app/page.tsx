@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
@@ -19,8 +19,12 @@ export default function HomePage() {
     partial,
     error,
     sessionId,
+    voiceSessionId,
     pathLabel,
+    ttsMode,
     activeSkills,
+    skillScores,
+    lastVoiceDebug,
     dailyConnected,
     support,
     sendText,
@@ -31,6 +35,7 @@ export default function HomePage() {
   } = useVoiceSession();
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<ModelProfile | null>(null);
+  const [debug, setDebug] = useState(false);
 
   useEffect(() => {
     const refresh = () => setActive(getActiveProfile());
@@ -38,6 +43,21 @@ export default function HomePage() {
     window.addEventListener(CONFIG_CHANGED_EVENT, refresh);
     return () => window.removeEventListener(CONFIG_CHANGED_EVENT, refresh);
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setDebug(params.get("debug") === "1");
+  }, []);
+
+  const skillLabel = useMemo(() => {
+    if (activeSkills.length === 0) return null;
+    return activeSkills
+      .map((name) => {
+        const score = skillScores[name];
+        return score != null ? `${name}(${score.toFixed(2)})` : name;
+      })
+      .join(", ");
+  }, [activeSkills, skillScores]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -59,16 +79,27 @@ export default function HomePage() {
           说话或打字。默认路径：浏览器听写 + 流式回复 + 本机 TTS（不依赖 Daily）。
         </p>
         <AppNav className="mt-4" />
-        {activeSkills.length > 0 && (
-          <p className="mt-2 text-xs text-[var(--accent)]">
-            已加载：{activeSkills.join(", ")}
+        {skillLabel && (
+          <p className="mt-2 text-xs text-[var(--accent)]" data-testid="active-skills">
+            本轮技能：{skillLabel}
           </p>
         )}
         <p className="mt-2 text-xs text-[var(--ink-soft)]">
           {pathLabel}
           {active ? ` · ${active.name}` : ""}
           {sessionId ? ` · 记忆:${sessionId}` : ""}
+          {ttsMode ? ` · ${ttsMode}` : ""}
         </p>
+        {debug && (
+          <p
+            className="mt-2 rounded-lg bg-black/[0.04] px-3 py-2 font-mono text-[11px] text-[var(--ink-soft)]"
+            data-testid="voice-debug"
+          >
+            debug · orb={orb}
+            {voiceSessionId ? ` · voice=${voiceSessionId.slice(0, 8)}` : ""}
+            {lastVoiceDebug ? ` · ${lastVoiceDebug}` : " · (no turn metrics yet)"}
+          </p>
+        )}
         {orb === "speaking" && (
           <p className="mt-2 text-xs text-[var(--ink-soft)]">
             正在合成 / 播放本机语音（长回复可能需十几秒）…
@@ -77,7 +108,6 @@ export default function HomePage() {
       </header>
 
       <VoiceOrb state={orb} />
-
 
       <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
         <MicButton

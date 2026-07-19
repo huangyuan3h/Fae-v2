@@ -117,14 +117,14 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] `SkillRuntime` + WS `skills` 事件；Phase 4 `activate()`
 - [x] LAZY：`request_skill` 一轮 tool
 
-### 已知残留（并入 Phase Q.2）
+### 已知残留（并入 Phase Q.2）— ✅ 已消化
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| Daily 路径按轮 match | ⚠ 弱 | seed 用空文本 |
-| `max_context_tokens` / `requires_tools` / approval UI | ⚠ 未接 | metadata 预留 |
-| 内置 skill 剧本深度 | ⚠ 薄 | 工具契约与验收对话不足 |
-| `technical_debugging` 声明的 `search_history` | ⚠ 悬空 | 工具不存在 |
+| Daily 路径按轮 match | ✅ | seed 空文本；每轮 rematch |
+| `max_context_tokens` / `requires_tools` / approval UI | ✅ | 校验+截断；徽章无审批流 |
+| 内置 skill 剧本深度 | ✅ | Acceptance dialogues |
+| `technical_debugging` 的 `search_history` | ✅ | 已删除悬空声明 |
 
 ---
 
@@ -155,15 +155,15 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] **埋点**：`console.debug("[fae.voice]", …)` + `X-FAE-TTS-Ms`
 - [x] **验收（MQ-1）**：无 Daily Key，真 Qwen3-TTS，3 轮中文问答，首句可听，可打断
 
-### Q.2 Skills 变强（Skill Usefulness）
+### Q.2 Skills 变强（Skill Usefulness）— ✅ 首版
 
 **问题**：匹配浅、工具契约假、剧本薄、Daily 不同步。
 
-- [ ] **契约诚实**：接上或删除 `requires_tools` / `max_context_tokens`；实现或移除 `search_history`
-- [ ] **匹配质量**：减少「报错/bug/draft」类误触发；触发分数可解释（UI 或 debug 面板）；必要时加轻量 embedding/分类
-- [ ] **6 个内置加深**：每 skill 附 2–3 条验收对话；旅行/写作等写清记忆写回与工具调用约定
-- [ ] **路径对齐**：Daily / WS 每轮都用真实用户文本 match（消灭空 seed）
-- [ ] **验收（MQ-2）**：Traceback / 旅行 / 写作三场景触发稳定；误触发率可演示对比「改前改后」
+- [x] **契约诚实**：删除悬空 `search_history`；`requires_tools` 对照已知工具集校验；`max_context_tokens` 注入截断；需审批徽章（无完整审批流）
+- [x] **匹配质量**：短 trigger 单独命中封顶低于阈值；fixture 正负例；对话页展示 `name(score)`（未上 embedding）
+- [x] **6 个内置加深**：Acceptance dialogues；旅行/写作记忆写回约定
+- [x] **路径对齐**：Daily seed 空文本仅 always_on；每轮 Transcription 后 rematch
+- [x] **验收（MQ-2）**：Traceback / 旅行 / 写作 fixture + Skills 页三场景 preset；误触发负例可对比
 
 ### Q.0 人设可配置（人情味入口）— ✅
 
@@ -306,7 +306,7 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | **MQ-0** | 人设可配置：Settings 改 persona 下一轮生效 | ✅ |
 | **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
 | **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | ✅ 首版 |
-| **MQ-2** | Skills：三场景稳定 + 契约无悬空 | 🔜 |
+| **MQ-2** | Skills：三场景稳定 + 契约无悬空 | ✅ Q.2 首版 |
 | **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
 | **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | ✅ Q.4 首版 |
 | **M5-1** | 多端 / Telegram（或等价 channel） | 待 Q 后 |
@@ -337,7 +337,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase Q.3 记忆真有用（首版）
 - [x] Phase Q.1 语音可用（首版）
 - [x] Phase Q.4 Loop 真主动（首版）
-- [ ] **Phase Q 质量硬化（Q.2）** ← **下一主线**
+- [x] Phase Q.2 Skills 变强（首版）
+- [ ] **Phase Q 横切 / Q.5** ← **下一主线**（evals · README · ARCHITECTURE）
 - [ ] Phase 5.1 多端 & channel
 - [ ] Phase 5.2 Subagents
 - [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
@@ -350,13 +351,14 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 2. **Phase Q.3** 记忆真有用 — ✅ 首版  
 3. **Phase Q.1** 语音可用 — ✅ 首版  
 4. **Phase Q.4** Loop 真主动 — ✅ 首版  
-5. **Phase Q.2** Skills 契约与触发质量  
-6. **Phase 5.1** 多端 & Telegram  
-7. **Phase 5.2** Subagents  
-8. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
+5. **Phase Q.2** Skills 变强 — ✅ 首版  
+6. **Phase Q.5** 横切（evals / README / ARCHITECTURE）  
+7. **Phase 5.1** 多端 & Telegram  
+8. **Phase 5.2** Subagents  
+9. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Q.0 / Q.1 / Q.3 / Q.4 首版落地；下一主线 Q.2 Skills）  
+**最后更新**：2026-07-19（Q.0～Q.4 首版落地；下一主线 Q.5 横切）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

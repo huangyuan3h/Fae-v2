@@ -91,3 +91,25 @@ export function triggerSchedule(id: string) {
     { method: "POST" },
   ).then((r) => jsonOrThrow<{ ok: boolean; id: string }>(r));
 }
+
+export type SchedulerStatus = {
+  scheduler_enabled: boolean;
+  session_id: string;
+  now: number;
+  last_activity_at: number | null;
+  idle_seconds: number | null;
+  outreach_idle_hours: number;
+  next_eligible_in_seconds: number | null;
+  last_outreach_at: number | null;
+  outreach_count_today: number;
+  outreach_day: string | null;
+  proactive_enabled: boolean;
+  proactive_llm_ready: boolean;
+  unread_inbox: number;
+};
+
+export function getSchedulerStatus() {
+  return fetch(`${backendHttpBase()}/api/scheduler/status`).then((r) =>
+    jsonOrThrow<SchedulerStatus>(r),
+  );
+}

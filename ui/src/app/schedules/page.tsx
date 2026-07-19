@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
+import Link from "next/link";
+
 import {
   createSchedule,
   deleteSchedule,
@@ -73,10 +75,11 @@ export default function SchedulesPage() {
         run_at: payload.run_at ?? undefined,
       }),
     onSuccess: () => {
-      setMsg("已创建");
+      setMsg("已创建 — 到点后会出现在收件箱（Settings → 通知）");
       setError(null);
       setDraft(null);
       void qc.invalidateQueries({ queryKey: ["schedules"] });
+      void qc.invalidateQueries({ queryKey: ["scheduler-status"] });
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -121,11 +124,26 @@ export default function SchedulesPage() {
           。创建前先确认 kind / 时间 / 标题。
         </p>
         {error && <p className="mt-2 text-sm text-[var(--danger)]">{error}</p>}
-        {msg && <p className="mt-2 text-sm text-[var(--accent)]">{msg}</p>}
+        {msg && (
+          <p className="mt-2 text-sm text-[var(--accent)]">
+            {msg}{" "}
+            <Link
+              href="/settings?tab=notifications"
+              className="underline"
+            >
+              去收件箱
+            </Link>
+          </p>
+        )}
 
         {draft && (
           <div className="mt-4 space-y-3 rounded-2xl border border-black/10 bg-white/60 p-4 text-sm">
             <p className="font-medium text-[var(--ink)]">确认日程</p>
+            <p className="text-xs text-[var(--ink-soft)]">
+              {draft.kind === "cron"
+                ? `将按 cron「${draft.cron ?? "—"}」重复提醒`
+                : `将在本地时间 ${formatTs(draft.run_at)} 提醒一次`}
+            </p>
             <label className="block space-y-1">
               <span className="text-xs text-[var(--ink-soft)]">kind</span>
               <input

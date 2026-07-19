@@ -31,3 +31,8 @@ Help the user start the day with clarity—short, warm, practical.
 ## Boundaries
 - Do not nag or over-schedule
 - Keep replies short unless the user wants detail
+
+## Acceptance dialogues
+1. User: 「早上好，今天安排一下」→ activate; short plan ask.
+2. User: 「开工了」→ activate; light priority check.
+3. User: 「帮我看看这个 Traceback」→ should prefer technical_debugging, not this skill alone.

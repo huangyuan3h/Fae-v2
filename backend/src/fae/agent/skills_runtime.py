@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from fae.agent.known_tools import known_tool_names
 from fae.agent.skills_loader import SkillsLoader, default_skills_dir
 from fae.agent.skills_matcher import MatchScore, match_trigger_skills
 from fae.agent.skills_schema import LoadStrategy, Skill, SkillMetadata
@@ -15,6 +16,8 @@ from fae.agent.skills_state import SkillsStateStore
 from fae.llm.types import ChatMessage, ChatRequest
 
 logger = logging.getLogger("fae.agent.skills")
+
+_CHARS_PER_TOKEN = 4
 
 _SKILLS_OPEN = "<active_skills>"
 _SKILLS_CLOSE = "</active_skills>"
@@ -96,6 +99,31 @@ class SkillRuntime:
     def test_trigger(self, text: str) -> list[MatchScore]:
         return match_trigger_skills(text, self._skills_with_meta())
 
+    def _tools_satisfied(self, skill: Skill) -> bool:
+        required = [t for t in (skill.meta.requires_tools or []) if t]
+        if not required:
+            return True
+        known = known_tool_names()
+        missing = [t for t in required if t not in known]
+        if missing:
+            logger.warning(
+                "skill %s skipped — unknown requires_tools: %s",
+                skill.meta.name,
+                missing,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _truncate_body(body: str, max_context_tokens: int) -> str:
+        text = (body or "").strip()
+        if max_context_tokens <= 0:
+            return text
+        max_chars = max(100, int(max_context_tokens) * _CHARS_PER_TOKEN)
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1].rstrip() + "…"
+
     def _cooldown_ok(self, session_id: str, skill: Skill, now: float) -> bool:
         cd = skill.meta.cooldown_seconds
         if cd <= 0:
@@ -133,16 +161,25 @@ class SkillRuntime:
 
         for skill in skills:
             if skill.meta.load_strategy == LoadStrategy.ALWAYS_ON and skill.meta.enabled:
+                if not self._tools_satisfied(skill):
+                    continue
                 if self._cooldown_ok(session_id, skill, now):
                     active.append(skill)
                     scores[skill.meta.name] = 1.0
 
-        matches = match_trigger_skills(user_text, skills)
+        # Empty text (Daily seed): never match trigger skills — always_on only.
+        matches = (
+            match_trigger_skills(user_text, skills)
+            if (user_text or "").strip()
+            else []
+        )
         for m in matches:
             skill = by_name.get(m.name)
             if skill is None or not skill.meta.enabled:
                 continue
             if skill.meta.requires_approval:
+                continue
+            if not self._tools_satisfied(skill):
                 continue
             if not self._cooldown_ok(session_id, skill, now):
                 continue
@@ -211,9 +248,10 @@ class SkillRuntime:
                 skill = skills.get(name)
                 if not skill:
                     continue
-                bodies.append(
-                    f"### skill:{name}\n{skill.body.strip()}\n"
+                body = self._truncate_body(
+                    skill.body, skill.meta.max_context_tokens
                 )
+                bodies.append(f"### skill:{name}\n{body}\n")
             if bodies:
                 parts.append(
                     f"{_SKILLS_OPEN}\n"
@@ -377,10 +415,71 @@ class SkillRuntime:
         stripped = request.model_copy(update={"messages": messages})
         return self.inject(stripped, new_info, include_lazy_catalog=False), new_info
 
-    def system_message_dict(self, user_text: str, session_id: str) -> dict[str, str] | None:
-        """For Daily LLMContext seeding."""
-        activation = self.select(user_text, session_id=session_id)
+    def system_message_dict(
+        self,
+        user_text: str,
+        session_id: str,
+        *,
+        record_trigger: bool = False,
+    ) -> dict[str, str] | None:
+        """Build a skill system message for Daily LLMContext.
+
+        Seed calls use empty ``user_text`` (always_on + lazy catalog only).
+        Per-turn rematch passes real user text with ``record_trigger=True``.
+        """
+        activation = self.select(
+            user_text,
+            session_id=session_id,
+            record_trigger=record_trigger,
+        )
         block = self.build_system_block(activation, include_lazy_catalog=True)
         if not block:
             return None
         return {"role": "system", "content": block}
+
+    def refresh_context_skills(
+        self,
+        context: object,
+        user_text: str,
+        *,
+        session_id: str = "default",
+    ) -> list[str]:
+        """Replace FAE skill system messages on a Pipecat LLMContext."""
+        text = (user_text or "").strip()
+        activation = self.select(
+            text,
+            session_id=session_id,
+            record_trigger=bool(text),
+        )
+        block = self.build_system_block(activation, include_lazy_catalog=True)
+        msg = (
+            {"role": "system", "content": block} if block else None
+        )
+        get_messages = getattr(context, "get_messages", None)
+        set_messages = getattr(context, "set_messages", None)
+        if not callable(get_messages) or not callable(set_messages):
+            return list(activation.active)
+        existing = list(get_messages())
+        kept = [
+            m
+            for m in existing
+            if not (
+                isinstance(m, dict)
+                and m.get("role") == "system"
+                and isinstance(m.get("content"), str)
+                and (
+                    _SKILLS_OPEN in m["content"] or _LAZY_OPEN in m["content"]
+                )
+            )
+        ]
+        if msg is not None:
+            # Keep memory/persona system messages first; skills after them.
+            insert_at = 0
+            for i, m in enumerate(kept):
+                if isinstance(m, dict) and m.get("role") == "system":
+                    insert_at = i + 1
+                else:
+                    break
+            kept = [*kept[:insert_at], msg, *kept[insert_at:]]
+        set_messages(kept)
+        return list(activation.active)

@@ -1,0 +1,68 @@
+[
+  {
+    "id": "traceback_positive",
+    "text": "Traceback (most recent call last):\n  File \"app.py\", line 10, in <module>\nTypeError: 'NoneType' object is not subscriptable",
+    "expect_active": ["technical_debugging"],
+    "expect_absent": []
+  },
+  {
+    "id": "debug_ask_positive",
+    "text": "帮我看看这个报错：ValueError: bad value",
+    "expect_active": ["technical_debugging"],
+    "expect_absent": []
+  },
+  {
+    "id": "bug_with_context_positive",
+    "text": "这个 bug 怎么修，程序一启动就崩",
+    "expect_active": ["technical_debugging"],
+    "expect_absent": []
+  },
+  {
+    "id": "bug_alone_negative",
+    "text": "bug",
+    "expect_active": [],
+    "expect_absent": ["technical_debugging", "writing_assistant"]
+  },
+  {
+    "id": "baocuo_alone_negative",
+    "text": "报错",
+    "expect_active": [],
+    "expect_absent": ["technical_debugging"]
+  },
+  {
+    "id": "draft_alone_negative",
+    "text": "draft",
+    "expect_active": [],
+    "expect_absent": ["writing_assistant", "technical_debugging"]
+  },
+  {
+    "id": "travel_positive",
+    "text": "帮我规划下周去京都的旅行",
+    "expect_active": ["travel_planning"],
+    "expect_absent": []
+  },
+  {
+    "id": "travel_chuche_positive",
+    "text": "出差上海三天，酒店和交通怎么安排",
+    "expect_active": ["travel_planning"],
+    "expect_absent": []
+  },
+  {
+    "id": "writing_positive",
+    "text": "帮我写一封请假邮件，明天身体不适",
+    "expect_active": ["writing_assistant"],
+    "expect_absent": []
+  },
+  {
+    "id": "writing_polish_positive",
+    "text": "润色一下这段：今天会议取消了",
+    "expect_active": ["writing_assistant"],
+    "expect_absent": []
+  },
+  {
+    "id": "chitchat_negative",
+    "text": "今天心情不错",
+    "expect_active": [],
+    "expect_absent": ["technical_debugging", "travel_planning", "writing_assistant"]
+  }
+]

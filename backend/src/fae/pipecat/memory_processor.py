@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from fae.agent.skills_runtime import SkillRuntime
     from fae.pipecat.services.letta_memory import LettaMemoryService
 
 logger = logging.getLogger("fae.pipecat.memory_processor")
@@ -20,6 +21,7 @@ async def seed_daily_memory(
 ) -> str:
     """Recall memories (+ optional skills) and push system messages into LLMContext.
 
+    Skill seed uses empty user text → always_on + lazy catalog only (no trigger match).
     `add_message` is `LLMContext.add_message`. Returns the memory text used.
     """
     memory_text = ""
@@ -35,12 +37,52 @@ async def seed_daily_memory(
 
     if skills is not None and getattr(skills, "enabled", False):
         try:
-            skill_msg = skills.system_message_dict("", session_id)
+            skill_msg = skills.system_message_dict(
+                "", session_id, record_trigger=False
+            )
             if skill_msg is not None:
                 add_message(skill_msg)
         except Exception:  # noqa: BLE001
             logger.exception("Daily skills seed failed")
     return memory_text
+
+
+def build_skills_turn_processor(
+    skills: SkillRuntime | None,
+    session_id: str,
+    context: Any,
+) -> Any | None:
+    """Rematch trigger skills on each finalized user transcript (Daily path)."""
+    if skills is None or not getattr(skills, "enabled", False):
+        return None
+
+    from pipecat.frames.frames import Frame, TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+
+    class SkillsTurnProcessor(FrameProcessor):
+        def __init__(self) -> None:
+            super().__init__()
+
+        async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+            await super().process_frame(frame, direction)
+            if isinstance(frame, TranscriptionFrame):
+                text = (frame.text or "").strip()
+                finalized = bool(getattr(frame, "finalized", True))
+                if text and finalized:
+                    try:
+                        active = skills.refresh_context_skills(
+                            context, text, session_id=session_id
+                        )
+                        logger.info(
+                            "Daily skills rematch session=%s active=%s",
+                            session_id,
+                            active,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Daily skills rematch failed")
+            await self.push_frame(frame, direction)
+
+    return SkillsTurnProcessor()
 
 
 async def persist_daily_turn(
