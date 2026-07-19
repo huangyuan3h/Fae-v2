@@ -20,15 +20,18 @@
 | Q.3 记忆真有用（session=`default` · human 事实） | ✅ MQ-3 |
 | Q.4 Loop 真主动（服务端 LLM · 持久化 idle） | ✅ MQ-4 |
 | Q.5 横切（文档 + 最小 evals） | ✅ |
-| **下一主线** | **Phase 5.1 多端 & channel** |
+| 5.1 多端 & Telegram（PWA 壳 + long polling） | ✅ M5-1 |
+| **下一主线** | **Phase 5.2 Subagents** |
 
-MCP / LiveKit：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
+MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 
 ## 能力一览
 
 | 能力 | 状态 |
 |---|---|
 | 浏览器语音（Web Speech + `/ws/chat` + 本机 TTS） | ✅ **默认** |
+| 手机 PWA 壳（manifest + 窄屏对话） | ✅ 首版 |
+| Telegram channel（long polling · 共享 `default` 记忆） | ✅ 可选 |
 | Daily + Pipecat 全双工 | ✅ 可选（需 `DAILY_API_KEY`） |
 | 本机 TTS（Qwen3-TTS / CosyVoice / stub） | ✅ `VLLM_TTS_URL` |
 | 长期记忆（Letta remote / embedded） | ✅ |
@@ -61,15 +64,18 @@ open http://localhost:3000
 6. **Skills**：贴 Traceback → 首页显示分数；或 `/skills` 三场景 preset  
 7. **日程**：`/schedules` → 解析 → 确认创建 → 到点进 Settings → 通知收件箱  
 8. **主动 Loop**：服务端配置 `DASHSCOPE_API_KEY` / `PROACTIVE_LLM_*`，可调短 `OUTREACH_IDLE_HOURS`  
-9. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily  
+9. **手机**：Chrome/Safari「添加到主屏幕」；窄屏可打字对话；未读角标在 Settings  
+10. **Telegram（可选）**：`.env` 设 `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`（需服务端 LLM Key）→ 私聊回一句写入同一记忆；主动通知会推到该 chat  
+11. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily  
 
 ### 环境变量（常用）
 
 | 变量 | 用途 |
 |---|---|
 | `VLLM_TTS_URL` | 本机 TTS（默认 `:8880`） |
-| `DASHSCOPE_API_KEY` | LLM / 主动 Loop 回退 Key |
-| `PROACTIVE_LLM_*` | 主动 Loop 专用服务端模型 |
+| `DASHSCOPE_API_KEY` | LLM / 主动 Loop / Telegram 回退 Key |
+| `PROACTIVE_LLM_*` | 主动 Loop / Telegram 服务端模型 |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | 可选 Telegram long-polling channel |
 | `LETTA_MODE` | `embedded` / `remote` / `off` |
 | `SCHEDULER_ENABLED` | 主动调度（默认示例见 `.env.example`） |
 | `DAILY_API_KEY` | 可选 Daily 全双工 |

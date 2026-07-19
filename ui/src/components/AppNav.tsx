@@ -36,13 +36,15 @@ export function AppNav({ className = "" }: { className?: string }) {
     >
       {LINKS.map((link) => {
         const active = isActive(pathname, link.href, link.exact);
-        const showBadge = link.href === "/schedules" && unread > 0;
+        const isSettings = link.href === "/settings";
+        const showBadge = isSettings && unread > 0;
+        const href = showBadge
+          ? "/settings?tab=notifications"
+          : link.href;
         return (
           <Link
             key={link.href}
-            href={
-              showBadge ? "/settings?tab=notifications" : link.href
-            }
+            href={href}
             className="relative rounded-full px-3 py-1.5 transition"
             style={{
               background: active ? "var(--accent)" : "transparent",
@@ -51,7 +53,7 @@ export function AppNav({ className = "" }: { className?: string }) {
             }}
             title={
               showBadge
-                ? `${unread} 条未读通知（点开 Settings → 通知）`
+                ? `${unread} 条未读通知（Settings → 通知）`
                 : undefined
             }
           >

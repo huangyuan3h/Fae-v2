@@ -3,7 +3,7 @@
 > 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。  
 > 用法：完成一项就打 `[x]`，每条任务标明阶段、依赖、产出、验收。  
 > 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。  
-> **现行优先级**：**质量 > 上限**。Phase Q 首版已收口；**下一主线 = Phase 5.1 多端 & channel**。
+> **现行优先级**：**质量 > 上限**。Phase 5.1 首版已收口；**下一主线 = Phase 5.2 Subagents**。
 
 ---
 
@@ -17,8 +17,9 @@
 | Phase 3 | Skills 体系 | ✅ 骨架完成 | Markdown skill 自动触发 + 6 内置 + `/skills` |
 | Phase 4 | 主动 Loop | ✅ 骨架完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
 | **Phase Q** | **质量硬化** | **✅ 首版收口** | 语音 · Skill · 记忆 · Loop · 横切 evals |
-| **Phase 5.1** | **多端 & channel** | **🔜 下一主线** | Telegram（或等价）多端入口 |
-| Phase 5 | 上限扩展（其余） | 待开始（按优先级取用） | Subagents → 多用户 / 本地 ASR / WebRTC / MCP |
+| **Phase 5.1** | **多端 & channel** | **✅ 首版** | 手机 PWA 壳 + Telegram long-polling |
+| **Phase 5.2** | **Subagents** | **🔜 下一主线** | 委派回灌 |
+| Phase 5 | 上限扩展（其余） | 待开始（按优先级取用） | 多用户 / 本地 ASR / WebRTC / MCP |
 
 ### 0.1 现状判断（Q 首版后）
 
@@ -29,8 +30,9 @@
 | 记忆 | ✅ | ✅ 首版可用 | 跨刷新 recall；vector_mode 诚实；evals memory-recall |
 | Loop | ✅ | ✅ 首版可用 | 有记忆的主动问候 + 日程确认；服务端 LLM Key |
 | 横切 | ✅ | ✅ | ARCH/README 诚实；无 Daily 语音回合 eval 进 CI |
+| 多端 | ✅ | ✅ 首版 | 手机对话壳 + Telegram 可选 channel |
 
-**结论**：Phase Q 首版已收口（MQ-0～MQ-5）。进「上限」从 **Phase 5.1 多端** 起；MCP / LiveKit 仍暂缓。
+**结论**：Phase Q + 5.1 首版已收口。下一主线 **Phase 5.2 Subagents**；MCP / LiveKit / Slack 仍暂缓。
 
 ### 0.2 概念速查（易混淆项）
 
@@ -214,22 +216,22 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ## Phase 5 · 上限扩展（按优先级，不并行冲）
 
-> Phase Q 主验收（MQ-0～MQ-5）首版已完成。  
-> 下列顺序 = 当前产品优先级（高 → 低）；**从 5.1 起为下一主线**。
+> Phase Q 主验收（MQ-0～MQ-5）与 **5.1（M5-1）** 首版已完成。  
+> 下列顺序 = 当前产品优先级（高 → 低）；**下一主线 = 5.2 Subagents**。
 
-### 5.1 多端 & 第三方 channel ← **下一主线**
+### 5.1 多端 & 第三方 channel — ✅ 首版
 
 > 需要：同一 Agent 不只困在桌面浏览器标签页。
 
-- [ ] PWA（manifest + SW，基础离线壳）
-- [ ] 移动端响应式（对话 / 通知 / 设置主路径可用）
-- [ ] Telegram bot 适配器（先做 1 个 channel，跑通记忆 + 主动通知）
-- [ ] Slack 适配器（第二 channel）
-- [ ] 通道统一：inbound 文本/命令 → 同一 agent core；outbound 通知可路由到 channel
+- [x] PWA（manifest + SW，基础离线壳）
+- [x] 移动端响应式（对话 / 通知 / 设置主路径可用）
+- [x] Telegram bot 适配器（long polling；记忆 `session_id=default` + 主动通知 outbound）
+- [ ] Slack 适配器（第二 channel）— 后置
+- [x] 通道统一（薄）：inbound → `channels/bridge` → agent core；outbound → `NotificationDelivery` Telegram hook
 
-**验收（M5-1）**：手机浏览器可用主对话；Telegram 能收主动提醒并回一句写入记忆。
+**验收（M5-1）**：手机浏览器可用主对话；Telegram 能收主动提醒并回一句写入记忆。 ✅
 
-### 5.2 Subagents ← **要做，但次于多端**
+### 5.2 Subagents ← **下一主线**
 
 > 主 agent 委派重活，结果回灌；不做「多智能体产品」叙事膨胀。
 
@@ -312,9 +314,9 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
 | **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | ✅ Q.4 首版 |
 | **MQ-5** | 横切：ARCH/README 诚实 + 最小 evals 进 CI | ✅ Q.5 |
-| **M5-1** | 多端 / Telegram（或等价 channel） | 🔜 下一主线 |
-| **M5-2** | Subagent 委派回灌 | 待 Q 后 |
-| M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP | 按需 |
+| **M5-1** | 多端 / Telegram（手机壳 + long polling） | ✅ 首版 |
+| **M5-2** | Subagent 委派回灌 | 🔜 下一主线 |
+| M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP / Slack | 按需 |
 
 ---
 
@@ -342,21 +344,21 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase Q.4 Loop 真主动（首版）
 - [x] Phase Q.2 Skills 变强（首版）
 - [x] Phase Q.5 横切（文档 + 最小 evals）
-- [ ] **Phase 5.1 多端 & channel** ← **下一主线**
-- [ ] Phase 5.2 Subagents
-- [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
+- [x] Phase 5.1 多端 & channel（PWA + Telegram）
+- [ ] **Phase 5.2 Subagents** ← **下一主线**
+- [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC / Slack）；MCP 暂缓
 
 ---
 
 ## 近期执行顺序（建议）
 
 1. **Phase Q.0～Q.5** 质量硬化 — ✅  
-2. **Phase 5.1** 多端 & Telegram ← 下一主线  
-3. **Phase 5.2** Subagents  
-4. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
+2. **Phase 5.1** 多端 & Telegram — ✅  
+3. **Phase 5.2** Subagents ← 下一主线  
+4. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；Slack / **MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Phase Q 首版收口；下一主线 Phase 5.1）  
+**最后更新**：2026-07-19（Phase 5.1 首版；下一主线 Phase 5.2）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

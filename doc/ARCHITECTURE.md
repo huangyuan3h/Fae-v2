@@ -43,9 +43,9 @@ FAE-v2 是一个**能在本地电脑长期陪你的语音 Agent**：
 
 ## 2. 顶层架构
 
-> **现行默认路径（Phase Q）**：浏览器 Web Speech STT → `/ws/chat`（LLM + memory + skills）→ 本机 TTS（`VLLM_TTS_URL`）。  
-> **可选**：Daily + Pipecat 全双工（需 `DAILY_API_KEY`）。  
-> **未实现**：LiveKit。MCP **暂缓**（见 DEVELOPMENT_PLAN）。
+> **现行默认路径**：浏览器 Web Speech STT → `/ws/chat`（LLM + memory + skills）→ 本机 TTS（`VLLM_TTS_URL`）。  
+> **可选**：Daily + Pipecat 全双工（需 `DAILY_API_KEY`）；Telegram long-polling channel（`TELEGRAM_*`，共享 `session_id=default`）。  
+> **未实现**：LiveKit / Slack。MCP **暂缓**（见 DEVELOPMENT_PLAN）。
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
@@ -712,11 +712,13 @@ Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说
 
 ### Phase 5: 上限扩展（按优先级）
 
-- [ ] **5.1** 多端 & Telegram（下一主线）
-- [ ] **5.2** Subagents
-- [ ] 多用户 / 本地 ASR / Daily 加深（按需）
+- [x] **5.1** 多端 & Telegram（首版：PWA 壳 + long polling；共享 `session_id=default`）
+- [ ] **5.2** Subagents（下一主线）
+- [ ] 多用户 / 本地 ASR / Daily 加深 / Slack（按需）
 - [ ] **MCP 暂缓**（默认不做）
 - [ ] LiveKit：仅在明确需要时再评估（当前未实现）
+
+**Telegram（可选）**：`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` 启用 `fae/channels/` long-polling；inbound 经 `bridge.handle_inbound_text`（与 `/api/chat` 同 core）；outbound 挂在 `NotificationDelivery.notify`。无 Token 时零影响。默认路径仍是浏览器。
 
 ---
 

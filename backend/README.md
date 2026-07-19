@@ -6,6 +6,8 @@ Python backend for FAE-v2: FastAPI (`/ws/chat`, memory, skills, scheduler, local
 
 **Default voice path**: browser STT → `/ws/chat` → local TTS (`VLLM_TTS_URL`). Daily is optional. LiveKit / MCP are not in scope.
 
+**Telegram (optional)**: set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — long polling via `fae/channels/`; inbound uses the same agent bridge as `/api/chat`; outbound hooks `NotificationDelivery`.
+
 **Evals**: case data in [`../evals/`](../evals/); runners are `tests/test_evals_*.py` (picked up by `uv run pytest`).
 
 ## Layout

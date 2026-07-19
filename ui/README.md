@@ -16,6 +16,8 @@ Next.js app for FAE-v2 (voice chat, memory, skills, schedules, settings).
 
 Default path does **not** require Daily. Use `?debug=1` on `/` for voice metrics.
 
+**Mobile / PWA (Phase 5.1)**: `public/manifest.webmanifest` + thin offline shell in `public/sw.js`; chat page has a sticky composer on narrow viewports. Unread badge lives on Settings → notifications.
+
 ## Develop
 
 From repo root (preferred):

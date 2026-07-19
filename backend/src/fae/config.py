@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     vapid_private_key: str = ""
     vapid_subject: str = "mailto:fae@localhost"
 
+    # Telegram channel (Phase 5.1) — long polling; empty token disables
+    telegram_enabled: bool = True
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # Security
     secret_key: str = "change-me"
 

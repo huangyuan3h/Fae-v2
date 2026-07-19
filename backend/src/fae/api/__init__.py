@@ -8,6 +8,7 @@ Phase 1.2/1.3: /api/sessions, /api/pipeline/text (text pipeline smoke).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -32,6 +33,8 @@ from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
+from fae.channels.bridge import handle_inbound_text, resolve_server_llm_config
+from fae.channels.telegram import TelegramClient, telegram_poll_loop, telegram_ready
 from fae.config import REPO_ROOT, Settings, get_settings
 from fae.llm import (
     ChatRequest,
@@ -67,16 +70,16 @@ def _seed_builtin_jobs(store: ScheduleStore) -> None:
 
 def _proactive_llm_config(settings: Settings) -> LLMConfig:
     """Server-side model for proactive loop (never reads browser localStorage)."""
-    key = (
-        (settings.proactive_llm_api_key or "").strip()
-        or (settings.dashscope_api_key or "").strip()
-        or "unused"
+    cfg = resolve_server_llm_config(settings)
+    if cfg is not None:
+        return cfg
+    # Placeholder so ProactiveLoop can still construct; generation fails soft.
+    return LLMConfig(
+        api_key="unused",
+        base_url=(settings.proactive_llm_base_url or "").strip()
+        or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model=(settings.proactive_llm_model or "").strip() or "qwen3-max",
     )
-    base = (settings.proactive_llm_base_url or "").strip() or (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    )
-    model = (settings.proactive_llm_model or "").strip() or "qwen3-max"
-    return LLMConfig(api_key=key, base_url=base, model=model)
 
 
 logger = logging.getLogger("fae")
@@ -230,7 +233,75 @@ async def lifespan(app: FastAPI):
     else:
         app.state.proactive = None
 
+    # Phase 5.1 Telegram long-polling channel (optional).
+    tg_task: asyncio.Task[None] | None = None
+    tg_client: TelegramClient | None = None
+    tg_stop = asyncio.Event()
+    app.state.telegram_task = None
+    app.state.telegram_client = None
+    if telegram_ready(settings):
+        token = settings.telegram_bot_token.strip()
+        chat_id = settings.telegram_chat_id.strip()
+        tg_client = TelegramClient(token)
+        app.state.telegram_client = tg_client
+
+        async def _tg_send(text: str) -> bool:
+            return await tg_client.send_message(chat_id, text)
+
+        delivery.set_telegram_sender(_tg_send)
+
+        async def _on_tg_text(text: str) -> str:
+            skills_rt = getattr(app.state, "skills", None)
+            proactive = getattr(app.state, "proactive", None)
+
+            def _resync() -> None:
+                if isinstance(proactive, ProactiveLoop):
+                    proactive.resync()
+
+            return await handle_inbound_text(
+                text,
+                settings=settings,
+                llm=app.state.llm_client,
+                memory=getattr(app.state, "memory", None),
+                skills=skills_rt if isinstance(skills_rt, SkillRuntime) else None,
+                schedule_store=getattr(app.state, "schedule_store", None),
+                activity=getattr(app.state, "activity", None),
+                session_id="default",
+                on_schedule_mutated=_resync,
+            )
+
+        tg_task = asyncio.create_task(
+            telegram_poll_loop(
+                tg_client,
+                allowed_chat_id=chat_id,
+                on_text=_on_tg_text,
+                stop_event=tg_stop,
+            ),
+            name="fae-telegram-poll",
+        )
+        app.state.telegram_task = tg_task
+        logger.info("Telegram channel enabled (chat_id=%s)", chat_id)
+    else:
+        delivery.set_telegram_sender(None)
+
     yield
+
+    tg_stop.set()
+    if tg_task is not None:
+        tg_task.cancel()
+        try:
+            await tg_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("telegram task shutdown error", exc_info=True)
+    app.state.telegram_task = None
+    if tg_client is not None:
+        try:
+            await tg_client.close()
+        except Exception:  # noqa: BLE001
+            logger.debug("telegram client close failed", exc_info=True)
+    app.state.telegram_client = None
 
     runtime = getattr(app.state, "voice_runtime", None)
     if runtime is not None:

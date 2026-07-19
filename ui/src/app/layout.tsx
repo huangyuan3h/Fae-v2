@@ -19,6 +19,20 @@ const body = DM_Sans({
 export const metadata: Metadata = {
   title: "FAE",
   description: "Fully Autonomous Echo — voice agent",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#0f6e56",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "FAE",
+  },
+  icons: {
+    apple: "/icons/icon-192.png",
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({

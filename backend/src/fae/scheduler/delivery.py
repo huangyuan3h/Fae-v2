@@ -1,8 +1,9 @@
-"""Unified notification delivery across inbox / WS / push / desktop."""
+"""Unified notification delivery across inbox / WS / push / desktop / Telegram."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,9 @@ from fae.scheduler.store import InboxItem, ScheduleStore
 logger = logging.getLogger("fae.scheduler.delivery")
 
 DEFAULT_SESSION_ID = "default"
+
+# Async sender: full notification text → success
+TelegramSender = Callable[[str], Awaitable[bool]]
 
 
 def in_quiet_hours(
@@ -47,6 +51,7 @@ class NotificationDelivery:
         vapid_private_key: str = "",
         vapid_subject: str = "mailto:fae@localhost",
         notifications_enabled: bool = True,
+        telegram_sender: TelegramSender | None = None,
     ) -> None:
         self.store = store
         self.hub = hub
@@ -54,6 +59,10 @@ class NotificationDelivery:
         self.vapid_private_key = vapid_private_key
         self.vapid_subject = vapid_subject
         self.notifications_enabled = notifications_enabled
+        self._telegram_sender = telegram_sender
+
+    def set_telegram_sender(self, sender: TelegramSender | None) -> None:
+        self._telegram_sender = sender
 
     async def notify(
         self,
@@ -64,6 +73,7 @@ class NotificationDelivery:
         source: str = "system",
         skip_desktop: bool = False,
         skip_push: bool = False,
+        skip_telegram: bool = False,
         speak: bool = True,
     ) -> InboxItem:
         sid = (session_id or "").strip() or DEFAULT_SESSION_ID
@@ -119,4 +129,12 @@ class NotificationDelivery:
                     vapid_private_key=self.vapid_private_key,
                     vapid_claims=claims,
                 )
+
+        if self._telegram_sender is not None and not skip_telegram:
+            text = f"{title}\n{body}".strip()
+            try:
+                await self._telegram_sender(text)
+            except Exception:  # noqa: BLE001
+                logger.debug("telegram notify failed", exc_info=True)
+
         return item
