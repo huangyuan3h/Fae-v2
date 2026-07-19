@@ -302,10 +302,14 @@ async def test_telegram_get_updates_not_ok() -> None:
 async def test_telegram_poll_empty_chat_id_and_on_text_error() -> None:
     stop = asyncio.Event()
     stop.set()
+
+    async def _noop(text: str) -> str:
+        return "x"
+
     await telegram_poll_loop(
         object(),  # type: ignore[arg-type]
         allowed_chat_id="",
-        on_text=lambda t: asyncio.sleep(0, result="x"),  # type: ignore[arg-type,return-value]
+        on_text=_noop,
         stop_event=stop,
     )
 
