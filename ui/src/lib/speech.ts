@@ -1,6 +1,6 @@
-/** Browser Web Speech STT + fallback TTS helpers. */
+/** Browser Web Speech STT helpers (recognition only — no speechSynthesis TTS). */
 
-import { stopQwenTts } from "@/lib/qwen-tts";
+import { stopAllLocalTts } from "@/lib/qwen-tts";
 
 export type SttResult = {
   transcript: string;
@@ -22,7 +22,8 @@ function getRecognitionCtor(): RecognitionCtor | null {
 export function speechSupported(): { stt: boolean; tts: boolean } {
   return {
     stt: Boolean(getRecognitionCtor()),
-    tts: typeof window !== "undefined" && "speechSynthesis" in window,
+    // Local TTS is server-side; browser speechSynthesis is not used.
+    tts: true,
   };
 }
 
@@ -62,24 +63,7 @@ export class BrowserSTT {
   }
 }
 
-export function speak(text: string, lang = "zh-CN"): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!("speechSynthesis" in window)) {
-      reject(new Error("speechSynthesis not supported"));
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = lang;
-    utter.onend = () => resolve();
-    utter.onerror = () => resolve();
-    window.speechSynthesis.speak(utter);
-  });
-}
-
+/** Stop local TTS playback queue + audio (no browser speechSynthesis). */
 export function stopSpeaking(): void {
-  stopQwenTts();
-  if (typeof window !== "undefined" && "speechSynthesis" in window) {
-    window.speechSynthesis.cancel();
-  }
+  stopAllLocalTts();
 }

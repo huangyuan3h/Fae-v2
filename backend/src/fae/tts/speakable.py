@@ -56,3 +56,17 @@ def to_speakable_text(text: str) -> str:
     s = re.sub(r"\n{3,}", "\n\n", s)
     s = re.sub(r"[ \t]{2,}", " ", s)
     return s.strip()
+
+
+def clip_for_local_tts(text: str, max_chars: int = 240) -> str:
+    """Keep local TTS latency usable — long replies are truncated at a sentence."""
+    s = (text or "").strip()
+    if len(s) <= max_chars:
+        return s
+    window = s[: max_chars + 1]
+    for sep in ("。", "！", "？", "；", "\n", ". ", "! ", "? "):
+        idx = window.rfind(sep)
+        if idx >= max_chars // 3:
+            return window[: idx + len(sep)].strip()
+    return window[:max_chars].rstrip() + "…"
+

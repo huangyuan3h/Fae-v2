@@ -3,7 +3,19 @@
 import { useEffect, useState } from "react";
 
 import { backendHttpBase } from "@/lib/config";
-import { fetchTtsStatus, type TtsStatus } from "@/lib/qwen-tts";
+import {
+  fetchTtsStatus,
+  fetchTtsVoices,
+  speakWithLocalTts,
+  type TtsStatus,
+  type TtsVoiceInfo,
+} from "@/lib/qwen-tts";
+import {
+  DEFAULT_TTS_PREFS,
+  loadTtsPrefs,
+  saveTtsPrefs,
+  type TtsPrefs,
+} from "@/lib/tts-prefs";
 import { loadPreferDaily, savePreferDaily } from "@/lib/voice-prefs";
 
 type VoiceStatus = {
@@ -15,24 +27,50 @@ type VoiceStatus = {
   hint: string;
 };
 
+const PREVIEW_TEXT = "你好，这是语音试听。Hello, this is a voice preview.";
+
 export function VoicePanel() {
   const [preferDaily, setPreferDaily] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<TtsPrefs>(DEFAULT_TTS_PREFS);
+  const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
+  const [languages, setLanguages] = useState<string[]>([]);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     setPreferDaily(loadPreferDaily());
+    setPrefs(loadTtsPrefs());
     void Promise.all([
       fetch(`${backendHttpBase()}/api/voice/status`).then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as VoiceStatus;
       }),
       fetchTtsStatus(),
+      fetchTtsVoices().catch(() => null),
     ])
-      .then(([voice, tts]) => {
+      .then(([voice, tts, voiceList]) => {
         setVoiceStatus(voice);
         setTtsStatus(tts);
+        if (voiceList) {
+          setVoices(voiceList.voices);
+          setLanguages(voiceList.languages);
+          const current = loadTtsPrefs();
+          // Seed empty prefs from server defaults once.
+          if (
+            current.voice === DEFAULT_TTS_PREFS.voice &&
+            !localStorage.getItem("fae.ttsPrefs")
+          ) {
+            const seeded = saveTtsPrefs({
+              voice: voiceList.defaults.voice || current.voice,
+              language: voiceList.defaults.language || current.language,
+              speed: voiceList.defaults.speed || current.speed,
+            });
+            setPrefs(seeded);
+          }
+        }
         if (loadPreferDaily() && !voice.daily_configured) {
           savePreferDaily(false);
           setPreferDaily(false);
@@ -43,13 +81,42 @@ export function VoicePanel() {
       );
   }, []);
 
-  const stubOnly = Boolean(ttsStatus?.embedded);
-  const ttsReady =
-    ttsStatus?.configured ?? voiceStatus?.qwen_tts_configured ?? false;
-  const naturalReady = Boolean(ttsStatus?.natural_speech) && ttsReady && !stubOnly;
+  const updatePrefs = (patch: Partial<TtsPrefs>) => {
+    const next = saveTtsPrefs(patch);
+    setPrefs(next);
+  };
+
+  const runPreview = async () => {
+    setPreviewError(null);
+    setPreviewing(true);
+    try {
+      await speakWithLocalTts(PREVIEW_TEXT, {
+        voice: prefs.voice,
+        speed: prefs.speed,
+        language: prefs.language,
+      });
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const ttsReady = Boolean(ttsStatus?.configured && ttsStatus?.natural_speech);
   const dailyReady = voiceStatus?.daily_configured ?? false;
   const ttsUrl =
-    ttsStatus?.url ?? voiceStatus?.tts_url ?? "http://127.0.0.1:8000/v1";
+    ttsStatus?.url ?? voiceStatus?.tts_url ?? "http://127.0.0.1:8880/v1";
+  const speechUrl = ttsStatus?.speech_url ?? `${ttsUrl}/audio/speech`;
+  const langOptions =
+    languages.length > 0
+      ? languages
+      : ["Chinese", "English", "Auto", "Japanese", "Korean"];
+  const voiceOptions =
+    voices.length > 0
+      ? voices.some((v) => v.id === prefs.voice)
+        ? voices
+        : [{ id: prefs.voice, name: prefs.voice, language: "" }, ...voices]
+      : [{ id: prefs.voice, name: prefs.voice, language: "" }];
 
   return (
     <section>
@@ -60,63 +127,117 @@ export function VoicePanel() {
         语音
       </h2>
       <p className="mt-1 text-sm text-[var(--ink-soft)]">
-        默认开发 stub 不会读字（只会哔一声）；聊天会改用浏览器朗读。
-        要听自然本地语音，需加载本机 Qwen3-TTS / CosyVoice 权重（见{" "}
-        <code>doc/LOCAL_TTS.md</code>）。
+        仅本机 TTS。<code>npm run dev</code> 会同时起 Qwen3-TTS（
+        <code>:8880</code>）。回复按句切片合成播放；下方参数保存在浏览器并随每次
+        speak 下发。
       </p>
 
       <div className="mt-4 grid gap-2 border border-black/8 bg-white/50 px-4 py-3 text-sm">
         <p>
-          当前：{" "}
-          <span
-            style={{
-              color: statusError
-                ? "var(--danger)"
-                : naturalReady
-                  ? "var(--accent)"
-                  : stubOnly
-                    ? "var(--ink-soft)"
-                    : "var(--danger)",
-            }}
-          >
+          上游服务：{" "}
+          <span style={{ color: ttsReady ? "var(--accent)" : "var(--danger)" }}>
             {statusError
               ? "无法检测"
-              : naturalReady
-                ? `真模型已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Cherry"}`
-                : stubOnly
-                  ? "内嵌 stub · 提示音（聊天用浏览器读字）"
-                  : "未连接"}
+              : ttsReady
+                ? `已连接 · ${ttsStatus?.model ?? "qwen3-tts"} / ${ttsStatus?.voice ?? "Vivian"}`
+                : "未连接"}
           </span>
         </p>
-        <p className="text-xs text-[var(--ink-soft)] break-all">URL: {ttsUrl}</p>
+        <p className="text-xs text-[var(--ink-soft)] break-all">
+          VLLM_TTS_URL: {ttsUrl}
+        </p>
+        <p className="text-xs text-[var(--ink-soft)] break-all">
+          speech: {speechUrl}
+        </p>
         {ttsStatus?.hint && !statusError && (
           <p className="text-xs text-[var(--ink-soft)]">{ttsStatus.hint}</p>
         )}
       </div>
 
-      {stubOnly && !statusError && (
-        <div className="mt-4 border border-black/10 bg-white/60 px-4 py-3 text-sm">
-          <p className="font-medium text-[var(--ink)]">如何听到自然语音</p>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--ink-soft)]">
-            <li>
-              按 <code>doc/LOCAL_TTS.md</code> 本机启动 Qwen3-TTS / CosyVoice
-            </li>
-            <li>
-              <code>.env</code>：<code>TTS_EMBED_STUB=false</code>，
-              <code>VLLM_TTS_URL</code> 指向该服务
-            </li>
-            <li>重启 <code>npm run dev</code>，这里应显示「真模型已连接」</li>
-          </ol>
+      <div className="mt-6 space-y-4">
+        <label className="block text-sm text-[var(--ink)]">
+          音色
+          <select
+            className="mt-1 w-full border border-black/15 bg-white px-3 py-2"
+            value={prefs.voice}
+            onChange={(e) => updatePrefs({ voice: e.target.value })}
+          >
+            {voiceOptions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+                {v.language ? ` · ${v.language}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-sm text-[var(--ink)]">
+          语速{" "}
+          <span className="text-[var(--ink-soft)]">{prefs.speed.toFixed(2)}</span>
+          <input
+            type="range"
+            className="mt-2 w-full"
+            min={0.8}
+            max={1.8}
+            step={0.05}
+            value={prefs.speed}
+            onChange={(e) => updatePrefs({ speed: Number(e.target.value) })}
+          />
+        </label>
+
+        <label className="block text-sm text-[var(--ink)]">
+          语言
+          <select
+            className="mt-1 w-full border border-black/15 bg-white px-3 py-2"
+            value={prefs.language}
+            onChange={(e) => updatePrefs({ language: e.target.value })}
+          >
+            {langOptions.map((lang) => (
+              <option key={lang} value={lang}>
+                {lang}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className="border border-black/20 bg-white px-4 py-2 text-sm text-[var(--ink)] disabled:opacity-50"
+            disabled={previewing || !ttsReady}
+            onClick={() => void runPreview()}
+          >
+            {previewing ? "试听中…" : "试听"}
+          </button>
+          {!ttsReady && (
+            <span className="text-xs text-[var(--ink-soft)]">
+              上游未就绪时无法试听
+            </span>
+          )}
         </div>
-      )}
+        {previewError && (
+          <p className="text-xs text-[var(--danger)]">{previewError}</p>
+        )}
+      </div>
 
       {!ttsReady && !statusError && (
         <div className="mt-4 border border-black/10 bg-white/60 px-4 py-3 text-sm">
           <p className="font-medium text-[var(--ink)]">启动本机 TTS</p>
-          <p className="mt-2 text-xs text-[var(--ink-soft)]">
-            先 <code>npm run dev</code>；或按 <code>doc/LOCAL_TTS.md</code>{" "}
-            配置外部模型服务。
-          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--ink-soft)]">
+            <li>
+              首次：<code>npm run setup:tts</code>（安装到{" "}
+              <code>.deps/qwen3-tts</code>）
+            </li>
+            <li>
+              预热：<code>npm run prepare:tts</code>（推荐）
+            </li>
+            <li>
+              日常：<code>npm run dev</code>（含 TTS 进程）
+            </li>
+            <li>
+              确认 <code>curl http://127.0.0.1:8880/v1/models</code> 有响应
+            </li>
+          </ol>
         </div>
       )}
 

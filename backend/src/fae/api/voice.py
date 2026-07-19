@@ -42,33 +42,31 @@ def _runtime(request: Request) -> VoiceRuntime:
 @router.get("/status")
 async def voice_status(request: Request) -> dict[str, bool | str]:
     """Voice path readiness: local TTS + optional Daily."""
-    settings = request.app.state.settings
+    from fae.config import get_settings
+    from fae.tts.local_client import LocalTTSClient
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    request.app.state.settings = settings
     daily = bool((settings.daily_api_key or "").strip())
     local_url = settings.vllm_tts_url
-    if settings.tts_embed_stub:
-        local_ok = True
-        hint = f"Embedded TTS stub ready ({local_url})"
-    else:
-        from fae.tts.local_client import LocalTTSClient
-
-        local_ok = await LocalTTSClient(base_url=local_url).health()
-        hint = (
-            f"Local TTS ready ({local_url})"
-            if local_ok
-            else (
-                "Start local TTS server and set VLLM_TTS_URL — doc/LOCAL_TTS.md"
-            )
-        )
+    client = LocalTTSClient(base_url=local_url)
+    local_ok = await client.health()
     return {
         "daily_configured": daily,
         "qwen_tts_configured": local_ok,
         "tts_backend": "local",
-        "tts_embedded": settings.tts_embed_stub,
         "tts_url": local_url,
         "tts_model": settings.tts_model,
         "tts_voice": settings.tts_voice,
-        "default_path": "local-tts" if local_ok else "browser",
-        "hint": hint,
+        "default_path": "local-tts" if local_ok else "none",
+        "hint": (
+            f"Local TTS ready ({local_url})"
+            if local_ok
+            else (
+                f"Start local TTS at {client.speech_url} — doc/LOCAL_TTS.md"
+            )
+        ),
     }
 
 

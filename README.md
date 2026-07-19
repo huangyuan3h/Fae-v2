@@ -52,8 +52,8 @@ open http://localhost:3000
 ### 演示
 
 1. 打开 http://localhost:3000 → **Settings → 模型**，添加 OpenAI / Ollama 配置并设为当前使用  
-2. `npm run dev` 起 backend + UI；**TTS stub 已内嵌在 backend**（`:8000`）；真模型见 [doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md)  
-3. **默认路径**：说话或打字 → 流式回复 + **本机 TTS**（失败才降级浏览器朗读）  
+2. 首次语音：`npm run setup:tts`（装 Qwen3-TTS 到 `.deps/`）；之后 `npm run dev` 会一并起 `:8880`  
+3. **默认路径**：说话或打字 → 流式回复 + **本机 TTS**（`:8000` → `:8880`）  
 4. **Daily（可选）**：Settings → 语音 → 高级 → 勾选 Daily（需 `DAILY_API_KEY`）  
 5. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
 6. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边  
@@ -65,7 +65,7 @@ LLM API Key / Base URL / Model 保存在浏览器 localStorage（Settings），�
 
 | 变量 | 用途 |
 |---|---|
-| `TTS_EMBED_STUB` / `VLLM_TTS_URL` | 默认内嵌 stub；真模型时 `false` + 外部 URL（见 `doc/LOCAL_TTS.md`） |
+| `VLLM_TTS_URL` | 本机 TTS（默认 `:8880`，由 `npm run dev` / `dev:tts` 启动） |
 | `DASHSCOPE_API_KEY` | 可选，仅 LLM 聊天（与 TTS 无关） |
 | `LETTA_MODE` | `remote`（Compose Letta）/ `embedded`（本地 SQLite）/ `off` |
 | `LETTA_SERVER_URL` | remote 时的 Letta 地址（默认 `http://localhost:8283`） |

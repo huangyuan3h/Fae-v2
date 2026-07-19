@@ -42,19 +42,19 @@ class Settings(BaseSettings):
     # ── Voice / LLM ─────────────────────────────────────────────────────
     # Optional LLM API key (OpenAI-compatible providers, including DashScope chat)
     dashscope_api_key: str = ""
-    # Local OpenAI-compatible TTS only (Qwen3-TTS / CosyVoice / stub) — no cloud TTS
-    # When True, stub routes mount on this backend (npm run dev needs no extra process).
-    # Set False + point vllm_tts_url at a real GPU/CPU TTS server for natural speech.
-    tts_embed_stub: bool = True
-    # OpenAI-compatible base, with or without trailing /v1
-    # Default matches embedded stub on the FAE backend (:8000).
-    vllm_tts_url: str = "http://127.0.0.1:8000/v1"
-    tts_model: str = "qwen3-tts"
-    tts_voice: str = "Cherry"
+    # Local OpenAI-compatible TTS only (Qwen3-TTS / CosyVoice) — no cloud / browser TTS
+    # Optional: mount OpenAI-compatible stub routes on this app (dev wiring only).
+    tts_embed_stub: bool = False
+    # Upstream TTS server (FAE proxies /api/tts/speak → {url}/audio/speech)
+    vllm_tts_url: str = "http://127.0.0.1:8880/v1"
+    tts_model: str = "tts-1"
+    tts_voice: str = "Vivian"
     tts_language: str = "Chinese"
+    tts_speed: float = Field(default=1.2, ge=0.25, le=4.0)
     tts_sample_rate: int = Field(default=24000, ge=8000)
     tts_response_format: str = "wav"
-    tts_timeout_s: float = Field(default=60.0, ge=5.0)
+    # Cold start (HF download + model load) on Mac can exceed a minute.
+    tts_timeout_s: float = Field(default=300.0, ge=5.0)
 
     # Letta (long-term memory)
     # remote | embedded | off

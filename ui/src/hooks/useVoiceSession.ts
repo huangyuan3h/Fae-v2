@@ -17,7 +17,8 @@ import {
 } from "@/lib/models";
 import { formatNetworkError } from "@/lib/network-error";
 import { createVoiceSession } from "@/lib/pipecat-client";
-import { speakAssistant } from "@/lib/qwen-tts";
+import { TtsPlayQueue } from "@/lib/qwen-tts";
+import { SentenceAggregator } from "@/lib/sentence-agg";
 import {
   BrowserSTT,
   speechSupported,
@@ -25,6 +26,10 @@ import {
 } from "@/lib/speech";
 import { toSpeakableText } from "@/lib/speakable";
 import { stripThinking } from "@/lib/strip-thinking";
+import {
+  loadTtsPrefs,
+  TTS_PREFS_CHANGED_EVENT,
+} from "@/lib/tts-prefs";
 import {
   loadPreferDaily,
   PREFER_DAILY_CHANGED_EVENT,
@@ -34,7 +39,7 @@ import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
-export type TtsMode = "local-tts" | "qwen3-tts" | "browser" | "none";
+export type TtsMode = "local-tts" | "none";
 
 export type ChatLine = {
   id: string;
@@ -74,9 +79,27 @@ export function useVoiceSession() {
   const sttRef = useRef(new BrowserSTT());
   const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
+  const speakableLenRef = useRef(0);
+  const sentenceAggRef = useRef(new SentenceAggregator());
+  const ttsQueueRef = useRef<TtsPlayQueue | null>(null);
   const connectingDaily = useRef(false);
   const memorySessionRef = useRef(sessionId);
   const voiceSessionRef = useRef<string | null>(null);
+
+  const ensureTtsQueue = useCallback(() => {
+    const prefs = loadTtsPrefs();
+    const opts = {
+      voice: prefs.voice,
+      speed: prefs.speed,
+      language: prefs.language,
+    };
+    if (!ttsQueueRef.current) {
+      ttsQueueRef.current = new TtsPlayQueue(opts);
+    } else {
+      ttsQueueRef.current.setOpts(opts);
+    }
+    return ttsQueueRef.current;
+  }, []);
 
   useEffect(() => {
     memorySessionRef.current = sessionId;
@@ -115,8 +138,17 @@ export function useVoiceSession() {
 
     const onConfigChanged = () => setConfigState(loadConfig());
     const onPreferDailyChanged = () => setPreferDailyState(loadPreferDaily());
+    const onTtsPrefsChanged = () => {
+      const prefs = loadTtsPrefs();
+      ttsQueueRef.current?.setOpts({
+        voice: prefs.voice,
+        speed: prefs.speed,
+        language: prefs.language,
+      });
+    };
     window.addEventListener(CONFIG_CHANGED_EVENT, onConfigChanged);
     window.addEventListener(PREFER_DAILY_CHANGED_EVENT, onPreferDailyChanged);
+    window.addEventListener(TTS_PREFS_CHANGED_EVENT, onTtsPrefsChanged);
 
     const stt = sttRef.current;
     const ws = wsRef.current;
@@ -126,8 +158,11 @@ export function useVoiceSession() {
         PREFER_DAILY_CHANGED_EVENT,
         onPreferDailyChanged,
       );
+      window.removeEventListener(TTS_PREFS_CHANGED_EVENT, onTtsPrefsChanged);
       stt.stop();
       stopSpeaking();
+      ttsQueueRef.current?.stop();
+      ttsQueueRef.current = null;
       ws.close();
       void leaveDailyRoom(dailyRef.current);
       dailyRef.current = null;
@@ -217,6 +252,33 @@ export function useVoiceSession() {
       setError(null);
       setOrb("thinking");
       assistantBuf.current = "";
+      speakableLenRef.current = 0;
+      sentenceAggRef.current.reset();
+      stopSpeaking();
+      const queue = ensureTtsQueue();
+      queue.setHandlers({
+        onError: (ttsErr) => {
+          setTtsMode("none");
+          const msg = ttsErr.message;
+          setError(
+            msg.includes("Cannot reach") || msg.includes("upstream")
+              ? `${msg} — 请确认 :8880 TTS 服务已启动（doc/LOCAL_TTS.md）`
+              : msg,
+          );
+        },
+        onIdle: () => setOrb("idle"),
+      });
+
+      const enqueueSentences = (parts: string[]) => {
+        for (const part of parts) {
+          const plain = toSpeakableText(part);
+          if (!plain) continue;
+          setOrb("speaking");
+          setTtsMode("local-tts");
+          queue.enqueue(plain);
+        }
+      };
+
       const assistantId = `${Date.now()}-a`;
       setLines((prev) => [
         ...prev,
@@ -238,8 +300,16 @@ export function useVoiceSession() {
                   l.id === assistantId ? { ...l, content: visible } : l,
                 ),
               );
+
+              const speakable = toSpeakableText(assistantBuf.current);
+              const delta = speakable.slice(speakableLenRef.current);
+              speakableLenRef.current = speakable.length;
+              if (delta) enqueueSentences(sentenceAggRef.current.push(delta));
             },
-            onDone: () => {},
+            onDone: () => {
+              const leftover = sentenceAggRef.current.flush();
+              if (leftover) enqueueSentences([leftover]);
+            },
             onError: (code, message) => {
               setError(`${code}: ${message}`);
             },
@@ -247,28 +317,11 @@ export function useVoiceSession() {
           memorySessionRef.current,
         );
 
-        const reply = toSpeakableText(assistantBuf.current);
-        if (reply) {
-          setOrb("speaking");
-          try {
-            const result = await speakAssistant(reply);
-            setTtsMode(result.mode);
-            if (
-              result.mode === "browser" &&
-              result.fallbackReason &&
-              result.fallbackReason !== "embedded_stub"
-            ) {
-              setError(
-                "本机 TTS 不可用，已用浏览器朗读。请启动真模型服务，或将 TTS_EMBED_STUB=true（开发 stub）。见 doc/LOCAL_TTS.md",
-              );
-            }
-          } catch (ttsErr) {
-            setError(formatNetworkError(ttsErr, "/api/tts/speak"));
-          }
-        }
-        setOrb("idle");
+        // Stream done — wait for queue drain via onIdle, or idle immediately.
+        if (!queue.isBusy) setOrb("idle");
       } catch (e) {
         if (e instanceof ChatAbortedError) {
+          queue.stop();
           setOrb("idle");
           return;
         }
@@ -276,7 +329,7 @@ export function useVoiceSession() {
         setOrb("idle");
       }
     },
-    [config, support.tts],
+    [config, ensureTtsQueue],
   );
 
   const sendText = useCallback(
@@ -349,6 +402,7 @@ export function useVoiceSession() {
   }, [dailyConnected, disconnectDaily, orb]);
 
   const interrupt = useCallback(() => {
+    ttsQueueRef.current?.stop();
     stopSpeaking();
     wsRef.current.cancel();
     sttRef.current.stop();

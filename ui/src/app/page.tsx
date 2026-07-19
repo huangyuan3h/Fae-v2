@@ -71,16 +71,20 @@ export default function HomePage() {
             {sessionId ? ` · ${sessionId.slice(0, 8)}` : ""} · {mode}
             {mode === "daily"
               ? " · Daily"
-              : ttsMode === "local-tts" || ttsMode === "qwen3-tts"
+              : ttsMode === "local-tts"
                 ? " · 本机 TTS"
-                : ttsMode === "browser"
-                  ? " · 浏览器朗读"
-                  : ""}
+                : ""}
+          </p>
+        )}
+        {orb === "speaking" && (
+          <p className="mt-2 text-xs text-[var(--ink-soft)]">
+            正在合成 / 播放本机语音（长回复可能需十几秒）…
           </p>
         )}
       </header>
 
       <VoiceOrb state={orb} />
+
 
       <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
         <MicButton

@@ -112,7 +112,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 - [x] 云端 TTS 已删除；真模型：`TTS_EMBED_STUB=false` + 外部 URL（`doc/LOCAL_TTS.md`）
 - [ ] 流式首包优化
 - [ ] 同步 `ARCHITECTURE.md` 默认路径说明
-- [ ] 仓库内一键拉起真实 Qwen3-TTS 权重（GPU Dockerfile，后续）
+- [x] 仓库内一键拉起真实 Qwen3-TTS：`npm run setup:tts` + `npm run dev`（`:8880`，Mac 用 MLX）
 
 ---
 

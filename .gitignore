@@ -28,6 +28,7 @@ out/
 # Project
 data/
 .data/
+.deps/
 models/
 checkpoints/
 *.log

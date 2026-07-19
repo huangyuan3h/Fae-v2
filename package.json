@@ -4,10 +4,13 @@
   "description": "FAE-v2 monorepo — voice agent with long-term memory",
   "scripts": {
     "setup": "npm install && cd backend && uv sync --group dev && cd ../ui && pnpm install",
-    "dev": "concurrently -k -n backend,ui -c green,cyan \"npm run dev:backend\" \"npm run dev:ui\"",
+    "setup:tts": "bash scripts/tts/setup.sh",
+    "prepare:tts": "bash scripts/tts/prepare.sh",
+    "dev": "concurrently --kill-others-on-fail -n backend,ui,tts -c green,cyan,magenta \"npm run dev:backend\" \"npm run dev:ui\" \"npm run dev:tts\"",
     "dev:backend": "cd backend && uv sync --group dev --quiet && uv run uvicorn fae.api:app --reload --host 127.0.0.1 --port 8000",
     "dev:ui": "cd ui && pnpm dev",
-    "dev:tts": "cd backend && uv run python -m fae.tts.stub_server",
+    "dev:tts": "bash scripts/tts/run.sh",
+    "dev:stub": "cd backend && uv run python -m fae.tts.stub_server",
     "test:backend": "cd backend && uv run pytest",
     "build:ui": "cd ui && pnpm build"
   },
