@@ -18,6 +18,7 @@ _DEFAULT_HUMAN = DEFAULT_HUMAN
 CITY_KEY = "City"
 TIMEZONE_KEY = "Timezone"
 NAME_KEY = "Name"
+DIETARY_KEY = "Avoids"
 
 _KEY_LINE = re.compile(r"^([A-Za-z][\w ]{0,40}):\s*(.+)$")
 
@@ -125,6 +126,16 @@ def _is_timezone_line(line: str) -> bool:
     return bool(_TZ_LINE_FREE.match(s))
 
 
+_DIETARY_LINE = re.compile(
+    r"(?i)^(?:avoids?|dietary|忌口|不吃|过敏)[:\s]+(.+?)\.?$"
+)
+
+
+def _is_dietary_line(line: str) -> bool:
+    s = line.strip()
+    return bool(_DIETARY_LINE.match(s)) or s.lower().startswith("avoids:")
+
+
 def upsert_location_note(existing: str, city: str) -> str:
     """Write/replace a freeform 'Lives in {city}.' note in the human block."""
     city = (city or "").strip()
@@ -163,6 +174,19 @@ def upsert_timezone_note(existing: str, timezone: str) -> str:
     return "\n".join(kept).strip() or _DEFAULT_HUMAN
 
 
+def upsert_dietary_note(existing: str, avoid: str) -> str:
+    """Write/replace a freeform 'Avoids: …' dietary note."""
+    avoid = (avoid or "").strip().rstrip("。.!！?")
+    if not avoid:
+        return (existing or "").strip() or _DEFAULT_HUMAN
+    lines = [ln for ln in (existing or "").splitlines() if ln.strip()]
+    if len(lines) == 1 and "Unknown user" in lines[0]:
+        lines = []
+    kept = [ln for ln in lines if not _is_dietary_line(ln)]
+    kept.append(f"Avoids: {avoid}.")
+    return "\n".join(kept).strip() or _DEFAULT_HUMAN
+
+
 def merge_human_profile(
     existing: str,
     *,
@@ -182,12 +206,20 @@ def merge_human_profile(
         or prefs.pop("Timezone", None)
         or prefs.pop("tz", None)
     )
+    dietary = (
+        prefs.pop(DIETARY_KEY, None)
+        or prefs.pop("dietary", None)
+        or prefs.pop("Avoid", None)
+        or prefs.pop("avoid", None)
+    )
     if display_name:
         text = upsert_name_note(text, display_name)
     if city:
         text = upsert_location_note(text, city)
     if timezone:
         text = upsert_timezone_note(text, timezone)
+    if dietary:
+        text = upsert_dietary_note(text, dietary)
 
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines and not prefs and not notes:

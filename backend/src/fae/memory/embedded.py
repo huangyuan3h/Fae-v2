@@ -14,7 +14,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fae.memory.core_budget import truncate_current
+from fae.memory.core_budget import (
+    clip_current_for_prompt,
+    identity_fact_boost,
+    truncate_current,
+)
 from fae.memory.defaults import DEFAULT_CURRENT, DEFAULT_HUMAN, DEFAULT_PERSONA
 from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
@@ -195,9 +199,10 @@ class EmbeddedMemoryClient:
         scored: list[tuple[int, sqlite3.Row]] = []
         for row in rows:
             content = row["content"].lower()
-            score = 0
+            tags = json.loads(row["tags"] or "[]")
+            score = identity_fact_boost(tags)
             if not q:
-                score = 1
+                score = max(score, 1)
             else:
                 for token in q.split():
                     if token and token in content:
@@ -300,7 +305,7 @@ class EmbeddedMemoryClient:
     ) -> str:
         persona = self._get_block("persona").strip()
         human = self._get_block("human").strip()
-        current = self._get_block("current").strip()
+        current = clip_current_for_prompt(self._get_block("current").strip())
         parts: list[str] = []
         if persona:
             parts.append(f"[persona]\n{persona}")
@@ -318,6 +323,7 @@ class EmbeddedMemoryClient:
                 parts.append("[recent_turns]\n" + "\n---\n".join(lines))
         facts = await self.search(query, top_k=top_k)
         if facts:
+            # Identity-tagged facts already boosted in search; keep that order.
             lines = "\n".join(f"- {f.content}" for f in facts)
             parts.append(f"[facts]\n{lines}")
         return "\n\n".join(parts)

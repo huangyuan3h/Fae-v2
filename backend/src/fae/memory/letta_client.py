@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 
-from fae.memory.core_budget import truncate_current
+from fae.memory.core_budget import clip_current_for_prompt, truncate_current
 from fae.memory.defaults import DEFAULT_CURRENT, DEFAULT_HUMAN, DEFAULT_PERSONA
 from fae.memory.recall_store import RecallStore
 from fae.memory.schemas import FactIn, FactOut, RecallTurn, UserProfile
@@ -362,7 +362,7 @@ class LettaMemoryClient:
     ) -> str:
         persona = (await self._get_block("persona")).strip()
         human = (await self._get_block("human")).strip()
-        current = (await self._get_block("current")).strip()
+        current = clip_current_for_prompt((await self._get_block("current")).strip())
         parts: list[str] = []
         if persona:
             parts.append(f"[persona]\n{persona}")

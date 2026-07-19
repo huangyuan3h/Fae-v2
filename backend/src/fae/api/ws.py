@@ -204,7 +204,8 @@ async def ws_chat(
     """Streaming chat over WebSocket."""
     await websocket.accept()
     active: asyncio.Task[None] | None = None
-    connection_session_id = str(uuid.uuid4())
+    # Fallback when client omits session_id; UI should send stable "default".
+    connection_session_id = "default"
     hub = getattr(websocket.app.state, "ws_hub", None)
     if isinstance(hub, ConnectionHub):
         hub.register(websocket, connection_session_id)

@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { getMemorySessionId } from "@/lib/client-identity";
 import { fetchMemoryStats, fetchTimeline } from "@/lib/memory-api";
 
 function dayKey(iso: string | null): string {
@@ -38,6 +39,8 @@ export function MemoryTimeline() {
     byDay.set(day, row);
   }
   const chartData = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  const vectorMode = stats.data?.vector_mode ?? "stub";
+  const memorySessionId = getMemorySessionId();
 
   return (
     <section className="space-y-6">
@@ -47,6 +50,20 @@ export function MemoryTimeline() {
         <Stat label="Archival" value={stats.data?.archival ?? "—"} />
         <Stat label="Sleeptime" value={stats.data?.sleeptime ?? "—"} />
       </div>
+
+      <p className="text-xs text-[var(--ink-soft)]">
+        记忆会话：<code className="text-[var(--ink)]">{memorySessionId}</code>
+        {" · "}
+        向量：{vectorMode}
+      </p>
+
+      {vectorMode === "stub" && (
+        <p className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-900">
+          语义检索不可靠（hash stub）。配置{" "}
+          <code className="text-xs">EMBEDDING_BASE_URL</code>{" "}
+          后可启用真向量；身份事实仍以「重要信息 / human」为准。
+        </p>
+      )}
 
       {(timeline.isError || stats.isError) && (
         <p className="rounded-xl border border-[var(--danger)]/30 bg-white/60 px-3 py-2 text-sm text-[var(--danger)]">

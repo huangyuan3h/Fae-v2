@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     archival_decay_days: int = Field(default=180, ge=0)
     episodic_db_path: str = ".data/fae-episodic.db"
 
+    # Optional OpenAI-compatible embeddings for archival (empty → hash stub vectors)
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    # Optional fixed output dim (provider-dependent); 0 = use model default
+    embedding_dimensions: int = Field(default=0, ge=0)
+
     # Sleeptime consolidation (Phase 2.4)
     sleeptime_enabled: bool = True
     sleeptime_idle_seconds: int = Field(default=300, ge=5)

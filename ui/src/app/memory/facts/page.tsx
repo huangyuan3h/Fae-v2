@@ -193,6 +193,11 @@ export default function MemoryFactsPage() {
                       {t}
                     </span>
                   ))}
+                  {fact.created_at && (
+                    <span title={fact.created_at}>
+                      {fact.created_at.slice(0, 16).replace("T", " ")}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="ml-auto underline-offset-2 hover:underline"

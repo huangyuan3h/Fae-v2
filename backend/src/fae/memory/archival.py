@@ -22,6 +22,23 @@ DEFAULT_DECAY_DAYS = 180
 _DECAY_FACTOR = 0.25
 
 
+def collection_name_for_dim(dim: int) -> str:
+    """Use a dim-suffixed collection when not on the stub 64-d space."""
+    if dim == VECTOR_SIZE:
+        return COLLECTION
+    return f"fae_archival_d{dim}"
+
+
+def _uniq_tags(tags: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tags:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def stub_embed(text: str, *, dim: int = VECTOR_SIZE) -> list[float]:
     """Deterministic pseudo-embedding for offline / tests."""
     digest = hashlib.sha256((text or "").encode("utf-8")).digest()
@@ -75,6 +92,7 @@ def decay_multiplier(
 
 class ArchivalBackend(Protocol):
     mode: str  # ok | stub | down
+    vector_mode: str  # stub | real
 
     async def ensure_ready(self) -> None: ...
 
@@ -84,6 +102,7 @@ class ArchivalBackend(Protocol):
         text: str,
         session_id: str,
         point_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> str: ...
 
     async def search(
@@ -99,15 +118,26 @@ class ArchivalBackend(Protocol):
     async def close(self) -> None: ...
 
 
+# id, text, session_id, vector, created_at, last_accessed, tags
+_StubItem = tuple[str, str, str, list[float], str, str, list[str]]
+
+
 class StubArchival:
     """In-memory archival for tests and when Qdrant is unavailable."""
 
     mode = "stub"
 
-    def __init__(self, *, decay_days: int = DEFAULT_DECAY_DAYS) -> None:
-        # id, text, session_id, vector, created_at, last_accessed
-        self._items: list[tuple[str, str, str, list[float], str, str]] = []
+    def __init__(
+        self,
+        *,
+        decay_days: int = DEFAULT_DECAY_DAYS,
+        embed_fn=None,
+        vector_mode: str | None = None,
+    ) -> None:
+        self._items: list[_StubItem] = []
         self.decay_days = decay_days
+        self._embed = embed_fn or stub_embed
+        self.vector_mode = vector_mode or ("real" if embed_fn is not None else "stub")
 
     async def ensure_ready(self) -> None:
         return None
@@ -118,22 +148,24 @@ class StubArchival:
         text: str,
         session_id: str,
         point_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> str:
         pid = point_id or str(uuid4())
-        vec = stub_embed(text)
+        vec = self._embed(text)
         sid = (session_id or "").strip() or "default"
         now = _now_iso()
+        tag_list = list(tags or [])
         self._items = [i for i in self._items if i[0] != pid]
-        self._items.append((pid, text, sid, vec, now, now))
+        self._items.append((pid, text, sid, vec, now, now, tag_list))
         return pid
 
     def set_last_accessed(self, point_id: str, when: str) -> None:
         """Test helper to backdate access for decay checks."""
-        updated: list[tuple[str, str, str, list[float], str, str]] = []
+        updated: list[_StubItem] = []
         for item in self._items:
             if item[0] == point_id:
                 updated.append(
-                    (item[0], item[1], item[2], item[3], item[4], when)
+                    (item[0], item[1], item[2], item[3], item[4], when, item[6])
                 )
             else:
                 updated.append(item)
@@ -150,8 +182,8 @@ class StubArchival:
         if session_id is not None:
             sid = (session_id or "").strip() or "default"
             items = [i for i in items if i[2] == sid]
-        qv = stub_embed(query)
-        scored: list[tuple[float, tuple[str, str, str, list[float], str, str]]] = []
+        qv = self._embed(query)
+        scored: list[tuple[float, _StubItem]] = []
         q = (query or "").lower()
         for item in items:
             score = sum(a * b for a, b in zip(qv, item[3], strict=False))
@@ -164,10 +196,12 @@ class StubArchival:
         scored.sort(key=lambda x: x[0], reverse=True)
         now = _now_iso()
         out: list[FactOut] = []
-        for score, (pid, text, sid, _, created, accessed) in scored[:top_k]:
+        for score, (pid, text, sid, _, created, accessed, extra_tags) in scored[
+            :top_k
+        ]:
             if score <= 0 and not q:
                 continue
-            tags = ["archival"]
+            tags = _uniq_tags(["archival", *extra_tags])
             if (
                 decay_multiplier(
                     accessed, created_at=created, decay_days=self.decay_days
@@ -180,9 +214,14 @@ class StubArchival:
             )
             self.set_last_accessed(pid, now)
         if not out and scored and q:
-            for _, (pid, text, sid, _, _, _) in scored[:top_k]:
+            for _, (pid, text, sid, _, _, _, extra_tags) in scored[:top_k]:
                 out.append(
-                    FactOut(id=pid, content=text, tags=["archival"], session_id=sid)
+                    FactOut(
+                        id=pid,
+                        content=text,
+                        tags=_uniq_tags(["archival", *extra_tags]),
+                        session_id=sid,
+                    )
                 )
                 self.set_last_accessed(pid, now)
         return out
@@ -203,13 +242,17 @@ class QdrantArchival:
         self,
         base_url: str,
         *,
-        collection: str = COLLECTION,
+        collection: str | None = None,
         embed_fn=None,
+        vector_size: int = VECTOR_SIZE,
+        vector_mode: str = "stub",
         timeout_s: float = 5.0,
         decay_days: int = DEFAULT_DECAY_DAYS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.collection = collection
+        self.vector_size = vector_size
+        self.vector_mode = vector_mode
+        self.collection = collection or collection_name_for_dim(vector_size)
         self._embed = embed_fn or stub_embed
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
         self._ready = False
@@ -225,7 +268,7 @@ class QdrantArchival:
                 f"/collections/{self.collection}",
                 json={
                     "vectors": {
-                        "size": VECTOR_SIZE,
+                        "size": self.vector_size,
                         "distance": "Cosine",
                     }
                 },
@@ -233,6 +276,23 @@ class QdrantArchival:
             create.raise_for_status()
         elif resp.status_code >= 400:
             resp.raise_for_status()
+        else:
+            # Warn on dimension mismatch; leave collection as-is (use dim-suffixed name).
+            try:
+                info = resp.json().get("result") or {}
+                cfg = (info.get("config") or {}).get("params") or {}
+                vectors = cfg.get("vectors") or {}
+                size = vectors.get("size") if isinstance(vectors, dict) else None
+                if size is not None and int(size) != self.vector_size:
+                    logger.warning(
+                        "Qdrant collection %s size=%s != embed dim=%s — "
+                        "recreate or change EMBEDDING_DIMENSIONS",
+                        self.collection,
+                        size,
+                        self.vector_size,
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         self._ready = True
 
     async def upsert(
@@ -241,6 +301,7 @@ class QdrantArchival:
         text: str,
         session_id: str,
         point_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> str:
         await self.ensure_ready()
         # Qdrant point ids: prefer unsigned int to avoid string-id validation issues.
@@ -267,6 +328,7 @@ class QdrantArchival:
                             "uuid": pid_uuid,
                             "created_at": now,
                             "last_accessed": now,
+                            "tags": list(tags or []),
                         },
                     }
                 ]
@@ -314,7 +376,10 @@ class QdrantArchival:
                 created_at=payload.get("created_at"),
                 decay_days=self.decay_days,
             )
-            tags = ["archival"]
+            extra = payload.get("tags") or []
+            if not isinstance(extra, list):
+                extra = []
+            tags = _uniq_tags(["archival", *[str(t) for t in extra]])
             if mult < 1.0:
                 tags.append("decayed")
             fact = FactOut(
@@ -360,16 +425,31 @@ async def create_archival(
     qdrant_url: str,
     prefer_stub: bool = False,
     decay_days: int = DEFAULT_DECAY_DAYS,
+    embed_fn=None,
+    vector_size: int | None = None,
+    vector_mode: str = "stub",
 ) -> ArchivalBackend:
+    dim = vector_size or VECTOR_SIZE
+    vmode = vector_mode if embed_fn is not None else "stub"
     if prefer_stub:
-        return StubArchival(decay_days=decay_days)
-    backend = QdrantArchival(qdrant_url, decay_days=decay_days)
+        return StubArchival(
+            decay_days=decay_days, embed_fn=embed_fn, vector_mode=vmode
+        )
+    backend = QdrantArchival(
+        qdrant_url,
+        decay_days=decay_days,
+        embed_fn=embed_fn,
+        vector_size=dim,
+        vector_mode=vmode,
+    )
     try:
         status = await backend.health()
         if status != "ok":
             await backend.close()
             logger.warning("Qdrant unhealthy at %s — using stub archival", qdrant_url)
-            return StubArchival(decay_days=decay_days)
+            return StubArchival(
+                decay_days=decay_days, embed_fn=embed_fn, vector_mode=vmode
+            )
         await backend.ensure_ready()
         return backend
     except Exception:  # noqa: BLE001
@@ -378,4 +458,6 @@ async def create_archival(
             await backend.close()
         except Exception:  # noqa: BLE001
             pass
-        return StubArchival(decay_days=decay_days)
+        return StubArchival(
+            decay_days=decay_days, embed_fn=embed_fn, vector_mode=vmode
+        )

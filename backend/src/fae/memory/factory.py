@@ -29,12 +29,14 @@ class MemoryStack:
     archival: ArchivalBackend | None = None
     compactor: MemoryCompactor | None = None
     episodic: EpisodicStore | None = None
+    embedder: object | None = None
 
     async def close(self) -> None:
         client, self.client = self.client, None
         archival, self.archival = self.archival, None
         recall, self.recall = self.recall, None
         episodic, self.episodic = self.episodic, None
+        embedder, self.embedder = self.embedder, None
         self.compactor = None
         if client is not None:
             closer = getattr(client, "_raw_close", client.close)
@@ -57,6 +59,13 @@ class MemoryStack:
                 episodic.close()
             except Exception:  # noqa: BLE001
                 logger.exception("episodic.close failed")
+        if embedder is not None:
+            closer = getattr(embedder, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001
+                    logger.exception("embedder.close failed")
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -82,10 +91,34 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
     try:
         recall = RecallStore(_resolve_path(settings.recall_db_path))
         episodic = EpisodicStore(_resolve_path(settings.episodic_db_path))
+        embed_fn = None
+        vector_size = None
+        vector_mode = "stub"
+        stack_embedder = None
+        emb_url = (getattr(settings, "embedding_base_url", "") or "").strip()
+        if emb_url:
+            from fae.memory.embeddings import build_embedder
+
+            dims = int(getattr(settings, "embedding_dimensions", 0) or 0)
+            stack_embedder = build_embedder(
+                base_url=emb_url,
+                api_key=getattr(settings, "embedding_api_key", "") or "",
+                model=getattr(settings, "embedding_model", "")
+                or "text-embedding-3-small",
+                dimensions=dims or None,
+            )
+            if stack_embedder is not None:
+                embed_fn = stack_embedder.embed
+                vector_size = stack_embedder.vector_size
+                vector_mode = "real"
+
         archival = await create_archival(
             qdrant_url=settings.qdrant_url,
             prefer_stub=settings.archival_prefer_stub,
             decay_days=settings.archival_decay_days,
+            embed_fn=embed_fn,
+            vector_size=vector_size,
+            vector_mode=vector_mode,
         )
 
         if mode == "embedded":
@@ -149,6 +182,7 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
             archival=archival,
             compactor=compactor,
             episodic=episodic,
+            embedder=stack_embedder,
         )
     except Exception:
         partial = MemoryStack(

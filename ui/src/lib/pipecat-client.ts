@@ -22,6 +22,8 @@ export type VoiceSession = {
 export async function createVoiceSession(opts: {
   preferDaily?: boolean;
   config?: AgentConfig;
+  /** Stable memory bucket (defaults to client identity "default"). */
+  memorySessionId?: string | null;
 }): Promise<VoiceSession> {
   let res: Response;
   try {
@@ -33,6 +35,7 @@ export async function createVoiceSession(opts: {
         llm_api_key: opts.config?.apiKey || null,
         llm_base_url: opts.config?.baseUrl || null,
         llm_model: opts.config?.model || null,
+        memory_session_id: opts.memorySessionId || null,
       }),
     });
   } catch (err) {

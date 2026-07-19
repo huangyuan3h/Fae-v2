@@ -1,24 +1,65 @@
-"""Heuristic fact extraction for persist_turn — name, location, corrections."""
+"""Heuristic fact extraction for persist_turn — name, location, dietary, corrections."""
 
 from __future__ import annotations
 
 import re
 
-from fae.memory.profile_block import CITY_KEY, TIMEZONE_KEY
+from fae.memory.profile_block import CITY_KEY, DIETARY_KEY, TIMEZONE_KEY
 from fae.memory.schemas import FactIn, UserProfile
 
-# "我叫小明" / "我的名字是小明" / "My name is Ming"
+# "我叫小明" / "我的名字是小明" / "叫我小明" / "My name is Ming"
 _NAME_PATTERNS = (
-    re.compile(r"(?:我叫|我的名字是)\s*([^\s，。,.!！？?]{1,32})"),
-    re.compile(r"(?i)(?:my name is)\s+([A-Za-z][\w\- ]{0,31})"),
+    re.compile(r"(?:我叫|我的名字是|叫我|大家叫我)\s*([^\s，。,.!！？?]{1,32})"),
+    re.compile(r"(?i)(?:my name is|call me|i go by)\s+([A-Za-z][\w\- ]{0,31})"),
 )
 
-# Explicit home-city statements (avoid bare "我是/我在" — too noisy)
+# "我是小明" — only short proper-name-like tokens (avoid "我是一个程序员")
+_NAME_WO_SHI = re.compile(r"我是\s*([^\s，。,.!！？?]{1,12})")
+_NAME_SHI_STOPWORDS = {
+    "一",
+    "一个",
+    "一名",
+    "一位",
+    "在",
+    "想",
+    "会",
+    "要",
+    "来",
+    "去",
+    "说",
+    "看",
+    "听",
+    "做",
+    "用",
+    "有",
+    "没",
+    "不",
+    "很",
+    "太",
+    "真",
+    "就",
+    "才",
+    "都",
+    "也",
+    "还",
+    "能",
+    "可以",
+    "应该",
+    "程序员",
+    "学生",
+    "老师",
+    "中国人",
+    "人",
+}
+
+# Explicit home-city statements (avoid bare "我在" — too noisy)
 _CITY_PATTERNS = (
     re.compile(
-        r"(?:我住在|我家在|我的城市是|我位于|现在住在|我搬到了?)\s*"
+        r"(?:我住在|我家在|家在|住在|我的城市是|我位于|现在住在|我搬到了?)\s*"
         r"([^\s，。,.!！？?]{1,32})"
     ),
+    # "住北京" / "住上海" without 在
+    re.compile(r"(?:^|[，,、\s])住\s*([\u4e00-\u9fff]{2,8})"),
     re.compile(
         r"(?i)(?:i live in|i moved to|my (?:home )?city is|based in|now in)\s+"
         r"([A-Za-z][\w\- ]{0,31})"
@@ -40,6 +81,21 @@ _CITY_CORRECTION_PATTERNS = (
 
 _TZ_PATTERNS = (
     re.compile(r"(?:时区(?:是|为)|timezone(?:\s+is)?)\s*([A-Za-z][\w/\-+]{2,40})"),
+)
+
+# Dietary / allergies: 我忌香菜 / 忌香菜 / 不吃花生 / 对海鲜过敏 / I can't eat nuts
+_DIETARY_PATTERNS = (
+    re.compile(
+        r"(?:我忌口?|我忌|忌吃|不能吃|不吃|别给我|不要给我)\s*"
+        r"([^\s，。,.!！？?]{1,40})"
+    ),
+    # "…，忌香菜" mid-sentence without 我
+    re.compile(r"(?:^|[，,、\s])忌\s*([^\s，。,.!！？?]{1,40})"),
+    re.compile(r"对\s*([^\s，。,.!！？?]{1,32})\s*过敏"),
+    re.compile(
+        r"(?i)(?:i (?:can't|cannot|dont|don't) eat|allergic to|i avoid)\s+"
+        r"([A-Za-z][\w\- ]{0,39})"
+    ),
 )
 
 # Assistant just asked for location → accept a short city-only reply
@@ -68,6 +124,23 @@ _CITY_STOPWORDS = {
     "there",
 }
 
+_DIETARY_STOPWORDS = {
+    "东西",
+    "这个",
+    "那个",
+    "那些",
+    "这些",
+    "什么",
+    "了",
+    "啊",
+    "吧",
+    "it",
+    "that",
+    "this",
+    "them",
+    "food",
+}
+
 
 def extract_display_name(user_text: str) -> str | None:
     text = (user_text or "").strip()
@@ -79,6 +152,16 @@ def extract_display_name(user_text: str) -> str | None:
             name = match.group(1).strip(" \"'")
             if name and name.lower() not in {"a", "an", "the", "叫", "是"}:
                 return name
+    match = _NAME_WO_SHI.search(text)
+    if match:
+        name = match.group(1).strip(" \"'")
+        if (
+            name
+            and name not in _NAME_SHI_STOPWORDS
+            and not name.startswith("一")
+            and len(name) <= 12
+        ):
+            return name
     return None
 
 
@@ -140,6 +223,22 @@ def extract_timezone(user_text: str) -> str | None:
     return None
 
 
+def extract_dietary(user_text: str) -> str | None:
+    text = (user_text or "").strip()
+    if not text:
+        return None
+    for pattern in _DIETARY_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            item = match.group(1).strip(" \"'。.!！?")
+            if not item or len(item) < 1 or len(item) > 40:
+                continue
+            if item.lower() in _DIETARY_STOPWORDS or item in _DIETARY_STOPWORDS:
+                continue
+            return item
+    return None
+
+
 def facts_from_turn(
     *,
     user_text: str,
@@ -152,6 +251,7 @@ def facts_from_turn(
     name = extract_display_name(user_text)
     city = extract_city(user_text, assistant_text=assistant_text)
     timezone = extract_timezone(user_text)
+    dietary = extract_dietary(user_text)
 
     if name:
         facts.append(
@@ -176,6 +276,15 @@ def facts_from_turn(
             FactIn(
                 content=f"User timezone is {timezone}",
                 tags=["identity", "timezone"],
+                session_id=session_id,
+            )
+        )
+    if dietary:
+        prefs[DIETARY_KEY] = dietary
+        facts.append(
+            FactIn(
+                content=f"User avoids / cannot eat: {dietary}",
+                tags=["preference", "dietary", "identity"],
                 session_id=session_id,
             )
         )

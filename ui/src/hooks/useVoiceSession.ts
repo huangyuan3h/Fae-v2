@@ -3,6 +3,7 @@
 import type { DailyCall } from "@daily-co/daily-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getMemorySessionId } from "@/lib/client-identity";
 import {
   type AgentConfig,
   DEFAULT_CONFIG,
@@ -47,21 +48,14 @@ export type ChatLine = {
   content: string;
 };
 
-function makeClientSessionId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 export function useVoiceSession() {
   const [config, setConfigState] = useState<AgentConfig>(DEFAULT_CONFIG);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Stable client id for memory recall buckets (available before /api/voice/session).
-  const [sessionId] = useState(makeClientSessionId);
+  // Stable memory bucket shared with proactive / consolidate (localStorage).
+  const [sessionId] = useState(getMemorySessionId);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
   const [ttsMode, setTtsMode] = useState<TtsMode>("none");
@@ -134,7 +128,10 @@ export function useVoiceSession() {
     setConfigState(syncActiveConfig());
     setPreferDailyState(loadPreferDaily());
     setSupport(speechSupported());
-    createVoiceSession({ preferDaily: false })
+    createVoiceSession({
+      preferDaily: false,
+      memorySessionId: memorySessionRef.current,
+    })
       .then((s) => {
         setVoiceSessionId(s.sessionId);
         setMode(s.mode);
@@ -222,6 +219,7 @@ export function useVoiceSession() {
       const session = await createVoiceSession({
         preferDaily: true,
         config,
+        memorySessionId: memorySessionRef.current,
       });
       setVoiceSessionId(session.sessionId);
       setMode(session.mode);

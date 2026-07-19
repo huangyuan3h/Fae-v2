@@ -418,8 +418,8 @@ def create_app(
             request.app.state, "memory", None
         )
         skills_rt = getattr(request.app.state, "skills", None)
-        # Never share a global "http" bucket across anonymous callers.
-        session_id = (body.session_id or "").strip() or str(uuid.uuid4())
+        # Single-user local default aligns with UI / proactive / consolidate.
+        session_id = (body.session_id or "").strip() or "default"
         user_text = ""
         for msg in reversed(body.messages):
             if msg.role == "user":

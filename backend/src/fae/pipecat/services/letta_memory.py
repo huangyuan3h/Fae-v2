@@ -11,9 +11,10 @@ from fae.memory.episodic import (
     detect_life_events,
     format_events_for_prompt,
 )
+from fae.memory.core_budget import is_identity_tagged
 from fae.memory.fact_extract import facts_from_turn
 from fae.memory.protocol import MemoryClient
-from fae.memory.schemas import FactIn
+from fae.memory.schemas import FactIn, FactOut
 
 if TYPE_CHECKING:
     from fae.memory.archival import ArchivalBackend
@@ -101,12 +102,28 @@ class LettaMemoryService:
         if not (query or "").strip():
             return base
         try:
-            hits = await self._archival.search(
+            scoped = await self._archival.search(
                 query, top_k=top_k, session_id=session_id
+            )
+            # Identity / dietary memories are global — also search unscoped.
+            global_hits = await self._archival.search(
+                query, top_k=top_k, session_id=None
             )
         except Exception:  # noqa: BLE001
             logger.exception("archival search failed")
             return base
+        by_id: dict[str, FactOut] = {}
+        ordered_ids: list[str] = []
+        for hit in global_hits:
+            if is_identity_tagged(hit.tags):
+                if hit.id not in by_id:
+                    by_id[hit.id] = hit
+                    ordered_ids.append(hit.id)
+        for hit in scoped:
+            if hit.id not in by_id:
+                by_id[hit.id] = hit
+                ordered_ids.append(hit.id)
+        hits = [by_id[i] for i in ordered_ids]
         if not hits:
             return base
         # Prefer non-decayed hits; still include decayed at the end if needed.
@@ -221,6 +238,15 @@ class LettaMemoryService:
             for fact in facts:
                 saved = await self._client.save_fact(fact)
                 saved_facts.append(saved)
+                if self._archival is not None and is_identity_tagged(fact.tags):
+                    try:
+                        await self._archival.upsert(
+                            text=fact.content,
+                            session_id=session_id or "default",
+                            tags=list(fact.tags),
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("archival upsert identity fact failed")
 
             await self._client.append_recall(session_id, user_text, assistant_text)
             await self._persist_episodes(session_id, user_text, saved_facts)

@@ -21,6 +21,8 @@ class VoiceSessionRequest(BaseModel):
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
+    # Stable memory bucket (UI localStorage). Runtime/barge-in still uses SessionStore id.
+    memory_session_id: str | None = None
 
 
 class VoiceSessionOut(BaseModel):
@@ -29,6 +31,7 @@ class VoiceSessionOut(BaseModel):
     roomUrl: str | None = None
     token: str | None = None
     detail: str | None = None
+    memorySessionId: str | None = None
 
 
 def _sessions(request: Request) -> SessionStore:
@@ -104,6 +107,8 @@ async def create_voice_session(
 
         memory = getattr(request.app.state, "memory", None)
         skills = getattr(request.app.state, "skills", None)
+        memory_sid = (body.memory_session_id or "").strip() or "default"
+        session.meta["memory_session_id"] = memory_sid
         runtime.spawn(
             session.id,
             run_daily_bot(
@@ -115,7 +120,7 @@ async def create_voice_session(
                 llm_model=body.llm_model,
                 on_ready=_bind_interrupt,
                 memory=memory,
-                session_id=session.id,
+                session_id=memory_sid,
                 skills=skills,
             ),
         )
@@ -125,9 +130,12 @@ async def create_voice_session(
             roomUrl=room.room_url,
             token=room.token,
             detail="Pipecat Daily bot started",
+            memorySessionId=memory_sid,
         )
 
     session.meta["transport"] = "browser"
+    memory_sid = (body.memory_session_id or "").strip() or "default"
+    session.meta["memory_session_id"] = memory_sid
     detail = "browser Web Speech path"
     if body.prefer_daily and not daily_key:
         detail = "DAILY_API_KEY not set — falling back to browser mode"
@@ -136,6 +144,7 @@ async def create_voice_session(
         mode="browser",
         sessionId=session.id,
         detail=detail,
+        memorySessionId=memory_sid,
     )
 
 

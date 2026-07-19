@@ -174,10 +174,14 @@ async def memory_stats(request: Request) -> dict:
         except Exception:  # noqa: BLE001
             archival_status = "down"
     episodic = getattr(request.app.state, "episodic", None)
+    vector_mode = "stub"
+    if archival is not None:
+        vector_mode = getattr(archival, "vector_mode", "stub") or "stub"
     return {
         "recall_turns": recall.total_hot() if recall is not None else 0,
         "core": core,
         "archival": archival_status,
+        "vector_mode": vector_mode,
         "events": episodic.count() if episodic is not None else 0,
         "sleeptime": (
             "on"

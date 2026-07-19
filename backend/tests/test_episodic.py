@@ -87,7 +87,8 @@ async def test_archival_decay_downweights_stale() -> None:
     items = []
     for item in archival._items:
         if item[0] == pid:
-            items.append((item[0], item[1], item[2], item[3], old, old))
+            tags = item[6] if len(item) > 6 else []
+            items.append((item[0], item[1], item[2], item[3], old, old, tags))
         else:
             items.append(item)
     archival._items = items

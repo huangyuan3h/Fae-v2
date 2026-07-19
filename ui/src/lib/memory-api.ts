@@ -131,6 +131,7 @@ export function fetchMemoryStats() {
     recall_turns: number;
     events: number;
     archival: string;
+    vector_mode?: string;
     sleeptime: string;
   }>("/api/memory/stats");
 }

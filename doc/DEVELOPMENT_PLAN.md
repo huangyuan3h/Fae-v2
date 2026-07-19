@@ -177,17 +177,18 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 **验收**：Settings 改人设 → 下一轮对话语气一致；恢复默认可用。
 
-### Q.3 记忆真有用（Memory Usefulness）
+### Q.3 记忆真有用（Memory Usefulness）— ✅ 首版
 
 **问题**：事实正则、episodic 关键词、archival stub 向量、sleeptime 堆字、会话 ID 碎片。
 
-- [ ] **身份稳定**：浏览器刷新 / 主动任务 / 记忆 UI 共用稳定 `user`/`agent`/`session` 约定（消灭 `"default"` 漂移）
-- [ ] **事实提取升级**：LLM（或更强规则+确认）写 user 事实；低置信可进待确认
-- [ ] **Archival 真检索**：真实 embedding；stub 模式在 `/memory` 与日志明确标「不可靠」
-- [ ] **Sleeptime 产出短摘要**：整理后的 `current` 应是可行动摘要，不是对话垃圾堆
-- [ ] **Recall 可用性**：按相关性或话题检索，而不只是最近 N 轮 dump
-- [ ] **Memory UI**：展示「上轮注入了什么 / 为何注入」；一键遗忘 / 导出仍归横切但先做最小入口
-- [ ] **验收（MQ-3）**：说「我叫 X，住 Y，忌 Z」→ 关页重开仍答对；一周后 archival 能搜回关键句（非 stub）
+- [x] **身份稳定**：UI `localStorage` → `session_id=default`；chat / WS / Daily memory / proactive / consolidate 对齐
+- [x] **事实提取升级**：姓名/城市/忌口启发式写入 `human`（LLM 抽取仍后置）
+- [x] **Archival 诚实 + 可选真向量**：`vector_mode` stub|real；`EMBEDDING_*` OpenAI-compatible；身份 fact upsert archival
+- [x] **Sleeptime 短摘要**：`current` 替换为短 bullet；durable 行再跑 `facts_from_turn` → human
+- [x] **Recall 偏置**：`[current]` 注入截断；identity facts 置顶；identity archival 全局检索
+- [x] **Memory UI 最小可观测**：vector_mode 横幅、session 显示、facts tags/时间
+- [ ] **后置**：LLM 事实抽取 / 待确认队列 / 完整 provenance 面板 / 一键遗忘
+- [x] **验收（MQ-3）**：说「我叫 X，住 Y，忌 Z」→ 关页重开仍答对（human）；stub 时 UI 标明不可靠
 
 ### Q.4 Loop 真主动（Proactive Usefulness）
 
@@ -303,6 +304,7 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | M0～M4 | 各阶段骨架 Demo | ✅ |
 | M2.6-1 / M2.6-2 | 本地 TTS stub / 真模型可播 | ✅ 首版（体验进 Q.1） |
 | **MQ-0** | 人设可配置：Settings 改 persona 下一轮生效 | ✅ |
+| **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
 | **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | 🔜 |
 | **MQ-2** | Skills：三场景稳定 + 契约无悬空 | 🔜 |
 | **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
@@ -332,7 +334,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase 1～4 骨架
 - [x] Phase 2.6 本地 TTS 首版
 - [x] Phase Q.0 人设可配置
-- [ ] **Phase Q 质量硬化（Q.1–Q.4）** ← **下一主线**
+- [x] Phase Q.3 记忆真有用（首版）
+- [ ] **Phase Q 质量硬化（Q.1 / Q.2 / Q.4）** ← **下一主线**
 - [ ] Phase 5.1 多端 & channel
 - [ ] Phase 5.2 Subagents
 - [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
@@ -342,8 +345,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 ## 近期执行顺序（建议）
 
 1. **Phase Q.0** 人设可配置 — ✅  
-2. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
-3. **Phase Q.3** 记忆真有用（身份稳定 + 事实/检索）— 与语音可并行小组  
+2. **Phase Q.3** 记忆真有用 — ✅ 首版  
+3. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
 4. **Phase Q.2** Skills 契约与触发质量  
 5. **Phase Q.4** Loop 真主动（模型配置 + 会话绑定）  
 6. **Phase 5.1** 多端 & Telegram  
@@ -352,6 +355,6 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ---
 
-**最后更新**：2026-07-19（Q.0 人设可配置落地；Phase Q 质量硬化为主线；Phase 5 按多端 → Subagents → 可选增强；MCP 暂缓）  
+**最后更新**：2026-07-19（Q.0 人设 + Q.3 记忆首版落地；下一主线 Q.1 语音 / Q.2 Skills / Q.4 Loop）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

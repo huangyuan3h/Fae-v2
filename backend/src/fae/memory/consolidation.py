@@ -26,11 +26,15 @@ logger = logging.getLogger("fae.memory.consolidation")
 
 # Preference / durable-topic hints for fact promotion (zh + en).
 _DURABLE_PATTERNS = (
-    re.compile(r"(喜欢|爱喝|爱吃|讨厌|偏好|习惯)"),
-    re.compile(r"(?i)\b(like|love|hate|prefer|favorite)\b"),
-    re.compile(r"(我叫|我的名字|工作|搬家|住在)"),
-    re.compile(r"(?i)\b(my name is|i work|i live|moved)\b"),
+    re.compile(r"(喜欢|爱喝|爱吃|讨厌|偏好|习惯|忌口?|过敏|不能吃|不吃)"),
+    re.compile(r"(?i)\b(like|love|hate|prefer|favorite|allergic|can't eat|avoid)\b"),
+    re.compile(r"(我叫|我的名字|叫我|工作|搬家|住在|家在)"),
+    re.compile(r"(?i)\b(my name is|call me|i work|i live|moved)\b"),
 )
+
+# Short actionable current block: keep only the newest sleeptime summary.
+_CURRENT_SUMMARY_TURNS = 8
+_CURRENT_LINE_MAX = 160
 
 
 @dataclass
@@ -88,28 +92,38 @@ class MemoryConsolidator:
             result.skipped = "empty"
             return
 
-        # Keep the newest recent_keep in hot window narrative; summarize all.
-        summary_lines = [
-            f"User: {t.user_text} | Assistant: {t.assistant_text}" for t in turns
-        ]
-        bullets = "\n".join(f"- {ln[:200]}" for ln in summary_lines[-20:])
-        note = f"[sleeptime session={sid} turns={len(turns)}]\n{bullets}"
+        # Replace current with a short deduped bullet summary (not an append log).
+        recent = turns[-_CURRENT_SUMMARY_TURNS:]
+        seen_lines: set[str] = set()
+        bullets: list[str] = []
+        for t in recent:
+            raw = f"User: {t.user_text} → {t.assistant_text}"
+            line = raw[:_CURRENT_LINE_MAX].strip()
+            key = line.lower()
+            if not line or key in seen_lines:
+                continue
+            seen_lines.add(key)
+            bullets.append(f"- {line}")
+        note = (
+            f"[sleeptime session={sid} turns={len(turns)}]\n" + "\n".join(bullets)
+        ).strip()
 
         if hasattr(self.client, "get_block") and hasattr(self.client, "set_block"):
-            current = await self.client.get_block("current")  # type: ignore[misc]
-            merged = f"{(current or '').rstrip()}\n{note}".strip()
-            if len(merged) > self.current_char_limit:
-                merged = merged[-self.current_char_limit :]
-            await self.client.set_block("current", merged)  # type: ignore[misc]
+            if len(note) > self.current_char_limit:
+                note = note[-self.current_char_limit :]
+            await self.client.set_block("current", note)  # type: ignore[misc]
             result.current_updated = True
 
         result.summarized_turns = len(turns)
         result.facts_saved = await self._promote_facts(sid, turns)
 
         if self.archival is not None and len(turns) > self.recent_keep:
-            # Persist a sleeptime passage for later recall injection.
             archival_text = (
-                f"[sleeptime session={sid}]\n" + "\n".join(summary_lines[:10])
+                f"[sleeptime session={sid}]\n"
+                + "\n".join(
+                    f"User: {t.user_text} | Assistant: {t.assistant_text}"
+                    for t in turns[:10]
+                )
             )
             try:
                 await self.archival.upsert(text=archival_text, session_id=sid)
@@ -120,6 +134,8 @@ class MemoryConsolidator:
             result.compacted = await self.compactor.maybe_compact(sid)
 
     async def _promote_facts(self, sid: str, turns: list[Any]) -> int:
+        from fae.memory.fact_extract import facts_from_turn
+
         saved = 0
         seen: set[str] = set()
         for turn in turns:
@@ -131,14 +147,25 @@ class MemoryConsolidator:
                 continue
             seen.add(key)
             try:
-                await self.client.save_fact(
-                    FactIn(
-                        content=f"User said: {key}",
-                        tags=["sleeptime", "preference"],
-                        session_id=sid,
-                    )
+                profile, facts = facts_from_turn(
+                    user_text=text,
+                    assistant_text=getattr(turn, "assistant_text", "") or "",
+                    session_id=sid,
                 )
-                saved += 1
+                if profile is not None and hasattr(self.client, "update_user"):
+                    await self.client.update_user(profile)
+                for fact in facts:
+                    await self.client.save_fact(fact)
+                    saved += 1
+                if not facts:
+                    await self.client.save_fact(
+                        FactIn(
+                            content=f"User said: {key}",
+                            tags=["sleeptime", "preference"],
+                            session_id=sid,
+                        )
+                    )
+                    saved += 1
             except Exception:  # noqa: BLE001
                 logger.exception("save_fact during consolidate failed")
         return saved
