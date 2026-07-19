@@ -127,6 +127,12 @@ export function ModelsPanel() {
           <p className="mt-1 text-sm text-[var(--ink-soft)]">
             管理 OpenAI / Ollama 配置，选择当前对话使用的模型。
           </p>
+          <p className="mt-1 text-xs text-[var(--ink-soft)]">
+            主动 Loop 使用服务端{" "}
+            <code className="text-[11px]">PROACTIVE_LLM_*</code> /{" "}
+            <code className="text-[11px]">DASHSCOPE_API_KEY</code>
+            ，不会读取此处浏览器 Key。
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button

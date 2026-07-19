@@ -1,8 +1,8 @@
 /**
  * Voice transport client facade.
  *
- * - browser: Web Speech STT/TTS + `/ws/chat` (default, no Daily key)
- * - daily: Pipecat bot in a Daily room (requires DAILY_API_KEY server-side)
+ * - browser: Web Speech STT + `/ws/chat` + local TTS via `/api/tts/speak` (default)
+ * - daily: Pipecat bot in a Daily WebRTC room (requires DAILY_API_KEY; not local TTS)
  */
 
 import type { AgentConfig } from "./config";

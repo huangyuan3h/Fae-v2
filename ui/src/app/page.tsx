@@ -19,8 +19,7 @@ export default function HomePage() {
     partial,
     error,
     sessionId,
-    mode,
-    ttsMode,
+    pathLabel,
     activeSkills,
     dailyConnected,
     support,
@@ -57,7 +56,7 @@ export default function HomePage() {
           FAE
         </h1>
         <p className="mt-2 max-w-md text-sm text-[var(--ink-soft)]">
-          说话或打字。浏览器语音识别 + 流式回复 + 语音播报。
+          说话或打字。默认路径：浏览器听写 + 流式回复 + 本机 TTS（不依赖 Daily）。
         </p>
         <AppNav className="mt-4" />
         {activeSkills.length > 0 && (
@@ -65,17 +64,11 @@ export default function HomePage() {
             已加载：{activeSkills.join(", ")}
           </p>
         )}
-        {active && (
-          <p className="mt-2 text-xs text-[var(--ink-soft)]">
-            当前模型：{active.name}
-            {sessionId ? ` · 记忆:${sessionId}` : ""} · {mode}
-            {mode === "daily"
-              ? " · Daily"
-              : ttsMode === "local-tts"
-                ? " · 本机 TTS"
-                : ""}
-          </p>
-        )}
+        <p className="mt-2 text-xs text-[var(--ink-soft)]">
+          {pathLabel}
+          {active ? ` · ${active.name}` : ""}
+          {sessionId ? ` · 记忆:${sessionId}` : ""}
+        </p>
         {orb === "speaking" && (
           <p className="mt-2 text-xs text-[var(--ink-soft)]">
             正在合成 / 播放本机语音（长回复可能需十几秒）…

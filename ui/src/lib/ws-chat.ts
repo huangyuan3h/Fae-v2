@@ -16,15 +16,23 @@ export type WsServerMessage =
       title: string;
       body: string;
       quiet?: boolean;
+      speak?: boolean;
     }
   | { type: "error"; code: string; message: string };
+
+export type NotifyHandler = (
+  title: string,
+  body: string,
+  quiet?: boolean,
+  speak?: boolean,
+) => void;
 
 export type StreamHandlers = {
   onToken: (token: string) => void;
   onDone: () => void;
   onError: (code: string, message: string) => void;
   onSkills?: (active: string[]) => void;
-  onNotification?: (title: string, body: string, quiet?: boolean) => void;
+  onNotification?: NotifyHandler;
 };
 
 export class ChatAbortedError extends Error {
@@ -38,15 +46,11 @@ export class WsChatClient {
   private ws: WebSocket | null = null;
   private activeCleanup: (() => void) | null = null;
   private activeReject: ((err: Error) => void) | null = null;
-  private notifyHandler:
-    | ((title: string, body: string, quiet?: boolean) => void)
-    | null = null;
+  private notifyHandler: NotifyHandler | null = null;
 
   constructor(private readonly url = `${backendWsBase()}/ws/chat`) {}
 
-  setNotificationHandler(
-    handler: ((title: string, body: string, quiet?: boolean) => void) | null,
-  ) {
+  setNotificationHandler(handler: NotifyHandler | null) {
     this.notifyHandler = handler;
   }
 
@@ -63,7 +67,7 @@ export class WsChatClient {
         try {
           const msg = JSON.parse(String(ev.data)) as WsServerMessage;
           if (msg.type === "notification") {
-            this.notifyHandler?.(msg.title, msg.body, msg.quiet);
+            this.notifyHandler?.(msg.title, msg.body, msg.quiet, msg.speak);
           }
         } catch {
           /* ignore */
@@ -95,7 +99,12 @@ export class WsChatClient {
         if (msg.type === "skills") {
           handlers.onSkills?.(msg.active ?? []);
         } else if (msg.type === "notification") {
-          handlers.onNotification?.(msg.title, msg.body, msg.quiet);
+          handlers.onNotification?.(
+            msg.title,
+            msg.body,
+            msg.quiet,
+            msg.speak,
+          );
         } else if (msg.type === "token") {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {

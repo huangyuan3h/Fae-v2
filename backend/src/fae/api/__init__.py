@@ -63,6 +63,21 @@ def _seed_builtin_jobs(store: ScheduleStore) -> None:
         [(s.id, "cron", s.cron, s.description, s.meta) for s in specs]
     )
 
+
+def _proactive_llm_config(settings: Settings) -> LLMConfig:
+    """Server-side model for proactive loop (never reads browser localStorage)."""
+    key = (
+        (settings.proactive_llm_api_key or "").strip()
+        or (settings.dashscope_api_key or "").strip()
+        or "unused"
+    )
+    base = (settings.proactive_llm_base_url or "").strip() or (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    model = (settings.proactive_llm_model or "").strip() or "qwen3-max"
+    return LLMConfig(api_key=key, base_url=base, model=model)
+
+
 logger = logging.getLogger("fae")
 
 
@@ -110,9 +125,6 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "sleeptime", None) is None:
         app.state.sleeptime = None
 
-    # Skills runtime is created in create_app (available without lifespan).
-    activity: ActivityTracker = getattr(app.state, "activity", None) or ActivityTracker()
-    app.state.activity = activity
     hub: ConnectionHub = getattr(app.state, "ws_hub", None) or ConnectionHub()
     app.state.ws_hub = hub
 
@@ -123,6 +135,13 @@ async def lifespan(app: FastAPI):
         store = ScheduleStore(_schedules_db_path(settings))
         app.state.schedule_store = store
     _seed_builtin_jobs(store)
+
+    activity = getattr(app.state, "activity", None)
+    if not isinstance(activity, ActivityTracker):
+        activity = ActivityTracker(store=store)
+    else:
+        activity.bind_store(store)
+    app.state.activity = activity
     delivery = NotificationDelivery(
         store,
         hub,
@@ -185,16 +204,14 @@ async def lifespan(app: FastAPI):
         if isinstance(existing, ProactiveLoop) and existing._started:
             pass
         else:
-            llm_cfg = LLMConfig(
-                api_key=settings.dashscope_api_key or "unused",
-                model="qwen3-max",
-            )
+            llm_cfg = _proactive_llm_config(settings)
             loop = ProactiveLoop(
                 store=store,
                 activity=activity,
                 delivery=delivery,
                 skills=getattr(app.state, "skills", None),
                 llm=getattr(app.state, "llm_client", None),
+                memory=getattr(app.state, "memory", None),
                 episodic=getattr(app.state, "episodic", None),
                 recall=getattr(app.state, "recall_store", None),
                 sleeptime=getattr(app.state, "sleeptime", None),
@@ -203,6 +220,9 @@ async def lifespan(app: FastAPI):
                 outreach_cooldown_hours=settings.outreach_cooldown_hours,
                 outreach_max_per_day=settings.outreach_max_per_day,
                 default_llm_config=llm_cfg,
+                default_city=getattr(settings, "weather_default_city", "") or "",
+                default_timezone=getattr(settings, "weather_default_timezone", "")
+                or "",
             )
             app.state.proactive = loop
             await loop.start()
@@ -316,10 +336,10 @@ def create_app(
     app.state.archival = None
     app.state.episodic = None
     app.state.sleeptime = None
-    app.state.activity = ActivityTracker()
     app.state.proactive = None
     app.state.ws_hub = ConnectionHub()
     app.state.schedule_store = ScheduleStore(_schedules_db_path(settings))
+    app.state.activity = ActivityTracker(store=app.state.schedule_store)
     _seed_builtin_jobs(app.state.schedule_store)
     app.state.delivery = NotificationDelivery(
         app.state.schedule_store,

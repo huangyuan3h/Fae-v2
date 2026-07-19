@@ -13,8 +13,10 @@ from fae.scheduler.store import InboxItem, ScheduleStore
 
 logger = logging.getLogger("fae.scheduler.delivery")
 
+DEFAULT_SESSION_ID = "default"
 
-def _in_quiet_hours(
+
+def in_quiet_hours(
     quiet_start: int | None,
     quiet_end: int | None,
     *,
@@ -29,6 +31,10 @@ def _in_quiet_hours(
         return quiet_start <= hour < quiet_end
     # wraps midnight
     return hour >= quiet_start or hour < quiet_end
+
+
+# Back-compat alias used by older tests / imports.
+_in_quiet_hours = in_quiet_hours
 
 
 class NotificationDelivery:
@@ -54,33 +60,36 @@ class NotificationDelivery:
         title: str,
         body: str,
         *,
-        session_id: str = "",
+        session_id: str = DEFAULT_SESSION_ID,
         source: str = "system",
         skip_desktop: bool = False,
         skip_push: bool = False,
+        speak: bool = True,
     ) -> InboxItem:
+        sid = (session_id or "").strip() or DEFAULT_SESSION_ID
         item = self.store.add_inbox(
-            title, body, session_id=session_id, source=source
+            title, body, session_id=sid, source=source
         )
         prefs = self.store.get_prefs()
         if not self.notifications_enabled or not prefs.enabled:
             return item
 
-        quiet = _in_quiet_hours(prefs.quiet_start_hour, prefs.quiet_end_hour)
+        quiet = in_quiet_hours(prefs.quiet_start_hour, prefs.quiet_end_hour)
         payload: dict[str, Any] = {
             "type": "notification",
             "id": item.id,
             "title": title,
             "body": body,
-            "session_id": session_id,
+            "session_id": sid,
             "source": source,
             "created_at": item.created_at,
             "quiet": quiet,
+            "speak": bool(speak) and not quiet,
         }
 
         # Always try WS so the open UI can show in-app toast / Notification API.
         try:
-            await self.hub.broadcast(payload, session_id=session_id or None)
+            await self.hub.broadcast(payload, session_id=sid)
         except Exception:  # noqa: BLE001
             logger.debug("ws broadcast failed", exc_info=True)
 

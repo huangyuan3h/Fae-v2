@@ -36,10 +36,61 @@ _DAILY_EN = re.compile(
 _TOMORROW_ZH = re.compile(
     r"(明天|明早|明日)\s*(\d{1,2})\s*[点:：]?\s*(\d{0,2})?",
 )
+# 明天早上八点 / 明早八点
+_TOMORROW_MORNING_ZH = re.compile(
+    r"(明天早上|明天早晨|明早|明天上午)\s*"
+    r"([〇零一二三四五六七八九十两\d]{1,3})\s*[点时]"
+    r"(?:(\d{1,2}|[〇零一二三四五六七八九十]{1,3})\s*分?)?",
+)
+# 后天 9 点 / 后天九点
+_DAY_AFTER_ZH = re.compile(
+    r"后天\s*([〇零一二三四五六七八九十两\d]{1,3})\s*[点时:：]?\s*"
+    r"(\d{0,2}|[〇零一二三四五六七八九十]{0,3})?",
+)
 _TOMORROW_EN = re.compile(
     r"tomorrow\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?",
     re.I,
 )
+
+_ZH_DIGITS = {
+    "〇": 0,
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def _zh_numeral_to_int(token: str) -> int | None:
+    """Parse simple Chinese hour/minute numerals (八 / 十 / 十二 / 08)."""
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    if raw == "十":
+        return 10
+    if raw.startswith("十") and len(raw) == 2 and raw[1] in _ZH_DIGITS:
+        return 10 + _ZH_DIGITS[raw[1]]
+    if len(raw) == 2 and raw[1] == "十" and raw[0] in _ZH_DIGITS:
+        return _ZH_DIGITS[raw[0]] * 10
+    if (
+        len(raw) == 3
+        and raw[1] == "十"
+        and raw[0] in _ZH_DIGITS
+        and raw[2] in _ZH_DIGITS
+    ):
+        return _ZH_DIGITS[raw[0]] * 10 + _ZH_DIGITS[raw[2]]
+    if len(raw) == 1 and raw in _ZH_DIGITS:
+        return _ZH_DIGITS[raw]
+    return None
 
 # 今天下午 3 点 / today at 3pm
 _TODAY_ZH = re.compile(
@@ -86,13 +137,20 @@ def _extract_title(text: str) -> str:
     t = text.strip()
     # Drop time phrases to leave the reminder body as title
     t = re.sub(
-        r"(明天|明早|明日|今天|今晚|每天|每日|tomorrow|today|every\s+day|daily)"
+        r"(后天|明天早上|明天早晨|明天上午|明天|明早|明日|今天|今晚|每天|每日|"
+        r"tomorrow|today|every\s+day|daily)"
         r"[^\u4e00-\u9fff\w]*",
         "",
         t,
         flags=re.I,
     )
-    t = re.sub(r"\d{1,2}\s*[点:：:]\s*\d{0,2}\s*(am|pm)?", "", t, flags=re.I)
+    t = re.sub(
+        r"[〇零一二三四五六七八九十两\d]{1,3}\s*[点时:：]\s*"
+        r"(?:\d{0,2}|[〇零一二三四五六七八九十]{0,3})?\s*(分)?\s*(am|pm)?",
+        "",
+        t,
+        flags=re.I,
+    )
     t = re.sub(r"\d{1,2}\s*(am|pm)", "", t, flags=re.I)
     t = _REMIND_STRIP.sub("", t)
     t = re.sub(r"\s+", " ", t).strip(" ，,。.")
@@ -160,6 +218,40 @@ def parse_schedule_text(
             raw_text=raw,
         )
 
+    m = _TOMORROW_MORNING_ZH.search(raw)
+    if m:
+        hour = _zh_numeral_to_int(m.group(2))
+        minute_tok = m.group(3) or ""
+        minute = _zh_numeral_to_int(minute_tok) if minute_tok else 0
+        if hour is not None and minute is not None:
+            day = (base + timedelta(days=1)).replace(
+                hour=hour % 24, minute=minute % 60, second=0, microsecond=0
+            )
+            return ParsedSchedule(
+                kind="date",
+                title=title,
+                body=raw,
+                run_at=day.timestamp(),
+                raw_text=raw,
+            )
+
+    m = _DAY_AFTER_ZH.search(raw)
+    if m:
+        hour = _zh_numeral_to_int(m.group(1))
+        minute_tok = (m.group(2) or "").strip()
+        minute = _zh_numeral_to_int(minute_tok) if minute_tok else 0
+        if hour is not None and minute is not None:
+            day = (base + timedelta(days=2)).replace(
+                hour=hour % 24, minute=minute % 60, second=0, microsecond=0
+            )
+            return ParsedSchedule(
+                kind="date",
+                title=title,
+                body=raw,
+                run_at=day.timestamp(),
+                raw_text=raw,
+            )
+
     m = _TOMORROW_ZH.search(raw)
     if m:
         hour = int(m.group(2))
@@ -223,14 +315,20 @@ def parse_schedule_text(
         )
 
     # "明早8点提醒吃维生素" without space — already covered by _TOMORROW_ZH
-    # Fallback: HH:MM today/tomorrow
+    # Fallback: HH:MM today/tomorrow/day-after
     m = re.search(r"(\d{1,2})[点:：](\d{2})", raw)
     if m:
         hour, minute = int(m.group(1)), int(m.group(2))
         day = base.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
-        if "明天" in raw or "明早" in raw or "tomorrow" in raw.lower():
-            day = day + timedelta(days=1)
-            day = day.replace(hour=hour % 24, minute=minute)
+        low = raw.lower()
+        if "后天" in raw:
+            day = (base + timedelta(days=2)).replace(
+                hour=hour % 24, minute=minute, second=0, microsecond=0
+            )
+        elif "明天" in raw or "明早" in raw or "tomorrow" in low:
+            day = (base + timedelta(days=1)).replace(
+                hour=hour % 24, minute=minute, second=0, microsecond=0
+            )
         elif day <= base:
             day += timedelta(days=1)
         return ParsedSchedule(
@@ -240,5 +338,32 @@ def parse_schedule_text(
             run_at=day.timestamp(),
             raw_text=raw,
         )
+
+    # Fallback: Chinese numeral hour with day cue (后天九点开会)
+    m = re.search(
+        r"([〇零一二三四五六七八九十两]{1,3})\s*[点时]",
+        raw,
+    )
+    if m:
+        hour = _zh_numeral_to_int(m.group(1))
+        if hour is not None:
+            if "后天" in raw:
+                offset = 2
+            elif "明天" in raw or "明早" in raw:
+                offset = 1
+            else:
+                offset = 0
+            day = (base + timedelta(days=offset)).replace(
+                hour=hour % 24, minute=0, second=0, microsecond=0
+            )
+            if offset == 0 and day <= base:
+                day += timedelta(days=1)
+            return ParsedSchedule(
+                kind="date",
+                title=title,
+                body=raw,
+                run_at=day.timestamp(),
+                raw_text=raw,
+            )
 
     raise ValueError(f"could not parse schedule: {raw!r}")

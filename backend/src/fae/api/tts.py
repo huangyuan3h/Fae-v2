@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,8 +18,8 @@ logger = logging.getLogger("fae.tts")
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
-# Per-request safety cap; UI sends short phrase chunks for long replies.
-_MAX_CHARS = 40
+# Safety net only — UI already chunks ~40 chars; keep headroom for longer phrases.
+_MAX_CHARS = 120
 
 
 class SpeakRequest(BaseModel):
@@ -124,6 +125,7 @@ async def speak(
     )
 
     client = _local_client(settings)
+    started = time.perf_counter()
     try:
         audio, media_type = await client.synthesize(
             plain, voice=voice, speed=speed, language=language
@@ -149,6 +151,15 @@ async def speak(
             },
         ) from e
 
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "tts.speak ms=%s chars=%s voice=%s upstream=%s",
+        elapsed_ms,
+        len(plain),
+        voice,
+        client.speech_url,
+    )
+
     return Response(
         content=audio,
         media_type=media_type or "audio/wav",
@@ -157,6 +168,7 @@ async def speak(
             "X-FAE-TTS-Upstream": client.speech_url,
             "X-FAE-TTS-Voice": voice,
             "X-FAE-TTS-Speed": f"{speed:.2f}",
+            "X-FAE-TTS-Ms": str(elapsed_ms),
             "Cache-Control": "no-store",
         },
     )

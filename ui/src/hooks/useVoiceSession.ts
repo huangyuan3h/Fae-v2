@@ -24,12 +24,23 @@ import {
   BrowserSTT,
   speechSupported,
   stopSpeaking,
+  ttsLanguageToSttLang,
 } from "@/lib/speech";
 import { toSpeakableText } from "@/lib/speakable";
 import {
   loadTtsPrefs,
   TTS_PREFS_CHANGED_EVENT,
 } from "@/lib/tts-prefs";
+
+type TurnMetrics = {
+  turnId: string;
+  listenStartedAt: number | null;
+  sttFinalAt: number | null;
+  llmFirstTokenAt: number | null;
+  ttsFirstByteAt: number | null;
+  ttsFirstPlayAt: number | null;
+  ttsServerMs: number | null;
+};
 import {
   loadPreferDaily,
   PREFER_DAILY_CHANGED_EVENT,
@@ -58,7 +69,8 @@ export function useVoiceSession() {
   const [sessionId] = useState(getMemorySessionId);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
-  const [ttsMode, setTtsMode] = useState<TtsMode>("none");
+  // Browser path always uses local TTS when available; do not wait for first enqueue.
+  const [ttsMode, setTtsMode] = useState<TtsMode>("local-tts");
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [preferDaily, setPreferDailyState] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
@@ -79,6 +91,14 @@ export function useVoiceSession() {
   const connectingDaily = useRef(false);
   const memorySessionRef = useRef(sessionId);
   const voiceSessionRef = useRef<string | null>(null);
+  /** User clicked 开始听写 — resume after assistant / interrupt. */
+  const wantListeningRef = useRef(false);
+  const metricsRef = useRef<TurnMetrics | null>(null);
+  const modeRef = useRef<TransportMode>("browser");
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   const ensureTtsQueue = useCallback(() => {
     const prefs = loadTtsPrefs();
@@ -105,7 +125,7 @@ export function useVoiceSession() {
 
   useEffect(() => {
     const client = wsRef.current;
-    client.setNotificationHandler((title, body, quiet) => {
+    client.setNotificationHandler((title, body, quiet, speak) => {
       setLines((prev) => [
         ...prev,
         {
@@ -116,6 +136,14 @@ export function useVoiceSession() {
       ]);
       if (!quiet) {
         showBrowserNotification(title, body);
+      }
+      if (speak && !quiet && body.trim()) {
+        const clip = body.trim().slice(0, 120);
+        void import("@/lib/qwen-tts").then(({ speakWithLocalTts }) =>
+          speakWithLocalTts(clip).catch(() => {
+            /* optional short TTS — ignore failures */
+          }),
+        );
       }
     });
     void client.connect().catch(() => {
@@ -263,6 +291,81 @@ export function useVoiceSession() {
     ]);
   }, []);
 
+  const resumeListeningIfWanted = useCallback(() => {
+    if (!wantListeningRef.current || modeRef.current === "daily") {
+      setOrb("idle");
+      return;
+    }
+    if (!support.stt) {
+      setOrb("idle");
+      return;
+    }
+    metricsRef.current = {
+      turnId: `${Date.now()}`,
+      listenStartedAt: performance.now(),
+      sttFinalAt: null,
+      llmFirstTokenAt: null,
+      ttsFirstByteAt: null,
+      ttsFirstPlayAt: null,
+      ttsServerMs: null,
+    };
+    setOrb("listening");
+    sttRef.current.start(
+      (r) => {
+        setPartial(r.transcript);
+        if (r.isFinal && r.transcript.trim()) {
+          setPartial("");
+          if (metricsRef.current) {
+            metricsRef.current.sttFinalAt = performance.now();
+          }
+          // Pause STT while assistant runs (avoid TTS feedback into mic).
+          sttRef.current.pause();
+          void sendTextRef.current(r.transcript.trim());
+        }
+      },
+      (err) => {
+        setError(err);
+        wantListeningRef.current = false;
+        setOrb("idle");
+      },
+      { lang: ttsLanguageToSttLang(loadTtsPrefs().language) },
+    );
+  }, [support.stt]);
+
+  const sendTextRef = useRef<(text: string) => Promise<void>>(async () => {});
+
+  const logTurnMetrics = useCallback((m: TurnMetrics) => {
+    const sttMs =
+      m.listenStartedAt != null && m.sttFinalAt != null
+        ? Math.round(m.sttFinalAt - m.listenStartedAt)
+        : null;
+    const llmTtftMs =
+      m.sttFinalAt != null && m.llmFirstTokenAt != null
+        ? Math.round(m.llmFirstTokenAt - m.sttFinalAt)
+        : null;
+    const ttsFirstByteMs =
+      m.sttFinalAt != null && m.ttsFirstByteAt != null
+        ? Math.round(m.ttsFirstByteAt - m.sttFinalAt)
+        : null;
+    const ttsFirstPlayMs =
+      m.sttFinalAt != null && m.ttsFirstPlayAt != null
+        ? Math.round(m.ttsFirstPlayAt - m.sttFinalAt)
+        : null;
+    const e2eMs =
+      m.sttFinalAt != null && m.ttsFirstPlayAt != null
+        ? Math.round(m.ttsFirstPlayAt - m.sttFinalAt)
+        : null;
+    console.debug("[fae.voice]", {
+      turn_id: m.turnId,
+      stt_ms: sttMs,
+      llm_ttft_ms: llmTtftMs,
+      tts_first_byte_ms: ttsFirstByteMs,
+      tts_first_play_ms: ttsFirstPlayMs,
+      tts_server_ms: m.ttsServerMs,
+      e2e_ms: e2eMs,
+    });
+  }, []);
+
   const runAssistant = useCallback(
     async (userText: string) => {
       if (!config.apiKey.trim()) {
@@ -275,6 +378,19 @@ export function useVoiceSession() {
       speakableLenRef.current = 0;
       speechAggRef.current.reset();
       stopSpeaking();
+
+      const turnId = `${Date.now()}`;
+      const metrics: TurnMetrics = {
+        turnId,
+        listenStartedAt: metricsRef.current?.listenStartedAt ?? null,
+        sttFinalAt: metricsRef.current?.sttFinalAt ?? performance.now(),
+        llmFirstTokenAt: null,
+        ttsFirstByteAt: null,
+        ttsFirstPlayAt: null,
+        ttsServerMs: null,
+      };
+      metricsRef.current = metrics;
+
       const queue = ensureTtsQueue();
       queue.setHandlers({
         onError: (ttsErr) => {
@@ -286,7 +402,19 @@ export function useVoiceSession() {
               : msg,
           );
         },
-        onIdle: () => setOrb("idle"),
+        onIdle: () => {
+          // Browser path: stopSpeaking+WS cancel is the full interrupt story.
+          // Resume continuous listen when the user still wants the mic on.
+          resumeListeningIfWanted();
+        },
+        onFirstByte: (info) => {
+          metrics.ttsFirstByteAt = performance.now();
+          metrics.ttsServerMs = info.ttsMs;
+        },
+        onFirstPlay: () => {
+          metrics.ttsFirstPlayAt = performance.now();
+          logTurnMetrics(metrics);
+        },
       });
 
       const enqueueChunks = (parts: string[]) => {
@@ -299,7 +427,7 @@ export function useVoiceSession() {
         }
       };
 
-      // Idle soft-flush when LLM pauses mid-stream (400ms).
+      // Idle soft-flush when LLM pauses mid-stream.
       speechAggRef.current.setOnSoftFlush(enqueueChunks);
 
       const assistantId = `${Date.now()}-a`;
@@ -316,6 +444,9 @@ export function useVoiceSession() {
           {
             onSkills: (names) => setActiveSkills(names),
             onToken: (token) => {
+              if (metrics.llmFirstTokenAt == null) {
+                metrics.llmFirstTokenAt = performance.now();
+              }
               assistantBuf.current += token;
               // Store raw stream (incl. <think>) so the transcript can show
               // "思考中…" instead of a blank ellipsis during long reasoning.
@@ -351,20 +482,20 @@ export function useVoiceSession() {
           memorySessionRef.current,
         );
 
-        // Stream done — wait for queue drain via onIdle, or idle immediately.
-        if (!queue.isBusy) setOrb("idle");
+        // Stream done — wait for queue drain via onIdle, or settle immediately.
+        if (!queue.isBusy) resumeListeningIfWanted();
       } catch (e) {
         if (e instanceof ChatAbortedError) {
           speechAggRef.current.reset();
           queue.stop();
-          setOrb("idle");
+          // Interrupt path decides orb (resume listen vs idle).
           return;
         }
         setError(formatNetworkError(e, "chat / voice"));
-        setOrb("idle");
+        resumeListeningIfWanted();
       }
     },
-    [config, ensureTtsQueue],
+    [config, ensureTtsQueue, logTurnMetrics, resumeListeningIfWanted],
   );
 
   const sendText = useCallback(
@@ -379,11 +510,27 @@ export function useVoiceSession() {
         );
         return;
       }
+      // Text-input turns: mark STT final time as now for TTFT/e2e metrics.
+      if (!metricsRef.current?.sttFinalAt) {
+        metricsRef.current = {
+          turnId: `${Date.now()}`,
+          listenStartedAt: null,
+          sttFinalAt: performance.now(),
+          llmFirstTokenAt: null,
+          ttsFirstByteAt: null,
+          ttsFirstPlayAt: null,
+          ttsServerMs: null,
+        };
+      }
       appendLine("user", trimmed);
       await runAssistant(trimmed);
     },
     [appendLine, dailyConnected, mode, runAssistant],
   );
+
+  useEffect(() => {
+    sendTextRef.current = sendText;
+  }, [sendText]);
 
   const startBrowserListening = useCallback(() => {
     if (!support.stt) {
@@ -392,6 +539,16 @@ export function useVoiceSession() {
     }
     setError(null);
     setPartial("");
+    wantListeningRef.current = true;
+    metricsRef.current = {
+      turnId: `${Date.now()}`,
+      listenStartedAt: performance.now(),
+      sttFinalAt: null,
+      llmFirstTokenAt: null,
+      ttsFirstByteAt: null,
+      ttsFirstPlayAt: null,
+      ttsServerMs: null,
+    };
     setOrb("listening");
     stopSpeaking();
     wsRef.current.cancel();
@@ -401,16 +558,22 @@ export function useVoiceSession() {
         setPartial(r.transcript);
         if (r.isFinal && r.transcript.trim()) {
           setPartial("");
-          setOrb("idle");
-          void sendText(r.transcript.trim());
+          if (metricsRef.current) {
+            metricsRef.current.sttFinalAt = performance.now();
+          }
+          // Pause STT while assistant runs (avoid TTS feedback into mic).
+          sttRef.current.pause();
+          void sendTextRef.current(r.transcript.trim());
         }
       },
       (err) => {
-        setError(`STT: ${err}`);
+        setError(err);
+        wantListeningRef.current = false;
         setOrb("idle");
       },
+      { lang: ttsLanguageToSttLang(loadTtsPrefs().language) },
     );
-  }, [sendText, support.stt]);
+  }, [support.stt]);
 
   const startListening = useCallback(() => {
     if (preferDaily || mode === "daily") {
@@ -432,20 +595,33 @@ export function useVoiceSession() {
       void disconnectDaily();
       return;
     }
+    wantListeningRef.current = false;
     sttRef.current.stop();
-    if (orb === "listening") setOrb("idle");
-  }, [dailyConnected, disconnectDaily, orb]);
+    setOrb("idle");
+  }, [dailyConnected, disconnectDaily]);
 
   const interrupt = useCallback(() => {
+    // Browser path: stop playback + WS cancel is the full interrupt.
+    // Daily path also hits BargeInController via /api/voice/barge-in.
     speechAggRef.current.reset();
     ttsQueueRef.current?.stop();
     stopSpeaking();
     wsRef.current.cancel();
     sttRef.current.stop();
-    // Barge-in hits VoiceRuntime registry keyed by server voice session id.
-    void postBargeIn(voiceSessionRef.current ?? memorySessionRef.current);
-    setOrb(dailyConnected ? "listening" : "idle");
-  }, [dailyConnected, postBargeIn]);
+    if (modeRef.current === "daily" || dailyConnected) {
+      void postBargeIn(voiceSessionRef.current ?? memorySessionRef.current);
+      setOrb("listening");
+      return;
+    }
+    // From speaking/thinking → auto resume continuous listen.
+    wantListeningRef.current = true;
+    startBrowserListening();
+  }, [dailyConnected, postBargeIn, startBrowserListening]);
+
+  const pathLabel =
+    mode === "daily" || dailyConnected
+      ? "Daily 全双工"
+      : "浏览器 STT · 本机 TTS";
 
   return {
     config,
@@ -458,6 +634,7 @@ export function useVoiceSession() {
     voiceSessionId,
     mode,
     ttsMode,
+    pathLabel,
     activeSkills,
     preferDaily,
     setPreferDaily,

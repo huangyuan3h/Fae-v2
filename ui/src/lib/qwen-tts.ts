@@ -82,10 +82,18 @@ export function stopAllLocalTts(): void {
   stopQwenTts();
 }
 
+export type SpeakBlobResult = {
+  blob: Blob;
+  /** Server-reported synth time from X-FAE-TTS-Ms, if present. */
+  ttsMs: number | null;
+  /** Client wait from request start until response headers. */
+  firstByteMs: number;
+};
+
 async function fetchSpeakBlob(
   text: string,
   opts: TtsSpeakOpts = {},
-): Promise<Blob> {
+): Promise<SpeakBlobResult> {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("empty TTS text");
 
@@ -94,6 +102,7 @@ async function fetchSpeakBlob(
   if (opts.speed != null) body.speed = opts.speed;
   if (opts.language) body.language = opts.language;
 
+  const t0 = performance.now();
   let res: Response;
   try {
     res = await fetch(`${backendHttpBase()}/api/tts/speak`, {
@@ -104,6 +113,7 @@ async function fetchSpeakBlob(
   } catch (err) {
     throw new Error(formatNetworkError(err, "/api/tts/speak"));
   }
+  const firstByteMs = Math.round(performance.now() - t0);
 
   if (!res.ok) {
     let message = `TTS HTTP ${res.status}`;
@@ -123,7 +133,14 @@ async function fetchSpeakBlob(
     throw new Error(message);
   }
 
-  return res.blob();
+  const headerMs = res.headers.get("X-FAE-TTS-Ms");
+  const ttsMs = headerMs != null && headerMs !== "" ? Number(headerMs) : null;
+  const blob = await res.blob();
+  return {
+    blob,
+    ttsMs: Number.isFinite(ttsMs as number) ? (ttsMs as number) : null,
+    firstByteMs,
+  };
 }
 
 /**
@@ -139,7 +156,7 @@ export async function speakWithLocalTts(
 
   stopAllLocalTts();
 
-  const blob = await fetchSpeakBlob(trimmed, opts);
+  const { blob } = await fetchSpeakBlob(trimmed, opts);
   const url = URL.createObjectURL(blob);
   currentUrl = url;
 
@@ -184,6 +201,10 @@ export class TtsPlayQueue {
   private generation = 0;
   private onError: ((err: Error) => void) | null = null;
   private onIdle: (() => void) | null = null;
+  private onFirstByte: ((info: SpeakBlobResult) => void) | null = null;
+  private onFirstPlay: (() => void) | null = null;
+  private firstByteReported = false;
+  private firstPlayReported = false;
   private primed: HTMLAudioElement | null = null;
 
   constructor(
@@ -191,7 +212,8 @@ export class TtsPlayQueue {
     // MLX server serializes gens (TTS_MAX_CONCURRENT=1); 2 in-flight HTTP is enough.
     maxInflight = 2,
     targetReady = 2,
-    minStartReady = 2,
+    // Play as soon as the first clip is ready (MQ-1 first-speech latency).
+    minStartReady = 1,
   ) {
     this.opts = opts;
     this.maxInflight = Math.max(1, Math.min(4, maxInflight));
@@ -207,9 +229,13 @@ export class TtsPlayQueue {
   setHandlers(handlers: {
     onError?: (err: Error) => void;
     onIdle?: () => void;
+    onFirstByte?: (info: SpeakBlobResult) => void;
+    onFirstPlay?: () => void;
   }): void {
     this.onError = handlers.onError ?? null;
     this.onIdle = handlers.onIdle ?? null;
+    this.onFirstByte = handlers.onFirstByte ?? null;
+    this.onFirstPlay = handlers.onFirstPlay ?? null;
   }
 
   enqueue(text: string): void {
@@ -232,6 +258,8 @@ export class TtsPlayQueue {
     this.inflight = 0;
     this.playing = false;
     this.started = false;
+    this.firstByteReported = false;
+    this.firstPlayReported = false;
     this.primed = null;
     // Clear audio without going through stopAllLocalTts (would re-enter stop).
     if (currentAudio) {
@@ -278,9 +306,13 @@ export class TtsPlayQueue {
       this.nextId += 1;
       this.inflight += 1;
       void fetchSpeakBlob(text, this.opts)
-        .then((blob) => {
+        .then((result) => {
           if (gen !== this.generation) return;
-          const url = URL.createObjectURL(blob);
+          if (!this.firstByteReported) {
+            this.firstByteReported = true;
+            this.onFirstByte?.(result);
+          }
+          const url = URL.createObjectURL(result.blob);
           const audio = new Audio();
           audio.preload = "auto";
           audio.src = url;
@@ -378,10 +410,19 @@ export class TtsPlayQueue {
       if (remaining < 0.15) this.primeNext();
     };
 
-    void audio.play().catch((e) => {
-      this.onError?.(e instanceof Error ? e : new Error(String(e)));
-      finish();
-    });
+    void audio
+      .play()
+      .then(() => {
+        if (gen !== this.generation) return;
+        if (!this.firstPlayReported) {
+          this.firstPlayReported = true;
+          this.onFirstPlay?.();
+        }
+      })
+      .catch((e) => {
+        this.onError?.(e instanceof Error ? e : new Error(String(e)));
+        finish();
+      });
 
     // Keep synth pipeline full while this clip plays.
     this.pumpSynth();

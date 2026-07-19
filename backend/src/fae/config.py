@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     outreach_max_per_day: int = Field(default=1, ge=0)
     schedules_db_path: str = ".data/fae-schedules.db"
     notifications_enabled: bool = True
+    # Server-side LLM for proactive loop (falls back to DASHSCOPE_API_KEY)
+    proactive_llm_api_key: str = ""
+    proactive_llm_base_url: str = ""
+    proactive_llm_model: str = "qwen3-max"
     # Web Push (Phase 4.4) — optional; empty disables push
     vapid_public_key: str = ""
     vapid_private_key: str = ""

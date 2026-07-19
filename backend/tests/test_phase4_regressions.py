@@ -44,7 +44,8 @@ def test_lifespan_restart_reopens_store(
         assert "jobs" in resp.json()
 
 
-def test_open_topic_false_without_memory(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_open_topic_false_without_memory(tmp_path: Path) -> None:
     store = ScheduleStore(tmp_path / "s.db")
     activity = ActivityTracker()
     activity.touch("s1", at=0.0)
@@ -53,7 +54,7 @@ def test_open_topic_false_without_memory(tmp_path: Path) -> None:
         activity=activity,
         delivery=NotificationDelivery(store, ConnectionHub()),
     )
-    assert loop._has_open_topic("s1") is False
+    assert await loop._has_open_topic("s1") is False
     store.close()
 
 

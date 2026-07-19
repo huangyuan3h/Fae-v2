@@ -108,6 +108,22 @@ export function NotificationsPanel() {
               />
               Web Push
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={prefs.proactive_enabled !== false}
+                onChange={(e) =>
+                  saveM.mutate({ proactive_enabled: e.target.checked })
+                }
+              />
+              主动 Loop（闲时问候 / heartbeat 生成）
+            </label>
+            <p className="text-xs text-[var(--ink-soft)]">
+              主动 Loop 使用服务端{" "}
+              <code className="text-[11px]">PROACTIVE_LLM_*</code> /{" "}
+              <code className="text-[11px]">DASHSCOPE_API_KEY</code>
+              ，不读取浏览器模型 Key。勿扰时段内不会生成主动消息。
+            </p>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[var(--ink-soft)]">勿扰时段（本地小时）</span>
               <input

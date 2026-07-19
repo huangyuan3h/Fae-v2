@@ -1,4 +1,4 @@
-"""Outreach eligibility rules (Phase 4).
+"""Outreach eligibility rules (Phase 4 / Q.4).
 
 Scheduler layer owns "max 1/day" and idle thresholds.
 Skill ``proactive_outreach`` cooldown (12h) is enforced via SkillRuntime.activate.
@@ -26,8 +26,16 @@ def should_outreach(
     outreach_count_today: int,
     has_open_topic: bool,
     policy: OutreachPolicy | None = None,
+    proactive_enabled: bool = True,
+    in_quiet_hours: bool = False,
 ) -> bool:
-    """Return True when a proactive greeting may fire."""
+    """Return True when a proactive greeting may fire.
+
+    Quiet hours and ``proactive_enabled`` suppress generation entirely
+    (not only desktop/push delivery).
+    """
+    if not proactive_enabled or in_quiet_hours:
+        return False
     p = policy or OutreachPolicy()
     if not has_open_topic:
         return False

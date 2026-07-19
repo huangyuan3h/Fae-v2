@@ -144,16 +144,16 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 > **不做**：MCP、多用户、LiveKit（除非 Q 完成且明确需要）。  
 > **验收总标**：本地无 Daily Key，中文语音聊 10 轮可打断；跨天记得 3 件事实；贴 Traceback 稳触发 skill；idle 后主动问候有记忆、非罐头句。
 
-### Q.1 语音可用（Voice Quality）
+### Q.1 语音可用（Voice Quality）— ✅ 首版
 
 **问题**：浏览器 STT 单次、硬编码 `zh-CN`；TTS 整段 WAV + 队列门槛导致首包慢；打断浏览器/服务端分裂；长回复被 clip。
 
-- [ ] **STT UX**：continuous / 按住说话模式二选一做稳；语言可配；识别失败可感知提示
-- [ ] **TTS 延迟**：流式或句子级流水线；降低 `minStartReady` 导致的静默；评估去掉/放宽 `clip_for_local_tts` 硬截断
-- [ ] **打断一条故事**：浏览器路径打断 = 停播 + 取消 WS 生成；与 Daily `BargeIn` 行为对齐文档
-- [ ] **路径诚实**：Settings / 首页状态文案区分「本地 TTS」vs「Daily 全双工」；禁止再暗示勾选 Daily = 本地语音
-- [ ] **埋点**：一轮对话记录 STT / LLM TTFT / TTS 首包 / 端到端（日志即可，仪表盘可后补）
-- [ ] **验收（MQ-1）**：无 Daily Key，真 Qwen3-TTS，3 轮中文问答，首句可听延迟主观可接受，说话可打断
+- [x] **STT UX**：单击开关 + continuous；语言跟 Settings；错误中文提示
+- [x] **TTS 延迟**：`minStartReady=1`；`clip` 放宽到 120（真流式后置）
+- [x] **打断一条故事**：浏览器用停播 + WS cancel；Daily 才打 barge-in；speaking 打断后自动再听
+- [x] **路径诚实**：首页/Settings 区分「浏览器 STT · 本机 TTS」vs「Daily 全双工」
+- [x] **埋点**：`console.debug("[fae.voice]", …)` + `X-FAE-TTS-Ms`
+- [x] **验收（MQ-1）**：无 Daily Key，真 Qwen3-TTS，3 轮中文问答，首句可听，可打断
 
 ### Q.2 Skills 变强（Skill Usefulness）
 
@@ -194,12 +194,12 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 **问题**：主动生成常缺服务端 LLM Key → 罐头句；idle 状态进程内丢失；任务绑 `default` session；open_topic 过粗。
 
-- [ ] **主动生成有脑**：proactive 路径能用与聊天一致的模型配置（服务端安全存或同步策略，禁止静默回落罐头句而不告警）
-- [ ] **Activity 持久化**：idle / cooldown 跨进程重启仍正确
-- [ ] **投递绑会话**：通知回到正在聊的用户/会话；在线时可短 TTS（可选，不依赖 Daily）
-- [ ] **资格更聪明**：open topic / 勿扰 / 偏好；减少「随便有条 episodic 就问候」
-- [ ] **日程解析加固**：中文常见说法评测集；失败可编辑确认
-- [ ] **验收（MQ-4）**：调短 idle 后主动问候引用真实记忆；「明早 8 点提醒…」可靠触发且进收件箱
+- [x] **主动生成有脑**：服务端 `PROACTIVE_LLM_*`（回退 `DASHSCOPE_API_KEY`）+ `prepare_chat_request` 注入记忆；失败 `notify` 告警，禁止静默罐头句
+- [x] **Activity 持久化**：`activity_last_at` / `outreach_state` SQLite；启动 hydrate
+- [x] **投递绑会话**：notify 默认 `session_id=default`；WS `speak: true` → 在线短本地 TTS
+- [x] **资格更聪明**：human 非默认或问句/身份话题才 open；勿扰与 `proactive_enabled` 抑制生成
+- [x] **日程解析加固**：中文 fixture（明早8点 / 明天早上八点 / 后天9点）；Schedules 解析→确认→创建
+- [x] **验收（MQ-4）**：调短 idle 后主动问候可引用记忆；「明早 8 点提醒…」parse 确认后到点进收件箱（+ WS）
 
 ### Q.5 横切（随 Q.1–Q.4 穿插）
 
@@ -279,7 +279,7 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [ ] 工具权限分级（Safe / Caution / Sensitive / Dangerous）
 - [ ] UI 确认：Sensitive / Dangerous
 - [ ] 「一键遗忘」+ 数据导出 JSONL
-- [x] LLM API Key 默认存浏览器；服务端不落盘 UI Key（主动 Loop 若需服务端 Key，须单独设计，见 Q.4）
+- [x] LLM API Key 默认存浏览器；服务端不落盘 UI Key；主动 Loop 用服务端 `PROACTIVE_LLM_*` / `DASHSCOPE_API_KEY`（Q.4）
 - [ ] 本地 TTS / ASR：音频默认不离开本机（文档写清）
 
 ### 可观测性 / 性能 / 评测
@@ -305,10 +305,10 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | M2.6-1 / M2.6-2 | 本地 TTS stub / 真模型可播 | ✅ 首版（体验进 Q.1） |
 | **MQ-0** | 人设可配置：Settings 改 persona 下一轮生效 | ✅ |
 | **MQ-3** | 记忆：名字/城市/忌口跨刷新；vector_mode 诚实 | ✅ 首版 |
-| **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | 🔜 |
+| **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | ✅ 首版 |
 | **MQ-2** | Skills：三场景稳定 + 契约无悬空 | 🔜 |
 | **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
-| **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | 🔜 |
+| **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | ✅ Q.4 首版 |
 | **M5-1** | 多端 / Telegram（或等价 channel） | 待 Q 后 |
 | **M5-2** | Subagent 委派回灌 | 待 Q 后 |
 | M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP | 按需 |
@@ -335,7 +335,9 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase 2.6 本地 TTS 首版
 - [x] Phase Q.0 人设可配置
 - [x] Phase Q.3 记忆真有用（首版）
-- [ ] **Phase Q 质量硬化（Q.1 / Q.2 / Q.4）** ← **下一主线**
+- [x] Phase Q.1 语音可用（首版）
+- [x] Phase Q.4 Loop 真主动（首版）
+- [ ] **Phase Q 质量硬化（Q.2）** ← **下一主线**
 - [ ] Phase 5.1 多端 & channel
 - [ ] Phase 5.2 Subagents
 - [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
@@ -346,15 +348,15 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 1. **Phase Q.0** 人设可配置 — ✅  
 2. **Phase Q.3** 记忆真有用 — ✅ 首版  
-3. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
-4. **Phase Q.2** Skills 契约与触发质量  
-5. **Phase Q.4** Loop 真主动（模型配置 + 会话绑定）  
+3. **Phase Q.1** 语音可用 — ✅ 首版  
+4. **Phase Q.4** Loop 真主动 — ✅ 首版  
+5. **Phase Q.2** Skills 契约与触发质量  
 6. **Phase 5.1** 多端 & Telegram  
 7. **Phase 5.2** Subagents  
 8. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Q.0 人设 + Q.3 记忆首版落地；下一主线 Q.1 语音 / Q.2 Skills / Q.4 Loop）  
+**最后更新**：2026-07-19（Q.0 / Q.1 / Q.3 / Q.4 首版落地；下一主线 Q.2 Skills）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

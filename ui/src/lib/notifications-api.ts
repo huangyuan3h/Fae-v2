@@ -16,6 +16,7 @@ export type NotificationPrefs = {
   quiet_end_hour: number | null;
   desktop_enabled: boolean;
   web_push_enabled: boolean;
+  proactive_enabled: boolean;
   vapid_configured?: boolean;
 };
 
@@ -61,6 +62,7 @@ export function putNotificationPrefs(
     quiet_end_hour: number | null;
     desktop_enabled: boolean;
     web_push_enabled: boolean;
+    proactive_enabled: boolean;
     clear_quiet: boolean;
   }>,
 ) {

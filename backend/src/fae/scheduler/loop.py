@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable
@@ -12,8 +13,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from fae.agent.prepare import prepare_chat_request
 from fae.llm.types import ChatMessage, ChatRequest, LLMConfig
-from fae.scheduler.delivery import NotificationDelivery
+from fae.memory.defaults import DEFAULT_HUMAN
+from fae.scheduler.delivery import DEFAULT_SESSION_ID, NotificationDelivery
 from fae.scheduler.heartbeat import HeartbeatLoop
 from fae.scheduler.jobs import builtin_job_specs
 from fae.scheduler.proactive import OutreachPolicy
@@ -25,9 +28,15 @@ if TYPE_CHECKING:
     from fae.memory.consolidation import SleeptimeScheduler
     from fae.memory.episodic import EpisodicStore
     from fae.memory.recall_store import RecallStore
+    from fae.pipecat.services.letta_memory import LettaMemoryService
     from fae.scheduler.activity import ActivityTracker
 
 logger = logging.getLogger("fae.scheduler.loop")
+
+_IDENTITY_HINT = re.compile(
+    r"(名字|姓名|我叫|住在|忌|过敏|timezone|my name|i live|prefer)",
+    re.I,
+)
 
 
 class ProactiveLoop:
@@ -39,6 +48,7 @@ class ProactiveLoop:
         delivery: NotificationDelivery,
         skills: SkillRuntime | None = None,
         llm: LLMClient | None = None,
+        memory: LettaMemoryService | None = None,
         episodic: EpisodicStore | None = None,
         recall: RecallStore | None = None,
         sleeptime: SleeptimeScheduler | None = None,
@@ -48,12 +58,15 @@ class ProactiveLoop:
         outreach_max_per_day: int = 1,
         default_llm_config: LLMConfig | None = None,
         timezone: str = "local",
+        default_city: str = "",
+        default_timezone: str = "",
     ) -> None:
         self.store = store
         self.activity = activity
         self.delivery = delivery
         self.skills = skills
         self.llm = llm
+        self.memory = memory
         self.episodic = episodic
         self.recall = recall
         self.sleeptime = sleeptime
@@ -62,6 +75,8 @@ class ProactiveLoop:
             api_key="unused", model="default"
         )
         self.timezone = timezone
+        self.default_city = default_city
+        self.default_timezone = default_timezone
         self._scheduler = AsyncIOScheduler()
         self._started = False
         self._on_job_mutated: Callable[[], None] | None = None
@@ -77,39 +92,75 @@ class ProactiveLoop:
             policy=policy,
             on_outreach=self._handle_outreach,
             open_topic_checker=self._has_open_topic,
+            store=store,
+            prefs_getter=store.get_prefs,
         )
 
     @property
     def scheduler(self) -> AsyncIOScheduler:
         return self._scheduler
 
-    def _has_open_topic(self, session_id: str) -> bool:
-        """True when episodic (7d) or recall hot window suggests unfinished context."""
-        if self.episodic is not None:
-            events = self.episodic.list_events(session_id=session_id, limit=10)
-            if not events:
-                events = self.episodic.list_events(limit=10)
-            cutoff = datetime.now() - timedelta(days=7)
-            for e in events:
-                created = e.created_at
-                if created is None:
-                    return True
-                if created.tzinfo is not None:
-                    created = created.replace(tzinfo=None)
-                if created >= cutoff:
-                    return True
+    def _text_suggests_open_topic(self, text: str) -> bool:
+        t = (text or "").strip()
+        if not t:
+            return False
+        if "?" in t or "？" in t:
+            return True
+        return bool(_IDENTITY_HINT.search(t))
+
+    async def _has_open_topic(self, session_id: str) -> bool:
+        """True when human is personalized or recent user text suggests open context.
+
+        Arbitrary 7-day episodic alone is not enough.
+        """
+        sid = (session_id or "").strip() or DEFAULT_SESSION_ID
+
+        if self.memory is not None and getattr(self.memory, "enabled", False):
+            client = getattr(self.memory, "client", None)
+            if client is not None:
+                try:
+                    human = (await client.get_block("human")).strip()
+                    if human and human != DEFAULT_HUMAN.strip():
+                        return True
+                except Exception:  # noqa: BLE001
+                    logger.debug("open_topic human read failed", exc_info=True)
+
         if self.recall is not None:
             try:
-                if self.recall.list_hot(session_id, limit=1):
-                    return True
+                for turn in self.recall.list_hot(sid, limit=12):
+                    if self._text_suggests_open_topic(turn.user_text or ""):
+                        return True
+                    if self._text_suggests_open_topic(turn.assistant_text or ""):
+                        return True
             except Exception:  # noqa: BLE001
-                pass
-        # Mere activity must not count — that would fire outreach for every idle chat.
+                logger.debug("open_topic recall failed", exc_info=True)
+
+        if self.episodic is not None:
+            cutoff = datetime.now() - timedelta(days=7)
+            try:
+                events = self.episodic.list_events(session_id=sid, limit=15)
+                if not events:
+                    events = self.episodic.list_events(limit=15)
+                for e in events:
+                    created = e.created_at
+                    if created is not None:
+                        if created.tzinfo is not None:
+                            created = created.replace(tzinfo=None)
+                        if created < cutoff:
+                            continue
+                    summary = getattr(e, "summary", "") or ""
+                    if self._text_suggests_open_topic(summary):
+                        return True
+            except Exception:  # noqa: BLE001
+                logger.debug("open_topic episodic failed", exc_info=True)
+
         return False
 
     async def start(self) -> None:
         if self._started:
             return
+        self.activity.bind_store(self.store)
+        self.heartbeat.bind_store(self.store)
         specs = builtin_job_specs()
         self.store.ensure_builtin_jobs(
             [
@@ -147,7 +198,6 @@ class ProactiveLoop:
 
     def _resync_jobs(self) -> None:
         """Register/update APScheduler jobs from the store."""
-        # Remove non-heartbeat jobs
         for job in list(self._scheduler.get_jobs()):
             if job.id == "heartbeat":
                 continue
@@ -181,7 +231,6 @@ class ProactiveLoop:
             )
         elif stored.kind == "date" and stored.run_at is not None:
             if stored.run_at < time.time() - 1:
-                # Past one-shot: skip unless re-enabled via trigger API
                 return
             trigger = DateTrigger(run_date=datetime.fromtimestamp(stored.run_at))
         else:
@@ -213,27 +262,29 @@ class ProactiveLoop:
             if not job.enabled or job.kind != "date" or job.run_at is None:
                 continue
             if job.run_at <= now:
-                # Claim before notify to avoid double-fire with DateTrigger.
                 claimed = self.store.patch_job(job.id, enabled=False)
                 if claimed is None or claimed.enabled:
                     continue
                 await self.run_job(job.id, already_claimed=True)
 
     async def _handle_outreach(self, session_id: str) -> None:
+        sid = (session_id or "").strip() or DEFAULT_SESSION_ID
         body = await self._generate_with_skill(
             skill_name="proactive_outreach",
-            session_id=session_id,
+            session_id=sid,
             user_prompt=(
                 "The user has been away. Write one short warm check-in "
-                "(1-2 sentences, Chinese if prior context is Chinese)."
+                "(1-2 sentences, Chinese if prior context is Chinese). "
+                "Use the user's name or recent topics from memory when available."
             ),
             fallback="嗨，想你了。最近还好吗？有什么想聊的随时叫我。",
         )
         await self.delivery.notify(
             "FAE 想聊聊",
             body,
-            session_id=session_id,
+            session_id=sid,
             source="proactive_outreach",
+            speak=True,
         )
 
     async def run_job(
@@ -242,7 +293,6 @@ class ProactiveLoop:
         job = self.store.get_job(job_id)
         if job is None:
             return {"ok": False, "error": "not_found"}
-        # Claim one-shots before side effects so APS + heartbeat cannot double-fire.
         if job.kind == "date" and not already_claimed and job.enabled:
             self.store.patch_job(job_id, enabled=False)
             self.resync()
@@ -250,12 +300,15 @@ class ProactiveLoop:
             return await self._run_daily_checkin(job)
         if job_id == "weekly_recap":
             return await self._run_weekly_recap(job)
-        # Custom reminder
         title = job.title or "提醒"
         body = job.body or job.title
         try:
             await self.delivery.notify(
-                title, body, session_id="", source=f"job:{job_id}"
+                title,
+                body,
+                session_id=DEFAULT_SESSION_ID,
+                source=f"job:{job_id}",
+                speak=True,
             )
         except Exception:  # noqa: BLE001
             logger.exception("notify failed for job=%s", job_id)
@@ -269,7 +322,7 @@ class ProactiveLoop:
         skill = (job.meta or {}).get("skill", "daily_check_in")
         body = await self._generate_with_skill(
             skill_name=str(skill),
-            session_id="default",
+            session_id=DEFAULT_SESSION_ID,
             user_prompt=(
                 "Write a brief daily check-in for the user based on this "
                 f"yesterday context:\n{context}\n"
@@ -278,7 +331,11 @@ class ProactiveLoop:
             fallback="早上好！新的一天开始了，今天想优先做哪一件事？",
         )
         await self.delivery.notify(
-            "每日问候", body, source="daily_checkin"
+            "每日问候",
+            body,
+            session_id=DEFAULT_SESSION_ID,
+            source="daily_checkin",
+            speak=True,
         )
         return {"ok": True, "id": job.id}
 
@@ -286,12 +343,12 @@ class ProactiveLoop:
         context = self._week_context()
         if self.sleeptime is not None:
             try:
-                await self.sleeptime.consolidate_now("default")
+                await self.sleeptime.consolidate_now(DEFAULT_SESSION_ID)
             except Exception:  # noqa: BLE001
                 logger.debug("weekly consolidate failed", exc_info=True)
         body = await self._generate_with_skill(
             skill_name="daily_check_in",
-            session_id="default",
+            session_id=DEFAULT_SESSION_ID,
             user_prompt=(
                 "Write a short weekly recap (bullet-friendly prose) from:\n"
                 f"{context}"
@@ -299,7 +356,11 @@ class ProactiveLoop:
             fallback="本周过得怎么样？有想继续跟进的事可以告诉我。",
         )
         await self.delivery.notify(
-            "周报", body, source="weekly_recap"
+            "周报",
+            body,
+            session_id=DEFAULT_SESSION_ID,
+            source="weekly_recap",
+            speak=True,
         )
         return {"ok": True, "id": job.id}
 
@@ -313,6 +374,32 @@ class ProactiveLoop:
     def _week_context(self) -> str:
         return self._yesterday_context()
 
+    def _llm_ready(self) -> bool:
+        key = (self.default_llm_config.api_key or "").strip()
+        return bool(key) and key != "unused"
+
+    async def _alert_generate_failure(
+        self, session_id: str, reason: str, detail: str
+    ) -> None:
+        sid = (session_id or "").strip() or DEFAULT_SESSION_ID
+        title = (
+            "主动生成失败 / 未配置模型"
+            if "配置" in reason or "key" in reason.lower() or "未配置" in reason
+            else "主动生成失败"
+        )
+        body = f"{reason}：{detail}"[:280]
+        logger.warning("proactive generate failed: %s — %s", reason, detail)
+        try:
+            await self.delivery.notify(
+                title,
+                body,
+                session_id=sid,
+                source="proactive_alert",
+                speak=False,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("proactive alert notify failed", exc_info=True)
+
     async def _generate_with_skill(
         self,
         *,
@@ -321,29 +408,57 @@ class ProactiveLoop:
         user_prompt: str,
         fallback: str,
     ) -> str:
-        if self.llm is None or self.skills is None:
+        sid = (session_id or "").strip() or DEFAULT_SESSION_ID
+
+        if self.llm is None:
+            await self._alert_generate_failure(
+                sid, "未配置模型", "LLM client unavailable on server"
+            )
             return fallback
+
+        if not self._llm_ready():
+            await self._alert_generate_failure(
+                sid,
+                "未配置模型",
+                "Set PROACTIVE_LLM_API_KEY or DASHSCOPE_API_KEY on the server",
+            )
+            return fallback
+
         try:
             req = ChatRequest(
                 config=self.default_llm_config,
                 messages=[ChatMessage(role="user", content=user_prompt)],
+                session_id=sid,
             )
-            prepared, activation = self.skills.prepare_activated_request(
+            prepared, _activation, _city = await prepare_chat_request(
                 req,
-                [skill_name],
-                session_id=session_id,
-                respect_cooldown=False,
+                session_id=sid,
+                memory=self.memory,
+                skills=None,
+                default_city=self.default_city,
+                default_timezone=self.default_timezone,
             )
-            if skill_name not in activation.active and not activation.active:
-                # skill missing/disabled
-                prepared = req
-            if not prepared.config.api_key or prepared.config.api_key == "unused":
-                return fallback
+            if self.skills is not None:
+                prepared, activation = self.skills.prepare_activated_request(
+                    prepared,
+                    [skill_name],
+                    session_id=sid,
+                    respect_cooldown=False,
+                )
+                if skill_name not in activation.active and not activation.active:
+                    pass  # skill missing/disabled — still chat with memory context
             resp = await self.llm.chat(prepared)
             text = (resp.content or "").strip()
-            return text or fallback
-        except Exception:  # noqa: BLE001
-            logger.debug("LLM generate failed; using fallback", exc_info=True)
+            if not text:
+                await self._alert_generate_failure(
+                    sid, "主动生成失败", "empty model response"
+                )
+                return fallback
+            return text
+        except Exception as exc:  # noqa: BLE001
+            await self._alert_generate_failure(
+                sid, "主动生成失败", str(exc)[:200] or exc.__class__.__name__
+            )
             return fallback
 
     def job_next_run(self, job_id: str) -> float | None:

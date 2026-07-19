@@ -25,6 +25,7 @@ class PrefsBody(BaseModel):
     quiet_end_hour: int | None = Field(default=None, ge=0, le=23)
     desktop_enabled: bool | None = None
     web_push_enabled: bool | None = None
+    proactive_enabled: bool | None = None
     clear_quiet: bool = False
 
 
@@ -78,6 +79,7 @@ async def get_prefs(request: Request) -> dict[str, Any]:
         "quiet_end_hour": prefs.quiet_end_hour,
         "desktop_enabled": prefs.desktop_enabled,
         "web_push_enabled": prefs.web_push_enabled,
+        "proactive_enabled": prefs.proactive_enabled,
         "vapid_configured": bool(getattr(settings, "vapid_public_key", "")),
     }
 
@@ -116,6 +118,11 @@ async def put_prefs(body: PrefsBody, request: Request) -> dict[str, Any]:
             if "web_push_enabled" not in fields
             else bool(body.web_push_enabled)
         ),
+        proactive_enabled=(
+            current.proactive_enabled
+            if "proactive_enabled" not in fields
+            else bool(body.proactive_enabled)
+        ),
     )
     store.set_prefs(prefs)
     return {
@@ -124,6 +131,7 @@ async def put_prefs(body: PrefsBody, request: Request) -> dict[str, Any]:
         "quiet_end_hour": prefs.quiet_end_hour,
         "desktop_enabled": prefs.desktop_enabled,
         "web_push_enabled": prefs.web_push_enabled,
+        "proactive_enabled": prefs.proactive_enabled,
     }
 
 

@@ -127,9 +127,10 @@ export function VoicePanel() {
         语音
       </h2>
       <p className="mt-1 text-sm text-[var(--ink-soft)]">
-        仅本机 TTS。<code>npm run dev</code> 会同时起 Qwen3-TTS（
-        <code>:8880</code>）。回复按句切片合成播放；下方参数保存在浏览器并随每次
-        speak 下发。
+        默认是浏览器听写 + 本机 TTS（不是 Daily）。
+        <code>npm run dev</code> 会同时起 Qwen3-TTS（
+        <code>:8880</code>）。回复按句切片合成播放；下方「语言」同时影响听写语言与
+        TTS。
       </p>
 
       <div className="mt-4 grid gap-2 border border-black/8 bg-white/50 px-4 py-3 text-sm">
@@ -204,7 +205,7 @@ export function VoicePanel() {
         </label>
 
         <label className="block text-sm text-[var(--ink)]">
-          语言
+          语言（听写 + TTS）
           <select
             className="mt-1 w-full border border-black/15 bg-white px-3 py-2"
             value={prefs.language}
@@ -276,9 +277,11 @@ export function VoicePanel() {
             }}
           />
           <span>
-            优先 Daily / Pipecat
+            优先 Daily / Pipecat（WebRTC 全双工）
             <span className="mt-1 block text-xs text-[var(--ink-soft)]">
-              {dailyReady ? "已就绪" : "未配置，可忽略"}
+              勾选 Daily = 进 WebRTC 房间，不是「打开本地 TTS」的开关。本地 TTS
+              始终走上方本机服务。
+              {dailyReady ? " 已就绪。" : " 未配置时可忽略。"}
             </span>
           </span>
         </label>

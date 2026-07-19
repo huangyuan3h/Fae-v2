@@ -34,6 +34,7 @@ class NotificationPrefs:
     quiet_end_hour: int | None = None  # exclusive
     desktop_enabled: bool = True
     web_push_enabled: bool = True
+    proactive_enabled: bool = True
 
 
 @dataclass
@@ -94,7 +95,8 @@ class ScheduleStore:
                   quiet_start_hour INTEGER,
                   quiet_end_hour INTEGER,
                   desktop_enabled INTEGER NOT NULL DEFAULT 1,
-                  web_push_enabled INTEGER NOT NULL DEFAULT 1
+                  web_push_enabled INTEGER NOT NULL DEFAULT 1,
+                  proactive_enabled INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE TABLE IF NOT EXISTS notification_inbox (
                   id TEXT PRIMARY KEY,
@@ -105,10 +107,33 @@ class ScheduleStore:
                   read INTEGER NOT NULL DEFAULT 0,
                   source TEXT NOT NULL DEFAULT 'system'
                 );
+                CREATE TABLE IF NOT EXISTS activity_last_at (
+                  session_id TEXT PRIMARY KEY,
+                  ts REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS outreach_state (
+                  session_id TEXT PRIMARY KEY,
+                  day TEXT NOT NULL,
+                  count INTEGER NOT NULL DEFAULT 0,
+                  last_at REAL
+                );
                 INSERT OR IGNORE INTO notification_prefs (id) VALUES (1);
                 """
             )
+            self._migrate_schema()
             self._conn.commit()
+
+    def _migrate_schema(self) -> None:
+        """Add columns introduced after the initial schema."""
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(notification_prefs)")
+        }
+        if "proactive_enabled" not in cols:
+            self._conn.execute(
+                "ALTER TABLE notification_prefs "
+                "ADD COLUMN proactive_enabled INTEGER NOT NULL DEFAULT 1"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -260,12 +285,16 @@ class ScheduleStore:
             ).fetchone()
         if row is None:
             return NotificationPrefs()
+        keys = row.keys()
         return NotificationPrefs(
             enabled=bool(row["enabled"]),
             quiet_start_hour=row["quiet_start_hour"],
             quiet_end_hour=row["quiet_end_hour"],
             desktop_enabled=bool(row["desktop_enabled"]),
             web_push_enabled=bool(row["web_push_enabled"]),
+            proactive_enabled=bool(
+                row["proactive_enabled"] if "proactive_enabled" in keys else 1
+            ),
         )
 
     def set_prefs(self, prefs: NotificationPrefs) -> NotificationPrefs:
@@ -274,14 +303,15 @@ class ScheduleStore:
                 """
                 INSERT INTO notification_prefs (
                   id, enabled, quiet_start_hour, quiet_end_hour,
-                  desktop_enabled, web_push_enabled
-                ) VALUES (1, ?, ?, ?, ?, ?)
+                  desktop_enabled, web_push_enabled, proactive_enabled
+                ) VALUES (1, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   enabled=excluded.enabled,
                   quiet_start_hour=excluded.quiet_start_hour,
                   quiet_end_hour=excluded.quiet_end_hour,
                   desktop_enabled=excluded.desktop_enabled,
-                  web_push_enabled=excluded.web_push_enabled
+                  web_push_enabled=excluded.web_push_enabled,
+                  proactive_enabled=excluded.proactive_enabled
                 """,
                 (
                     1 if prefs.enabled else 0,
@@ -289,10 +319,96 @@ class ScheduleStore:
                     prefs.quiet_end_hour,
                     1 if prefs.desktop_enabled else 0,
                     1 if prefs.web_push_enabled else 0,
+                    1 if prefs.proactive_enabled else 0,
                 ),
             )
             self._conn.commit()
         return prefs
+
+    # ── Activity / outreach persistence (Phase Q.4) ───────────────────
+
+    def get_activity_last_at(self, session_id: str) -> float | None:
+        sid = (session_id or "").strip() or "default"
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ts FROM activity_last_at WHERE session_id = ?", (sid,)
+            ).fetchone()
+        return float(row["ts"]) if row is not None else None
+
+    def set_activity_last_at(self, session_id: str, ts: float) -> None:
+        sid = (session_id or "").strip() or "default"
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO activity_last_at (session_id, ts) VALUES (?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET ts=excluded.ts
+                """,
+                (sid, float(ts)),
+            )
+            self._conn.commit()
+
+    def list_activity_last_at(self) -> dict[str, float]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, ts FROM activity_last_at"
+            ).fetchall()
+        return {str(r["session_id"]): float(r["ts"]) for r in rows}
+
+    def get_outreach_state(
+        self, session_id: str
+    ) -> tuple[str | None, int, float | None]:
+        sid = (session_id or "").strip() or "default"
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT day, count, last_at FROM outreach_state WHERE session_id = ?",
+                (sid,),
+            ).fetchone()
+        if row is None:
+            return None, 0, None
+        last = row["last_at"]
+        return (
+            str(row["day"]) if row["day"] else None,
+            int(row["count"] or 0),
+            float(last) if last is not None else None,
+        )
+
+    def set_outreach_state(
+        self,
+        session_id: str,
+        *,
+        day: str,
+        count: int,
+        last_at: float | None,
+    ) -> None:
+        sid = (session_id or "").strip() or "default"
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO outreach_state (session_id, day, count, last_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  day=excluded.day,
+                  count=excluded.count,
+                  last_at=excluded.last_at
+                """,
+                (sid, day, int(count), last_at),
+            )
+            self._conn.commit()
+
+    def list_outreach_state(self) -> dict[str, tuple[str, int, float | None]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, day, count, last_at FROM outreach_state"
+            ).fetchall()
+        out: dict[str, tuple[str, int, float | None]] = {}
+        for r in rows:
+            last = r["last_at"]
+            out[str(r["session_id"])] = (
+                str(r["day"] or ""),
+                int(r["count"] or 0),
+                float(last) if last is not None else None,
+            )
+        return out
 
     # ── Push ──────────────────────────────────────────────────────────
 
