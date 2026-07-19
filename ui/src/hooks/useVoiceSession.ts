@@ -11,6 +11,10 @@ import {
   backendHttpBase,
 } from "@/lib/config";
 import { joinDailyRoom, leaveDailyRoom } from "@/lib/daily-session";
+import {
+  CONFIG_CHANGED_EVENT,
+  syncActiveConfig,
+} from "@/lib/models";
 import { createVoiceSession } from "@/lib/pipecat-client";
 import {
   BrowserSTT,
@@ -18,6 +22,12 @@ import {
   speechSupported,
   stopSpeaking,
 } from "@/lib/speech";
+import { stripThinking } from "@/lib/strip-thinking";
+import {
+  loadPreferDaily,
+  PREFER_DAILY_CHANGED_EVENT,
+  savePreferDaily,
+} from "@/lib/voice-prefs";
 import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
@@ -46,9 +56,14 @@ export function useVoiceSession() {
   const [sessionId] = useState(makeClientSessionId);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
-  const [preferDaily, setPreferDaily] = useState(false);
+  const [preferDaily, setPreferDailyState] = useState(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support, setSupport] = useState({ stt: false, tts: false });
+
+  const setPreferDaily = useCallback((v: boolean) => {
+    setPreferDailyState(v);
+    savePreferDaily(v);
+  }, []);
 
   const wsRef = useRef(new WsChatClient());
   const sttRef = useRef(new BrowserSTT());
@@ -67,7 +82,8 @@ export function useVoiceSession() {
   }, [voiceSessionId]);
 
   useEffect(() => {
-    setConfigState(loadConfig());
+    setConfigState(syncActiveConfig());
+    setPreferDailyState(loadPreferDaily());
     setSupport(speechSupported());
     createVoiceSession({ preferDaily: false })
       .then((s) => {
@@ -77,9 +93,20 @@ export function useVoiceSession() {
       .catch(() => {
         /* backend optional at first paint */
       });
+
+    const onConfigChanged = () => setConfigState(loadConfig());
+    const onPreferDailyChanged = () => setPreferDailyState(loadPreferDaily());
+    window.addEventListener(CONFIG_CHANGED_EVENT, onConfigChanged);
+    window.addEventListener(PREFER_DAILY_CHANGED_EVENT, onPreferDailyChanged);
+
     const stt = sttRef.current;
     const ws = wsRef.current;
     return () => {
+      window.removeEventListener(CONFIG_CHANGED_EVENT, onConfigChanged);
+      window.removeEventListener(
+        PREFER_DAILY_CHANGED_EVENT,
+        onPreferDailyChanged,
+      );
       stt.stop();
       stopSpeaking();
       ws.close();
@@ -109,7 +136,7 @@ export function useVoiceSession() {
   const connectDaily = useCallback(async () => {
     if (connectingDaily.current || dailyConnected) return;
     if (!config.apiKey.trim()) {
-      setError("Daily 模式仍需要 LLM API Key（DashScope / OpenAI-compatible）");
+      setError("Daily 模式仍需要在 Settings → 模型 中配置 API Key");
       return;
     }
     connectingDaily.current = true;
@@ -161,7 +188,7 @@ export function useVoiceSession() {
   const runAssistant = useCallback(
     async (userText: string) => {
       if (!config.apiKey.trim()) {
-        setError("请先在下方填入 Agent API Key");
+        setError("请先在 Settings → 模型 中配置 API Key");
         return;
       }
       setError(null);
@@ -180,10 +207,10 @@ export function useVoiceSession() {
           {
             onToken: (token) => {
               assistantBuf.current += token;
-              const snapshot = assistantBuf.current;
+              const visible = stripThinking(assistantBuf.current);
               setLines((prev) =>
                 prev.map((l) =>
-                  l.id === assistantId ? { ...l, content: snapshot } : l,
+                  l.id === assistantId ? { ...l, content: visible } : l,
                 ),
               );
             },
@@ -195,7 +222,7 @@ export function useVoiceSession() {
           memorySessionRef.current,
         );
 
-        const reply = assistantBuf.current.trim();
+        const reply = stripThinking(assistantBuf.current);
         if (reply && support.tts) {
           setOrb("speaking");
           await speak(reply);

@@ -33,12 +33,15 @@
 git clone https://github.com/huangyuan3h/Fae-v2.git
 cd Fae-v2
 cp .env.example .env
-# 至少填 DASHSCOPE_API_KEY；Daily 增强再填 DAILY_API_KEY
+# 推荐：.env → LETTA_MODE=embedded
+# TTS / Daily 再填 DASHSCOPE_API_KEY、DAILY_API_KEY
 
-# 开发（推荐：embedded 记忆，无需拉 Letta 镜像）
-# .env → LETTA_MODE=embedded
-./start.sh
-cd ui && pnpm install && pnpm dev
+# 首次安装依赖
+npm install          # 根目录：concurrently
+npm run setup        # backend (uv) + ui (pnpm)
+
+# 一条命令同时起 backend(:8000) + UI(:3000)
+npm run dev
 open http://localhost:3000
 
 # 或 Docker（官方 Letta + Postgres 卷）
@@ -48,17 +51,19 @@ open http://localhost:3000
 
 ### 演示
 
-1. 打开 http://localhost:3000，在 Agent 设置填 API Key  
+1. 打开 http://localhost:3000 → **Settings → 模型**，添加 OpenAI / Ollama 配置并设为当前使用  
 2. **默认路径**：点「开始说话」（Chrome）或文字输入 → 流式回复 + 浏览器播报  
-3. **Daily 增强**：勾选「优先 Daily / Pipecat」→ 点开始 → 加入 WebRTC 房间  
+3. **Daily 增强**：Settings → 语音 → 勾选「优先 Daily / Pipecat」→ 回首页点开始  
 4. **M2-1 记忆**：说「我叫小明」→ 关掉页面重开 → 问「我叫什么」→ 应答「小明」  
 5. **M2-2 回忆**：聊「Python 项目」等几个话题 → 问「刚才 Python 那个项目」→ 回复能沾边
+
+LLM API Key / Base URL / Model 保存在浏览器 localStorage（Settings），不必写进根目录 `.env`。
 
 ### 环境变量
 
 | 变量 | 用途 |
 |---|---|
-| `DASHSCOPE_API_KEY` | LLM / TTS |
+| `DASHSCOPE_API_KEY` | 服务端 TTS（及未走 UI 配置时的默认 LLM） |
 | `LETTA_MODE` | `remote`（Compose Letta）/ `embedded`（本地 SQLite）/ `off` |
 | `LETTA_SERVER_URL` | remote 时的 Letta 地址（默认 `http://localhost:8283`） |
 | `LETTA_AGENT_NAME` | 默认 `fae-main` |

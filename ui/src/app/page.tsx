@@ -1,34 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
-import { AgentSettings } from "@/components/voice/AgentSettings";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
 import { MicButton } from "@/components/voice/MicButton";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
+import {
+  CONFIG_CHANGED_EVENT,
+  getActiveProfile,
+  type ModelProfile,
+} from "@/lib/models";
 
 export default function HomePage() {
   const {
-    config,
-    setConfig,
-    orb,
     lines,
     partial,
     error,
     sessionId,
     mode,
-    preferDaily,
-    setPreferDaily,
     dailyConnected,
     support,
     sendText,
     startListening,
     stopListening,
     interrupt,
+    orb,
   } = useVoiceSession();
   const [draft, setDraft] = useState("");
+  const [active, setActive] = useState<ModelProfile | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setActive(getActiveProfile());
+    refresh();
+    window.addEventListener(CONFIG_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(CONFIG_CHANGED_EVENT, refresh);
+  }, []);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -49,12 +57,27 @@ export default function HomePage() {
         <p className="mt-2 max-w-md text-sm text-[var(--ink-soft)]">
           说话或打字。浏览器语音识别 + 流式回复 + 语音播报。
         </p>
-        <Link
-          href="/memory"
-          className="mt-3 inline-block text-sm font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-        >
-          记忆浏览器 →
-        </Link>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-sm">
+          <Link
+            href="/settings"
+            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+          >
+            Settings
+          </Link>
+          <span className="text-black/20">·</span>
+          <Link
+            href="/memory"
+            className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+          >
+            记忆
+          </Link>
+        </div>
+        {active && (
+          <p className="mt-2 text-xs text-[var(--ink-soft)]">
+            当前模型：{active.name}
+            {sessionId ? ` · ${sessionId.slice(0, 8)}` : ""} · {mode}
+          </p>
+        )}
       </header>
 
       <VoiceOrb state={orb} />
@@ -108,21 +131,6 @@ export default function HomePage() {
           {error}
         </p>
       )}
-
-      <details className="mt-8 w-full max-w-xl">
-        <summary className="cursor-pointer px-4 text-sm text-[var(--ink-soft)]">
-          Agent 设置
-          {sessionId ? ` · session ${sessionId.slice(0, 8)}` : ""}
-          {` · ${mode}`}
-        </summary>
-        <AgentSettings
-          config={config}
-          onChange={setConfig}
-          preferDaily={preferDaily}
-          onPreferDailyChange={setPreferDaily}
-          mode={mode}
-        />
-      </details>
     </main>
   );
 }
