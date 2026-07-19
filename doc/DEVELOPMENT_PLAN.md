@@ -1,74 +1,88 @@
 # FAE-v2 开发计划 Checklist
 
-> 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。
-> 用法：完成一项就打 `[x]`，每条任务都标明所属阶段、依赖、产出物、验收标准。
-> 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。
+> 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。  
+> 用法：完成一项就打 `[x]`，每条任务标明阶段、依赖、产出、验收。  
+> 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。  
+> **现行优先级**：**质量 > 上限**。Phase 1–4 骨架已齐，下一主线是把「勉强能用」做成「真好用」。
 
 ---
 
-## 0. 总览（按当前状态重排）
+## 0. 总览（2026-07-19 修订）
 
 | 阶段 | 名称 | 状态 | 阶段成果（Demo-Ready 标准） |
 |---|---|---|---|
-| Phase 1 | MVP | ✅ 完成 | 浏览器语音对话 + Docker 一键起 |
-| Phase 2 | 记忆深化 | ✅ 完成 | 三层记忆 + 记忆浏览器 UI |
-| Phase 2.6 | Qwen3-TTS 默认播报 | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
-| Phase 3 | Skills 体系 | ✅ 完成（有已知残留） | Markdown skill 自动触发 + 6 内置 + `/skills` |
-| Phase 4 | 主动 Loop | ✅ 完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
-| Phase 5 | 上限扩展 | 待开始 | MCP / Subagent / 多端 / 第三方 channel |
+| Phase 1 | MVP | ✅ 骨架完成 | 浏览器语音对话 + Docker 一键起 |
+| Phase 2 | 记忆深化 | ✅ 骨架完成 | 三层记忆 + 记忆浏览器 UI |
+| Phase 2.6 | 本地 TTS | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
+| Phase 3 | Skills 体系 | ✅ 骨架完成 | Markdown skill 自动触发 + 6 内置 + `/skills` |
+| Phase 4 | 主动 Loop | ✅ 骨架完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
+| **Phase Q** | **质量硬化** | **🔜 下一主线** | 语音可用 · Skill 真触发 · 记忆真有用 · Loop 真主动 |
+| Phase 5 | 上限扩展 | 待开始（按优先级取用） | 多端/channel → Subagents → 其余可选 |
 
-### 0.1 现状快照（2026-07-19）
+### 0.1 现状判断
 
-**已落地**
+| 域 | 骨架 | 真实体验 | 一句话 |
+|---|---|---|---|
+| 语音 | ✅ | ⚠ 勉强能用 | 浏览器 STT 单次识别；TTS 非流式、首包慢；打断/路径分裂 |
+| Skills | ✅ | ⚠ 很弱 | 关键词 Jaccard；`requires_tools` 未接线；剧本薄 |
+| 记忆 | ✅ | ⚠ 很弱 | 事实靠正则；archival 常 stub 向量；sleeptime 非真摘要 |
+| Loop | ✅ | ⚠ 很弱 | 主动文案常回落到罐头句；会话绑定弱；推送依赖 VAPID |
 
-- 根目录 `npm run dev`：backend `:8000` + UI（`:3000` / `:3001`）
-- Settings → 模型：OpenAI / Ollama 配置 CRUD、测试连接、当前选用（localStorage）
-- Settings → 语音：Daily 开关（**可选**；未配 Key 会回退 browser）
-- 默认对话路径：浏览器 Web Speech STT + `/ws/chat` + **浏览器 `speechSynthesis` TTS**
-- 记忆：embedded / remote Letta、Recall、Archival、Episodic、sleeptime、`/memory` UI
-- 回复清洗：剥离 `<think>`；TTS 前去 Markdown；聊天区 Markdown 渲染
-- CORS：含 `3000` / `3001`
+**结论**：不要急着冲 Phase 5「上限」。先做 **Phase Q**，把 1–4 从「能演示」做成「愿意天天用」。
 
-**已知缺口（驱动 Phase 2.6）**
+### 0.2 概念速查（易混淆项）
 
-- 默认 TTS 是系统朗读，不自然；且曾误以为勾选 Daily = 本地 TTS
-- Daily 仅为可选 WebRTC；TTS **始终**走本机 `VLLM_TTS_URL`（无云端 TTS）
+#### Local ASR（本地语音识别，可选增强）
 
-### 0.2 语音策略修订（相对旧计划）
+- **是什么**：本机跑的语音→文字服务（设计目标：Qwen3-ASR via `VLLM_ASR_URL`，OpenAI-compatible `POST /v1/audio/transcriptions`）。
+- **现在默认用什么**：浏览器 **Web Speech API**（Chrome 等），**不经过** `VLLM_ASR_URL`。
+- **仓库里现状**：Daily/Pipecat 路径会读 `VLLM_ASR_URL`；Compose 多半是 **stub（固定回「你好」）**，不能当真识别。
+- **何时值得做**：要摆脱浏览器 STT 的语言/浏览器限制、或要做真全双工 WebRTC 时再升优先级。  
+  → 归 **Phase 5 可选**，不阻塞 Phase Q。
 
-| 项 | 旧计划 | **现行计划** |
+#### Daily / LiveKit（可选 WebRTC 传输层）
+
+| | Daily | LiveKit |
 |---|---|---|
-| 默认 TTS | 浏览器 `speechSynthesis`；可选 Daily + DashScope | **本地 TTS 服务（OpenAI-compatible HTTP）** |
-| Daily | 增强主路径之一 | **可选 / 降级**：仅在需要 WebRTC 全双工时启用 |
-| 云端 TTS | Pipecat Daily 默认 DashScope | **已移除**；只保留本机权重 / stub |
-| STT（近期） | 浏览器 Web Speech 可接受 | **先保持浏览器 STT**；本地 ASR（vLLM-Omni）并行可选 |
-| 传输 | Daily WebRTC 或浏览器 | **默认：HTTP/WS 文本 + 本地 TTS 音频回放**（无 Daily Key） |
+| 角色 | 把麦克风/扬声器音频用 **WebRTC** 送进 Pipecat | 同角色的另一家传输层 |
+| 本仓库 | **部分实现**（需 `DAILY_API_KEY`） | **未实现**（仅架构文档提及） |
+| 适合场景 | 低延迟全双工、服务端 VAD/打断、真流式 STT→LLM→TTS | 同上，换厂商 |
+| 与默认路径关系 | **可选**；默认是「浏览器 STT + `/ws/chat` 文本 + HTTP 拉本地 TTS」 | 更后 |
 
-**本地 TTS 接口约定（可换引擎）**
+**产品默认路径（现行）**：
 
 ```text
-POST {VLLM_TTS_URL}/v1/audio/speech
-Body: { "model": "...", "input": "...", "voice": "..." }
-→ audio/mpeg | audio/wav | audio/pcm
+Mic → 浏览器 STT → /ws/chat（文本流）→ 本地 TTS HTTP → 浏览器 Audio 播放
 ```
 
-- 开发无 GPU：compose / 本地 **TTS stub**（固定短音或静音 + 正确 Content-Type）
-- 有 GPU / 本机模型：同一 URL 换成 Qwen3-TTS / CosyVoice / 其它兼容服务
-- UI：播 `Audio` / `AudioContext`，**不再默认走 `speechSynthesis`**（失败时可降级）
+Daily/LiveKit **不是**「本地 TTS」的开关；它们是「全双工实时语音房间」。没 Key、不勾选时，完全不需要它们。  
+→ 归 **Phase 5 可选**；Phase Q 优先把默认 WS 路径做稳。
+
+#### MCP（降级 / 暂缓）
+
+MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对本项目：
+
+- Skills + 自有 Tool Registry 已是主扩展面；
+- 通用 MCP client（stdio/SSE、权限合并）**投入大、短期收益低**；
+- 用户判断：**已落伍于当前优先级**，不排入近期主线。
+
+若未来某类工具生态（filesystem / IDE / 数据库）以 MCP 为唯一入口，再单独立项；**不默认进 Phase 5 主清单**。
 
 ---
 
-## Phase 1 · MVP — ✅ 完成
+## Phase 1 · MVP — ✅ 骨架完成
 
-> 历史记录保留；细节见 git 历史。摘要：脚手架、FastAPI、Pipecat（含 Daily 可选）、Next UI、Docker。
+> 细节见 git 历史。摘要：脚手架、FastAPI、Pipecat（含 Daily 可选）、Next UI、Docker。
 
 - [x] 基础设施 / FastAPI / Pipecat 最小管线 / 最小 UI / 部署闭环
 - [x] 浏览器路径：Web Speech STT/TTS + `/ws/chat`
 - [x] Daily 可选路径（WebRTC）— TTS 已统一为本机服务
 
+**质量债 → Phase Q.1**
+
 ---
 
-## Phase 2 · 记忆深化 — ✅ 完成
+## Phase 2 · 记忆深化 — ✅ 骨架完成
 
 - [x] 2.1 Letta（remote / embedded）
 - [x] 2.2 Pipecat / WS 记忆注入与持久化
@@ -76,175 +90,172 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 - [x] 2.4 sleeptime consolidation
 - [x] 2.5 记忆浏览器 UI
 
-> 附带已完成（原计划外，已合入主线）：根目录 `npm run dev`、Settings 模型管理、think/markdown 清洗。
+**质量债 → Phase Q.3**
 
 ---
 
-## Phase 2.6 · 本地语音栈（下一优先）
+## Phase 2.6 · 本地语音栈 — ✅ 首版
 
-> 目标：开发者 **零 Daily Key** 即可听到自然、本地合成的中文语音。  
-> 默认路径：`Mic/文字 →（浏览器 STT 可选）→ /ws/chat → 本地 TTS → 浏览器播放`。
+> 目标：开发者 **零 Daily Key** 即可听到自然、本地合成的中文语音。
 
-### 2.6.1 后端：本机 TTS（无 Daily）— ✅
+### 已完成
 
-- [x] 配置：`VLLM_TTS_URL` + `TTS_MODEL` / `TTS_VOICE` / `TTS_LANGUAGE` / `TTS_SAMPLE_RATE`
-- [x] `POST /api/tts/speak`：strip think/markdown → 本机 TTS → `audio/wav`
-- [x] `GET /api/tts/status`
-- [x] 单测：`test_tts_api.py`（不可达 503、WAV 头、speakable）
-- [x] **已移除** DashScope / 云端 TTS 路径（避免误选）
+- [x] `VLLM_TTS_URL` + `POST /api/tts/speak` / `GET /api/tts/status`
+- [x] 移除云端 TTS；UI 优先 Qwen3-TTS，失败降级 `speechSynthesis`
+- [x] TTS stub 内嵌；`npm run setup:tts` + 真模型路径文档
 
-> **验收**：`npm run dev`（含 TTS stub）后  
-> `curl -X POST localhost:8000/api/tts/speak -H 'Content-Type: application/json' -d '{"text":"你好"}' --output /tmp/a.wav`
+### 未完成（并入 Phase Q.1）
 
-### 2.6.2 UI：默认播 Qwen3-TTS — ✅ 首版
-
-- [x] `ui/src/lib/qwen-tts.ts`：请求 `/api/tts/speak` + `Audio` 播放 / 打断
-- [x] `useVoiceSession`：优先 Qwen3-TTS，失败降级浏览器朗读
-- [x] Settings → 语音：Qwen3-TTS 状态；Daily 收进高级
-- [x] 首页状态：`Qwen3-TTS` / `浏览器朗读` / `Daily`
-
-> **冒烟测试**（M2.6-1）：不设 `DAILY_API_KEY`，文字聊 3 轮听到 Qwen 音色；打断立即停。
-
-### 2.6.3 本机 TTS（权重自推理）— ✅ 适配层
-
-- [x] `VLLM_TTS_URL` OpenAI-compatible 客户端（唯一 TTS 后端）
-- [x] TTS stub **内嵌** backend（`TTS_EMBED_STUB=true`）；`npm run dev` = backend+UI
-- [x] 云端 TTS 已删除；真模型：`TTS_EMBED_STUB=false` + 外部 URL（`doc/LOCAL_TTS.md`）
-- [ ] 流式首包优化
-- [ ] 同步 `ARCHITECTURE.md` 默认路径说明
-- [x] 仓库内一键拉起真实 Qwen3-TTS：`npm run setup:tts` + `npm run dev`（`:8880`，Mac 用 MLX）
+- [ ] 流式首包 / 降低首句可听延迟
+- [ ] 同步 `ARCHITECTURE.md` 默认路径说明（WS + 本地 TTS，非 WebRTC 主路径）
 
 ---
 
-## Phase 3 · Skills 体系 — ✅ 完成
+## Phase 3 · Skills 体系 — ✅ 骨架完成
 
-> Skill = Markdown 剧本，按需加载。6 个内置 skill + `/skills` 编辑器。
+- [x] Schema / Loader / Matcher / 6 内置 / `/skills` UI / REST
+- [x] `SkillRuntime` + WS `skills` 事件；Phase 4 `activate()`
+- [x] LAZY：`request_skill` 一轮 tool
 
-### 3.1 Skill 格式 & 加载器
-
-- [x] `SkillMetadata` / `Skill`（`fae.agent.skills_schema`）
-- [x] `SkillsLoader`：YAML frontmatter + `backend/src/skills/*.md` + mtime 缓存
-- [x] 加载策略：`always_on` / `trigger_based` / `manual` / `lazy`
-- [x] 触发匹配：关键词 + token Jaccard（无重型 embedding）
-
-### 3.2 内置 Skills（6 个）
-
-- [x] `daily_check_in.md` / `technical_debugging.md` / `travel_planning.md`
-- [x] `reading_companion.md` / `writing_assistant.md` / `proactive_outreach.md`（lazy）
-
-### 3.3 自动触发 + 优先级
-
-- [x] `SkillRuntime`：priority + cooldown（按 session）
-- [x] 注入 `<active_skills>`（记忆 system 之后）
-- [x] LAZY：`request_skill` 一轮 tool（`fae.agent.llm_turn`）
-- [x] WS 事件 `{"type":"skills","active":[...]}`；接 `/api/chat` + Daily seed
-
-> **冒烟**（M3-1）：贴 Traceback → 首页「已加载：technical_debugging」或 `POST /api/skills/test-trigger`。
-
-### 3.4 Skill 编辑器 UI
-
-- [x] `/skills`：列表、启停、Monaco 编辑、测试触发
-- [x] REST：`GET/PUT/PATCH /api/skills` + `POST /api/skills/test-trigger`
-
-> **Phase 3 收尾验收**：stack trace / 旅行 / 写作 三场景可演示。
-
-### 3.5 Phase 3 审计残留（不阻塞 Phase 4）
+### 已知残留（并入 Phase Q.2）
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| Schema / Loader / Matcher / 6 skills / `/skills` UI / REST | ✅ | `test_skills.py` 覆盖主路径 |
-| WS + `/api/chat` skills 注入 | ✅ | lazy 后会重发 `skills` 事件 |
-| `SkillRuntime.activate()` | ✅ | Phase 4 cron / proactive 强制注入 |
-| Daily 路径按轮 match | ⚠ 弱 | seed 用空文本；全双工路径后续对齐 |
-| `max_context_tokens` / `requires_tools` / approval UI | ⚠ 未接 | metadata 预留，非 Phase 4 阻塞 |
-| `proactive_outreach` 剧本 | ✅ | 调度强制加载用 `activate()`，勿赌 LLM `request_skill` |
+| Daily 路径按轮 match | ⚠ 弱 | seed 用空文本 |
+| `max_context_tokens` / `requires_tools` / approval UI | ⚠ 未接 | metadata 预留 |
+| 内置 skill 剧本深度 | ⚠ 薄 | 工具契约与验收对话不足 |
+| `technical_debugging` 声明的 `search_history` | ⚠ 悬空 | 工具不存在 |
 
 ---
 
-## Phase 4 · 主动 Loop
+## Phase 4 · 主动 Loop — ✅ 骨架完成
 
-> 目标：心跳、定时任务、主动问候、桌面通知。  
-> 主动触达默认 **通知 + 文字**；若用户在线且本地 TTS 可用，可再播一句短语音（不依赖 Daily）。
+- [x] APScheduler + Heartbeat + builtin cron
+- [x] `/schedules` UI + 通知（inbox / WS / desktop / Web Push）
+- [x] NL 创建任务（regex 级）
 
-### 4.0 开工前置（脚手架）— ✅
-
-- [x] `fae/scheduler/` + `ScheduleStore` / `NotificationDelivery` / `ConnectionHub`
-- [x] 边界约定：`SleeptimeScheduler` ≠ `fae.scheduler`
-- [x] `SkillRuntime.activate` 供 cron / proactive 强制加载
-- [x] `apscheduler` + `pywebpush`；`.env.example`：`SCHEDULER_ENABLED=true`
-- [x] `api/schedules.py` + `api/notifications.py`
-- [x] `/schedules` UI + Settings「通知」面板
-
-### 4.1 APScheduler + Heartbeat — ✅
-
-- [x] `ProactiveLoop` + lifespan：`SCHEDULER_ENABLED` 时启动 `AsyncIOScheduler`
-- [x] `HeartbeatLoop`：6h idle / 12h cooldown / max 1/day
-- [x] 待办到期：扫 past-due `date` jobs
-- [x] `skills.activate(["proactive_outreach"])` + `NotificationDelivery`
-- [x] 通道：inbox + WS + 浏览器 Notification + desktop + Web Push（有 VAPID 时）
-
-### 4.2 内置 cron 任务 — ✅
-
-- [x] `daily_checkin`：每天 08:00 + `daily_check_in` skill
-- [x] `weekly_recap`：周日 20:00 + 可选 sleeptime consolidate
-- [x] LLM / REST 工具：`schedule_create_job` / `list_jobs` / `cancel_job`
-
-### 4.3 定时任务 UI — ✅
-
-- [x] `/schedules`：列表、NL 创建、暂停/删除/立即触发
-- [x] `POST /api/schedules/parse` 预览
-
-> **冒烟**（M4-1）：创建「明早8点提醒吃维生素」→ 立即触发 → Settings 收件箱 + 浏览器通知。
-
-### 4.4 通知通道 — ✅
-
-- [x] Web Push（VAPID）+ `ui/public/sw.js`
-- [x] 浏览器 Notification API（WS `notification` 事件）
-- [x] macOS `osascript` / Linux `notify-send`
-- [x] Settings → 通知：开关、勿扰、订阅、收件箱
-
-> **Phase 4 收尾验收**：idle 达标后主动问候 1 次（可调 `OUTREACH_IDLE_HOURS` 便于本地演示）。
+**质量债 → Phase Q.4**
 
 ---
 
-## Phase 5 · 上限扩展
+## Phase Q · 质量硬化 — 🔜 下一主线
 
-> 进入"无上限"阶段，按需取用，不强排期。
+> **目标**：同一套功能，从「冒烟能过」变成「日常愿意开着」。  
+> **不做**：MCP、多用户、LiveKit（除非 Q 完成且明确需要）。  
+> **验收总标**：本地无 Daily Key，中文语音聊 10 轮可打断；跨天记得 3 件事实；贴 Traceback 稳触发 skill；idle 后主动问候有记忆、非罐头句。
 
-### 5.1 MCP 集成
+### Q.1 语音可用（Voice Quality）
 
-- [ ] 实现 MCP client：stdio + SSE 两种 transport
-- [ ] 工具注册表自动合并 MCP server 暴露的 tools
-- [ ] 权限分级复用现有 4 级
-- [ ] 内置连接示例：filesystem / github / postgres
+**问题**：浏览器 STT 单次、硬编码 `zh-CN`；TTS 整段 WAV + 队列门槛导致首包慢；打断浏览器/服务端分裂；长回复被 clip。
 
-### 5.2 Subagents
+- [ ] **STT UX**：continuous / 按住说话模式二选一做稳；语言可配；识别失败可感知提示
+- [ ] **TTS 延迟**：流式或句子级流水线；降低 `minStartReady` 导致的静默；评估去掉/放宽 `clip_for_local_tts` 硬截断
+- [ ] **打断一条故事**：浏览器路径打断 = 停播 + 取消 WS 生成；与 Daily `BargeIn` 行为对齐文档
+- [ ] **路径诚实**：Settings / 首页状态文案区分「本地 TTS」vs「Daily 全双工」；禁止再暗示勾选 Daily = 本地语音
+- [ ] **埋点**：一轮对话记录 STT / LLM TTFT / TTS 首包 / 端到端（日志即可，仪表盘可后补）
+- [ ] **验收（MQ-1）**：无 Daily Key，真 Qwen3-TTS，3 轮中文问答，首句可听延迟主观可接受，说话可打断
 
-- [ ] 设计 subagent 接口：`run_subagent(name, task, context)`
-- [ ] 内置 3 个：researcher / coder / reviewer
-- [ ] 主 agent 可委派任务，结果回灌
+### Q.2 Skills 变强（Skill Usefulness）
 
-### 5.3 多端 & 第三方 channel
+**问题**：匹配浅、工具契约假、剧本薄、Daily 不同步。
 
-- [ ] PWA 化（manifest.json + service worker，离线可用）
-- [ ] 移动端响应式适配
-- [ ] Slack / Telegram bot 适配器
+- [ ] **契约诚实**：接上或删除 `requires_tools` / `max_context_tokens`；实现或移除 `search_history`
+- [ ] **匹配质量**：减少「报错/bug/draft」类误触发；触发分数可解释（UI 或 debug 面板）；必要时加轻量 embedding/分类
+- [ ] **6 个内置加深**：每 skill 附 2–3 条验收对话；旅行/写作等写清记忆写回与工具调用约定
+- [ ] **路径对齐**：Daily / WS 每轮都用真实用户文本 match（消灭空 seed）
+- [ ] **验收（MQ-2）**：Traceback / 旅行 / 写作三场景触发稳定；误触发率可演示对比「改前改后」
 
-### 5.4 多用户 / 多角色
+### Q.3 记忆真有用（Memory Usefulness）
 
-- [ ] Letta agent 池化（每用户独立 agent_id）
-- [ ] NextAuth.js 接入（OAuth + Email magic link）
-- [ ] 数据隔离：每用户独立存储
+**问题**：事实正则、episodic 关键词、archival stub 向量、sleeptime 堆字、会话 ID 碎片。
 
-### 5.5 本地 ASR（可选增强）
+- [ ] **身份稳定**：浏览器刷新 / 主动任务 / 记忆 UI 共用稳定 `user`/`agent`/`session` 约定（消灭 `"default"` 漂移）
+- [ ] **事实提取升级**：LLM（或更强规则+确认）写 user/persona；低置信可进待确认
+- [ ] **Archival 真检索**：真实 embedding；stub 模式在 `/memory` 与日志明确标「不可靠」
+- [ ] **Sleeptime 产出短摘要**：整理后的 `current` 应是可行动摘要，不是对话垃圾堆
+- [ ] **Recall 可用性**：按相关性或话题检索，而不只是最近 N 轮 dump
+- [ ] **Memory UI**：展示「上轮注入了什么 / 为何注入」；一键遗忘 / 导出仍归横切但先做最小入口
+- [ ] **验收（MQ-3）**：说「我叫 X，住 Y，忌 Z」→ 关页重开仍答对；一周后 archival 能搜回关键句（非 stub）
 
-- [ ] 浏览器 STT → 可选切换本地 Qwen3-ASR（`VLLM_ASR_URL`，接口已部分存在）
-- [ ] Settings 增加 STT 来源：browser / local
+### Q.4 Loop 真主动（Proactive Usefulness）
 
-### 5.6 Daily / LiveKit（可选增强）
+**问题**：主动生成常缺服务端 LLM Key → 罐头句；idle 状态进程内丢失；任务绑 `default` session；open_topic 过粗。
 
-- [ ] 仅当需要低延迟全双工 WebRTC 时启用
-- [x] Daily bot TTS 已接同一套本机 `LocalTTSService`
+- [ ] **主动生成有脑**：proactive 路径能用与聊天一致的模型配置（服务端安全存或同步策略，禁止静默回落罐头句而不告警）
+- [ ] **Activity 持久化**：idle / cooldown 跨进程重启仍正确
+- [ ] **投递绑会话**：通知回到正在聊的用户/会话；在线时可短 TTS（可选，不依赖 Daily）
+- [ ] **资格更聪明**：open topic / 勿扰 / 偏好；减少「随便有条 episodic 就问候」
+- [ ] **日程解析加固**：中文常见说法评测集；失败可编辑确认
+- [ ] **验收（MQ-4）**：调短 idle 后主动问候引用真实记忆；「明早 8 点提醒…」可靠触发且进收件箱
+
+### Q.5 横切（随 Q.1–Q.4 穿插）
+
+- [ ] 同步 `ARCHITECTURE.md`：默认语音路径、Daily 可选、LiveKit 未实现、MCP 暂缓
+- [ ] README：质量状态与「下一主线 = Phase Q」一致
+- [ ] 最小 evals：`evals/agent/` memory-recall + skill-trigger；`evals/e2e/` 无 Daily 一轮语音（可 stub TTS）
+
+---
+
+## Phase 5 · 上限扩展（按优先级，不并行冲）
+
+> 进入「无上限」前，**默认已完成 Phase Q 主验收（MQ-1～MQ-4）**。  
+> 下列顺序 = 当前产品优先级（高 → 低）。
+
+### 5.1 多端 & 第三方 channel ← **优先做**
+
+> 需要：同一 Agent 不只困在桌面浏览器标签页。
+
+- [ ] PWA（manifest + SW，基础离线壳）
+- [ ] 移动端响应式（对话 / 通知 / 设置主路径可用）
+- [ ] Telegram bot 适配器（先做 1 个 channel，跑通记忆 + 主动通知）
+- [ ] Slack 适配器（第二 channel）
+- [ ] 通道统一：inbound 文本/命令 → 同一 agent core；outbound 通知可路由到 channel
+
+**验收（M5-1）**：手机浏览器可用主对话；Telegram 能收主动提醒并回一句写入记忆。
+
+### 5.2 Subagents ← **要做，但次于多端**
+
+> 主 agent 委派重活，结果回灌；不做「多智能体产品」叙事膨胀。
+
+- [ ] 接口：`run_subagent(name, task, context)` + 超时 / 取消 / 结果摘要
+- [ ] 内置 2～3 个：`researcher` / `coder`（或 `reviewer`）— 先质量后数量
+- [ ] 主对话可委派；UI 可见「子任务进行中 / 结果」
+- [ ] 与 Skills：委派可由 skill 剧本触发，而非另起一套触发器
+
+**验收（M5-2）**：主对话委托「调研 X」→ 子 agent 回摘要进记忆，主回复可引用。
+
+### 5.3 多用户 / 多角色 ← **低优先级**
+
+> 单用户本地陪伴仍是主场景；多租户延后。
+
+- [ ] Letta agent 池化（每用户 `agent_id`）
+- [ ] Auth（OAuth / magic link）— 选型时再定，不提前锁 NextAuth
+- [ ] 存储与记忆隔离
+
+**验收**：仅在明确要分享给第二人时开工。
+
+### 5.4 本地 ASR（可选增强）
+
+> 见 §0.2。默认路径仍可继续用浏览器 STT，直到 Q.1 体验到位再决定是否切换。
+
+- [ ] 真 Qwen3-ASR（或兼容服务）替换 compose stub
+- [ ] Settings：STT 来源 `browser` / `local`
+- [ ] 浏览器路径可选走本地 ASR（麦克风 PCM → 后端转写），不强制 Daily
+
+**验收**：无外网、无浏览器 STT 时，本地 ASR 中文可用。
+
+### 5.5 Daily / LiveKit（可选增强）
+
+> 见 §0.2。仅在需要 **低延迟全双工 WebRTC** 时投入。
+
+- [ ] Daily：每轮 skills/memory 与 WS 对齐；文本输入不再 stub
+- [ ] 文档标明 LiveKit = 未实现备选；**不提前双栈**
+- [ ] 若 Daily 授权/成本不可接受，再评估 LiveKit 单栈替换（二选一，不并行维护）
+
+### 5.6 MCP（暂缓）
+
+- [ ] ~~近期实现通用 MCP client~~ → **暂缓**（理由见 §0.2）
+- [ ] 若重启：仅接「明确需要的 1 个 server」做垂直集成，不做大而全 registry
 
 ---
 
@@ -253,36 +264,23 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 ### 安全 / 隐私
 
 - [ ] 工具权限分级（Safe / Caution / Sensitive / Dangerous）
-- [ ] UI 确认弹窗：Sensitive / Dangerous 执行前
-- [ ] 「一键遗忘」：清空记忆 + 重置 agent
-- [ ] 数据导出 JSONL（Settings）
-- [x] LLM API Key 仅存浏览器；服务端不落盘 UI Key
-- [ ] 本地 TTS / ASR：**音频默认不离开本机**（文档写清）
+- [ ] UI 确认：Sensitive / Dangerous
+- [ ] 「一键遗忘」+ 数据导出 JSONL
+- [x] LLM API Key 默认存浏览器；服务端不落盘 UI Key（主动 Loop 若需服务端 Key，须单独设计，见 Q.4）
+- [ ] 本地 TTS / ASR：音频默认不离开本机（文档写清）
 
-### 可观测性
+### 可观测性 / 性能 / 评测
 
-- [ ] 结构化日志：tool call / TTS 后端选择
+- [ ] 结构化日志：tool call / TTS 后端 / skill 触发分
 - [ ] 「现在在做什么」面板
-- [ ] Token / TTS 延迟统计
-
-### 性能
-
-- [ ] 端到端延迟埋点：STT / LLM / **本地 TTS**
-- [ ] P50 / P95 仪表盘
-- [ ] TTS 自然度主观评测（对比 browser vs local）
-
-### 评测（Evals）
-
-- [ ] `evals/tts/`：本地 stub + 真模型样本
-- [ ] `evals/agent/`：memory-recall / multi-turn
-- [ ] `evals/e2e/`：本地语音回合（无 Daily）
+- [ ] 端到端延迟：STT / LLM / 本地 TTS（P50/P95 可后补仪表盘）
+- [ ] `evals/`：memory-recall · skill-trigger · 无 Daily 语音回合
 
 ### 文档
 
-- [ ] 同步 `ARCHITECTURE.md` 语音默认路径为本地 TTS
-- [ ] `docs/design/local-tts.md`：接口、换引擎、VRAM 建议
+- [ ] `ARCHITECTURE.md` 与现行默认路径一致
+- [ ] README：Phase Q 为下一主线；Daily ≠ 本地 TTS；MCP 暂缓
 - [x] README Quick Start：`npm run setup` + `npm run dev`
-- [ ] README：本地 TTS 与（可选）Daily 的区别说明
 
 ---
 
@@ -290,14 +288,15 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 | ID | 验收标准 | 状态 |
 |---|---|---|
-| M0 | 仓库脚手架 + Compose 可起 | ✅ |
-| M1-1 / M1-2 | 浏览器对话 ≥ 3 轮 | ✅ |
-| M2-1 / M2-2 | 跨会话记忆 + `/memory` | ✅ |
-| **M2.6-1** | **无 Daily Key，本地 TTS stub 播报 3 轮** | 🔜 |
-| **M2.6-2** | **真本地模型 TTS，主观明显好于系统朗读** | 🔜 |
-| M3-1 / M3-2 | skill 触发 + 编辑器 | ✅ |
-| M4-1 / M4-2 | 定时任务 + 主动 loop | ✅ |
-| M5+ | MCP / Subagent / 本地 ASR / 可选 WebRTC | 按需 |
+| M0～M4 | 各阶段骨架 Demo | ✅ |
+| M2.6-1 / M2.6-2 | 本地 TTS stub / 真模型可播 | ✅ 首版（体验进 Q.1） |
+| **MQ-1** | 语音：可打断、首包可接受、路径文案诚实 | 🔜 |
+| **MQ-2** | Skills：三场景稳定 + 契约无悬空 | 🔜 |
+| **MQ-3** | 记忆：跨会话事实 + 非 stub 检索 | 🔜 |
+| **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | 🔜 |
+| **M5-1** | 多端 / Telegram（或等价 channel） | 待 Q 后 |
+| **M5-2** | Subagent 委派回灌 | 待 Q 后 |
+| M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP | 按需 |
 
 ---
 
@@ -305,34 +304,39 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 
 | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
-| 本地 TTS VRAM / 机型不够 | 中 | 高 | stub 保开发；文档写清最低配置；可换小模型 |
-| 本地 TTS 首包慢于云端 | 高 | 中 | 句子级合成 + 可接受延迟；流式后续 |
-| 误把 Daily 当本地 TTS | — | — | **产品文案 + Settings 状态已规划改正（2.6.3/2.6.5）** |
-| Daily 授权或网络（可选） | 低 | 低 | 默认不依赖 Daily |
-| Letta API 变动 | 中 | 中 | embedded 模式 + client 抽象 |
-| 主动 loop 误触 | 中 | 中 | cooldown + 勿扰 |
+| 把「骨架完成」当「可用」继续堆功能 | 高 | 高 | **锁定 Phase Q 为下一主线** |
+| 本地 TTS VRAM / 首包慢 | 中 | 高 | stub 保开发；流式/分句；文档写清机型 |
+| 主动 Loop 无服务端模型配置 → 罐头句 | 高 | 高 | Q.4 显式配置 + 失败告警 |
+| archival stub 向量伪装「语义记忆」 | 高 | 高 | UI/日志标明 stub；Q.3 上真 embedding |
+| 误把 Daily 当本地 TTS | 中 | 中 | Settings 文案 + ARCH 同步 |
+| MCP / 多用户过早投入 | 中 | 中 | 文档降级；默认不做 |
+| 主动 loop 误触 | 中 | 中 | cooldown + 勿扰 + 更严 open_topic |
 
 ---
 
 ## 完成度跟踪
 
-- [x] Phase 1 完成
-- [x] Phase 2 完成
-- [x] Phase 2.6 首版（本地 TTS `/api/tts/speak`；真·本机模型后续）
-- [x] Phase 3 完成（M3-1 / M3-2；见 3.5 残留）
-- [x] **Phase 4 完成**（M4-1 / M4-2）
-- [ ] Phase 5 持续推进 ← **下一主线**
+- [x] Phase 1～4 骨架
+- [x] Phase 2.6 本地 TTS 首版
+- [ ] **Phase Q 质量硬化** ← **下一主线**
+- [ ] Phase 5.1 多端 & channel
+- [ ] Phase 5.2 Subagents
+- [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC）；MCP 暂缓
 
 ---
 
 ## 近期执行顺序（建议）
 
-1. Phase 5：MCP / Subagent / 多端（按需）
-2. Phase 2.6.3+：流式 TTS 首包；补齐语音默认路径文档细节
-3. 主动 Loop 体验：为 outreach 调优 idle / 勿扰默认值
+1. **Phase Q.1** 语音可用（打断 + 首包 + 文案诚实）  
+2. **Phase Q.3** 记忆真有用（身份稳定 + 事实/检索）— 与语音可并行小组  
+3. **Phase Q.2** Skills 契约与触发质量  
+4. **Phase Q.4** Loop 真主动（模型配置 + 会话绑定）  
+5. **Phase 5.1** 多端 & Telegram  
+6. **Phase 5.2** Subagents  
+7. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；**MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Phase 4 主动 Loop 落地）  
+**最后更新**：2026-07-19（Phase 1–4 骨架收口；Phase Q 质量硬化立为主线；Phase 5 按多端 → Subagents → 可选增强重排；MCP 暂缓）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR
