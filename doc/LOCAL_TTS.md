@@ -9,12 +9,20 @@ npm run dev
   ├─ ui       :3000
   └─ tts      :8880   ← scripts/tts/run.sh (Qwen3-TTS weights)
 
-UI → POST :8000/api/tts/speak (per sentence) → POST :8880/v1/audio/speech → WAV queue
+UI → POST :8000/api/tts/speak (short phrases) → POST :8880/v1/audio/speech → WAV queue
 ```
 
-The browser **streams LLM tokens**, splits on sentence boundaries (`。！？.!?\n`),
-and synthesizes/plays each short clip while prefetching the next (1–2 in flight).
-This cuts time-to-first-audio vs waiting for the full reply.
+The browser **streams LLM tokens** into a hybrid chunker (`SpeechChunkAggregator`):
+
+- Hard ends: `。！？.!?\n…` → enqueue immediately
+- Soft ends: ≥48 chars + `，、；;:` → enqueue
+- Hard length: ≥72 chars → cut at nearest comma/space
+- Idle soft-flush: 400ms without new tokens and ≥12 chars buffered → enqueue
+  (covers LLM mid-stream pauses)
+
+`TtsPlayQueue` keeps up to **3** in-flight synthesizes and aims for **2** ready
+clips ahead of the play head, so synth runs while the current clip plays.
+Per-request cap is **72** characters.
 
 Tune **voice / speed / language** in **Settings → 语音** (stored in
 `localStorage`, sent on each `/api/tts/speak`). Process defaults come from `.env`
@@ -86,7 +94,7 @@ Useful API:
 
 | Endpoint | Role |
 |---|---|
-| `POST /api/tts/speak` | Body: `{ text, voice?, speed?, language? }` — per-request cap ~120 chars |
+| `POST /api/tts/speak` | Body: `{ text, voice?, speed?, language? }` — per-request cap ~72 chars |
 | `GET /api/tts/voices` | Upstream or builtin CustomVoice list |
 | `GET /api/tts/status` | Ready flag + defaults (`speed`, `language`, `voice`) |
 
@@ -98,7 +106,7 @@ Useful API:
 | `scripts/tts/run.sh` | Start `python -m api.main` on `:8880` |
 | `scripts/tts/prepare.sh` | Verify HF cache + warmup speak (`npm run prepare:tts`) |
 | `.deps/qwen3-tts/` | Local checkout (gitignored) |
-| `ui/src/lib/sentence-agg.ts` | Sentence splitter for stream-to-speak |
+| `ui/src/lib/sentence-agg.ts` | Hybrid phrase chunker + idle soft-flush |
 | `ui/src/lib/tts-prefs.ts` | Browser voice/speed/language prefs |
 
 ## Notes

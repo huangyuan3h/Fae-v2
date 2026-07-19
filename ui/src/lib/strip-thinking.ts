@@ -26,3 +26,15 @@ export function stripThinking(text: string): string {
 
   return out.replace(/^\s+/, "").replace(/\s+$/, "");
 }
+
+/** True while the model is still inside an unclosed thinking block. */
+export function isThinkingStreaming(text: string): boolean {
+  if (!text) return false;
+  const withoutClosed = text
+    .replace(THINK_TAG, "")
+    .replace(THINK_FENCE, "");
+  return (
+    withoutClosed.search(OPEN_THINK_TAG) >= 0 ||
+    withoutClosed.search(OPEN_THINK_FENCE) >= 0
+  );
+}

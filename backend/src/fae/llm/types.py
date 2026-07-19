@@ -24,6 +24,11 @@ class LLMConfig(BaseModel):
     )
     api_key: str = Field(min_length=1, description="Provider API key.")
     model: str = Field(default="qwen3-max", description="Model name to invoke.")
+    # MiniMax-M3 / compatible: auto=omit, disabled|adaptive → extra_body.thinking.type
+    thinking: Literal["auto", "disabled", "adaptive"] = Field(
+        default="auto",
+        description="Provider thinking/reasoning mode (MiniMax-compatible).",
+    )
 
 
 class ChatMessage(BaseModel):

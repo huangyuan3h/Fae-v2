@@ -24,7 +24,9 @@ from fae.agent.skills_loader import default_skills_dir
 from fae.agent.skills_runtime import SkillRuntime
 from fae.api.deps import get_llm_client
 from fae.api.memory import router as memory_router
+from fae.api.notifications import router as notifications_router
 from fae.api.pipeline import router as pipeline_router
+from fae.api.schedules import router as schedules_router
 from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
@@ -41,7 +43,8 @@ from fae.llm import (
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.factory import MemoryStack, create_memory_stack
 from fae.pipecat.services.letta_memory import LettaMemoryService
-from fae.scheduler import ActivityTracker
+from fae.scheduler import ActivityTracker, ConnectionHub, ProactiveLoop, ScheduleStore
+from fae.scheduler.delivery import NotificationDelivery
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
 
@@ -95,6 +98,25 @@ async def lifespan(app: FastAPI):
     # Skills runtime is created in create_app (available without lifespan).
     activity: ActivityTracker = getattr(app.state, "activity", None) or ActivityTracker()
     app.state.activity = activity
+    hub: ConnectionHub = getattr(app.state, "ws_hub", None) or ConnectionHub()
+    app.state.ws_hub = hub
+
+    # Schedule store always available for REST even when loop is disabled.
+    if getattr(app.state, "schedule_store", None) is None:
+        db_path = Path(settings.schedules_db_path)
+        if not db_path.is_absolute():
+            db_path = REPO_ROOT / db_path
+        app.state.schedule_store = ScheduleStore(db_path)
+    store: ScheduleStore = app.state.schedule_store
+    delivery = NotificationDelivery(
+        store,
+        hub,
+        vapid_public_key=settings.vapid_public_key,
+        vapid_private_key=settings.vapid_private_key,
+        vapid_subject=settings.vapid_subject,
+        notifications_enabled=settings.notifications_enabled,
+    )
+    app.state.delivery = delivery
 
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
@@ -142,14 +164,35 @@ async def lifespan(app: FastAPI):
             app.state.episodic = None
             app.state.sleeptime = None
 
-    # Phase 4 proactive loop: wire when SCHEDULER_ENABLED=true (scaffold only).
-    app.state.proactive = getattr(app.state, "proactive", None)
+    # Phase 4 proactive loop
+    if settings.scheduler_enabled and getattr(app.state, "proactive", None) is None:
+        loop = ProactiveLoop(
+            store=store,
+            activity=activity,
+            delivery=delivery,
+            skills=getattr(app.state, "skills", None),
+            llm=getattr(app.state, "llm_client", None),
+            episodic=getattr(app.state, "episodic", None),
+            recall=getattr(app.state, "recall_store", None),
+            sleeptime=getattr(app.state, "sleeptime", None),
+            heartbeat_seconds=settings.heartbeat_seconds,
+            outreach_idle_hours=settings.outreach_idle_hours,
+            outreach_cooldown_hours=settings.outreach_cooldown_hours,
+            outreach_max_per_day=settings.outreach_max_per_day,
+        )
+        app.state.proactive = loop
+        await loop.start()
+    elif getattr(app.state, "proactive", None) is None:
+        app.state.proactive = None
 
     yield
 
     runtime = getattr(app.state, "voice_runtime", None)
     if runtime is not None:
         await runtime.shutdown()
+    proactive = getattr(app.state, "proactive", None)
+    if isinstance(proactive, ProactiveLoop):
+        await proactive.stop()
     scheduler = getattr(app.state, "sleeptime", None)
     if isinstance(scheduler, SleeptimeScheduler):
         await scheduler.stop()
@@ -163,6 +206,9 @@ async def lifespan(app: FastAPI):
                 await mem_client.close()
             except Exception:  # noqa: BLE001
                 logger.exception("memory_client.close failed")
+    schedule_store = getattr(app.state, "schedule_store", None)
+    if isinstance(schedule_store, ScheduleStore):
+        schedule_store.close()
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -220,6 +266,9 @@ def create_app(
       app.state.sleeptime      — SleeptimeScheduler | None (memory consolidation)
       app.state.activity       — ActivityTracker (shared last-interaction clock)
       app.state.proactive      — Phase 4 ProactiveLoop | None
+      app.state.schedule_store — ScheduleStore
+      app.state.ws_hub         — ConnectionHub
+      app.state.delivery       — NotificationDelivery
     """
     settings = settings or get_settings()
     app = FastAPI(
@@ -242,6 +291,19 @@ def create_app(
     app.state.sleeptime = None
     app.state.activity = ActivityTracker()
     app.state.proactive = None
+    app.state.ws_hub = ConnectionHub()
+    schedules_path = Path(settings.schedules_db_path)
+    if not schedules_path.is_absolute():
+        schedules_path = REPO_ROOT / schedules_path
+    app.state.schedule_store = ScheduleStore(schedules_path)
+    app.state.delivery = NotificationDelivery(
+        app.state.schedule_store,
+        app.state.ws_hub,
+        vapid_public_key=settings.vapid_public_key,
+        vapid_private_key=settings.vapid_private_key,
+        vapid_subject=settings.vapid_subject,
+        notifications_enabled=settings.notifications_enabled,
+    )
     skills_dir = (
         Path(settings.skills_dir) if settings.skills_dir else default_skills_dir()
     )
@@ -346,16 +408,34 @@ def create_app(
                 skills=skills_rt if isinstance(skills_rt, SkillRuntime) else None,
             )
             from fae.agent.llm_turn import apply_lazy_skill_tool
+            from fae.scheduler.store import ScheduleStore as _ScheduleStore
 
             early: str | None = None
-            if isinstance(skills_rt, SkillRuntime) and activation.tools:
+            schedule_store = getattr(request.app.state, "schedule_store", None)
+            sched = (
+                schedule_store
+                if (
+                    isinstance(schedule_store, _ScheduleStore)
+                    and request.app.state.settings.scheduler_enabled
+                )
+                else None
+            )
+            tools_needed = bool(
+                (isinstance(skills_rt, SkillRuntime) and activation.tools) or sched
+            )
+            if tools_needed:
                 prepared, activation, early = await apply_lazy_skill_tool(
                     client,
                     prepared,
                     activation,
-                    skills_rt,
+                    skills_rt if isinstance(skills_rt, SkillRuntime) else None,
                     session_id=session_id,
+                    schedule_store=sched,
                 )
+                if early and "日程工具" in early:
+                    proactive = getattr(request.app.state, "proactive", None)
+                    if isinstance(proactive, ProactiveLoop):
+                        proactive.resync()
             if early is not None:
                 response = ChatResponse(
                     content=early,
@@ -370,6 +450,10 @@ def create_app(
                     user_text=user_text,
                     assistant_text=response.content,
                 )
+            else:
+                activity = getattr(request.app.state, "activity", None)
+                if isinstance(activity, ActivityTracker):
+                    activity.touch(session_id)
             return response
         except LLMError as e:
             raise _llm_error_to_http(e) from e
@@ -429,6 +513,10 @@ def create_app(
 
     # ── Phase 3: Skills ────────────────────────────────────────────────
     app.include_router(skills_router)
+
+    # ── Phase 4: Schedules + notifications ─────────────────────────────
+    app.include_router(schedules_router)
+    app.include_router(notifications_router)
 
     return app
 

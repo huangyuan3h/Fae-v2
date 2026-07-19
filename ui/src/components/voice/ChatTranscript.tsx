@@ -3,7 +3,7 @@
 import ReactMarkdown from "react-markdown";
 
 import type { ChatLine } from "@/hooks/useVoiceSession";
-import { stripThinking } from "@/lib/strip-thinking";
+import { isThinkingStreaming, stripThinking } from "@/lib/strip-thinking";
 
 export function ChatTranscript({
   lines,
@@ -15,10 +15,12 @@ export function ChatTranscript({
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-3 px-4 py-2 text-left">
       {lines.map((line) => {
-        const content =
+        const visible =
           line.role === "assistant"
             ? stripThinking(line.content)
             : line.content;
+        const thinking =
+          line.role === "assistant" && isThinkingStreaming(line.content);
         return (
           <div
             key={line.id}
@@ -38,15 +40,17 @@ export function ChatTranscript({
               {line.role === "user" ? "你" : "FAE"}
             </span>
             {line.role === "assistant" ? (
-              content ? (
+              visible ? (
                 <div className="fae-md mt-1 inline-block w-full [&_h1]:mb-2 [&_h1]:mt-3 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-base [&_h2]:font-bold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--ink)] [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_hr]:my-3 [&_hr]:border-black/10">
-                  <ReactMarkdown>{content}</ReactMarkdown>
+                  <ReactMarkdown>{visible}</ReactMarkdown>
                 </div>
+              ) : thinking ? (
+                <span className="opacity-70">思考中…</span>
               ) : (
                 "…"
               )
             ) : (
-              content || "…"
+              line.content || "…"
             )}
           </div>
         );

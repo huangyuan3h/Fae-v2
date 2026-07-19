@@ -1,0 +1,192 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+import {
+  ensureNotificationPermission,
+  getNotificationPrefs,
+  listNotifications,
+  markNotificationsRead,
+  putNotificationPrefs,
+  registerPushSubscription,
+} from "@/lib/notifications-api";
+
+export function NotificationsPanel() {
+  const qc = useQueryClient();
+  const prefsQ = useQuery({
+    queryKey: ["notification-prefs"],
+    queryFn: getNotificationPrefs,
+  });
+  const inboxQ = useQuery({
+    queryKey: ["notifications"],
+    queryFn: () => listNotifications(false),
+  });
+  const [status, setStatus] = useState<string | null>(null);
+
+  const saveM = useMutation({
+    mutationFn: putNotificationPrefs,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["notification-prefs"] });
+      setStatus("已保存");
+    },
+    onError: (e: Error) => setStatus(e.message),
+  });
+
+  const prefs = prefsQ.data;
+
+  return (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-[var(--ink)]">通知开关</h2>
+        {!prefs && prefsQ.isLoading && (
+          <p className="text-sm text-[var(--ink-soft)]">加载中…</p>
+        )}
+        {prefs && (
+          <div className="space-y-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={prefs.enabled}
+                onChange={(e) =>
+                  saveM.mutate({ enabled: e.target.checked })
+                }
+              />
+              启用通知
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={prefs.desktop_enabled}
+                onChange={(e) =>
+                  saveM.mutate({ desktop_enabled: e.target.checked })
+                }
+              />
+              桌面通知（本机 osascript / notify-send）
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={prefs.web_push_enabled}
+                onChange={(e) =>
+                  saveM.mutate({ web_push_enabled: e.target.checked })
+                }
+              />
+              Web Push
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[var(--ink-soft)]">勿扰时段（本地小时）</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-16 rounded border border-black/10 px-2 py-1"
+                value={prefs.quiet_start_hour ?? ""}
+                placeholder="起"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  saveM.mutate({
+                    quiet_start_hour: v === "" ? undefined : Number(v),
+                    quiet_end_hour: prefs.quiet_end_hour ?? undefined,
+                  });
+                }}
+              />
+              <span>—</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-16 rounded border border-black/10 px-2 py-1"
+                value={prefs.quiet_end_hour ?? ""}
+                placeholder="止"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  saveM.mutate({
+                    quiet_start_hour: prefs.quiet_start_hour ?? undefined,
+                    quiet_end_hour: v === "" ? undefined : Number(v),
+                  });
+                }}
+              />
+              <button
+                type="button"
+                className="text-xs text-[var(--accent)] underline"
+                onClick={() => saveM.mutate({ clear_quiet: true })}
+              >
+                清除勿扰
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 pt-2">
+          <button
+            type="button"
+            className="rounded-full border border-black/10 px-3 py-1.5 text-sm"
+            onClick={async () => {
+              const p = await ensureNotificationPermission();
+              setStatus(`浏览器权限：${p}`);
+            }}
+          >
+            请求浏览器通知权限
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-black/10 px-3 py-1.5 text-sm"
+            onClick={async () => {
+              const ok = await registerPushSubscription();
+              setStatus(
+                ok
+                  ? "Web Push 已订阅"
+                  : "订阅失败（需配置 VAPID 或 HTTPS）",
+              );
+            }}
+          >
+            订阅 Web Push
+          </button>
+        </div>
+        {status && (
+          <p className="text-xs text-[var(--ink-soft)]">{status}</p>
+        )}
+        {prefs?.vapid_configured === false && (
+          <p className="text-xs text-[var(--ink-soft)]">
+            未配置 VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY，Web Push 不可用。
+          </p>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-[var(--ink)]">收件箱</h2>
+          <button
+            type="button"
+            className="text-xs text-[var(--accent)] underline"
+            onClick={async () => {
+              await markNotificationsRead();
+              void qc.invalidateQueries({ queryKey: ["notifications"] });
+            }}
+          >
+            全部标为已读
+          </button>
+        </div>
+        <ul className="space-y-2">
+          {(inboxQ.data?.items ?? []).map((item) => (
+            <li
+              key={item.id}
+              className="rounded-xl border border-black/10 bg-white/50 px-3 py-2 text-sm"
+            >
+              <p className="font-medium text-[var(--ink)]">
+                {item.title}
+                {!item.read && (
+                  <span className="ml-2 text-xs text-[var(--accent)]">未读</span>
+                )}
+              </p>
+              <p className="text-[var(--ink-soft)]">{item.body}</p>
+            </li>
+          ))}
+        </ul>
+        {!inboxQ.isLoading && (inboxQ.data?.items?.length ?? 0) === 0 && (
+          <p className="text-sm text-[var(--ink-soft)]">暂无通知</p>
+        )}
+      </section>
+    </div>
+  );
+}

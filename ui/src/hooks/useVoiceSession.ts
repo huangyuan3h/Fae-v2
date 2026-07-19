@@ -18,14 +18,13 @@ import {
 import { formatNetworkError } from "@/lib/network-error";
 import { createVoiceSession } from "@/lib/pipecat-client";
 import { TtsPlayQueue } from "@/lib/qwen-tts";
-import { SentenceAggregator } from "@/lib/sentence-agg";
+import { SpeechChunkAggregator } from "@/lib/sentence-agg";
 import {
   BrowserSTT,
   speechSupported,
   stopSpeaking,
 } from "@/lib/speech";
 import { toSpeakableText } from "@/lib/speakable";
-import { stripThinking } from "@/lib/strip-thinking";
 import {
   loadTtsPrefs,
   TTS_PREFS_CHANGED_EVENT,
@@ -35,6 +34,7 @@ import {
   PREFER_DAILY_CHANGED_EVENT,
   savePreferDaily,
 } from "@/lib/voice-prefs";
+import { showBrowserNotification } from "@/lib/notifications-api";
 import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
@@ -43,7 +43,7 @@ export type TtsMode = "local-tts" | "none";
 
 export type ChatLine = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
 };
 
@@ -80,7 +80,7 @@ export function useVoiceSession() {
   const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
   const speakableLenRef = useRef(0);
-  const sentenceAggRef = useRef(new SentenceAggregator());
+  const speechAggRef = useRef(new SpeechChunkAggregator());
   const ttsQueueRef = useRef<TtsPlayQueue | null>(null);
   const connectingDaily = useRef(false);
   const memorySessionRef = useRef(sessionId);
@@ -108,6 +108,27 @@ export function useVoiceSession() {
   useEffect(() => {
     voiceSessionRef.current = voiceSessionId;
   }, [voiceSessionId]);
+
+  useEffect(() => {
+    const client = wsRef.current;
+    client.setNotificationHandler((title, body, quiet) => {
+      setLines((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-n`,
+          role: "system",
+          content: `🔔 ${title}：${body}`,
+        },
+      ]);
+      if (!quiet) {
+        showBrowserNotification(title, body);
+      }
+    });
+    void client.connect().catch(() => {
+      /* chat will retry */
+    });
+    return () => client.setNotificationHandler(null);
+  }, []);
 
   useEffect(() => {
     setConfigState(syncActiveConfig());
@@ -160,6 +181,7 @@ export function useVoiceSession() {
       );
       window.removeEventListener(TTS_PREFS_CHANGED_EVENT, onTtsPrefsChanged);
       stt.stop();
+      speechAggRef.current.reset();
       stopSpeaking();
       ttsQueueRef.current?.stop();
       ttsQueueRef.current = null;
@@ -253,7 +275,7 @@ export function useVoiceSession() {
       setOrb("thinking");
       assistantBuf.current = "";
       speakableLenRef.current = 0;
-      sentenceAggRef.current.reset();
+      speechAggRef.current.reset();
       stopSpeaking();
       const queue = ensureTtsQueue();
       queue.setHandlers({
@@ -269,7 +291,7 @@ export function useVoiceSession() {
         onIdle: () => setOrb("idle"),
       });
 
-      const enqueueSentences = (parts: string[]) => {
+      const enqueueChunks = (parts: string[]) => {
         for (const part of parts) {
           const plain = toSpeakableText(part);
           if (!plain) continue;
@@ -278,6 +300,9 @@ export function useVoiceSession() {
           queue.enqueue(plain);
         }
       };
+
+      // Idle soft-flush when LLM pauses mid-stream (400ms).
+      speechAggRef.current.setOnSoftFlush(enqueueChunks);
 
       const assistantId = `${Date.now()}-a`;
       setLines((prev) => [
@@ -294,21 +319,32 @@ export function useVoiceSession() {
             onSkills: (names) => setActiveSkills(names),
             onToken: (token) => {
               assistantBuf.current += token;
-              const visible = stripThinking(assistantBuf.current);
+              // Store raw stream (incl. <think>) so the transcript can show
+              // "思考中…" instead of a blank ellipsis during long reasoning.
+              const raw = assistantBuf.current;
               setLines((prev) =>
                 prev.map((l) =>
-                  l.id === assistantId ? { ...l, content: visible } : l,
+                  l.id === assistantId ? { ...l, content: raw } : l,
                 ),
               );
 
-              const speakable = toSpeakableText(assistantBuf.current);
-              const delta = speakable.slice(speakableLenRef.current);
-              speakableLenRef.current = speakable.length;
-              if (delta) enqueueSentences(sentenceAggRef.current.push(delta));
+              try {
+                const speakable = toSpeakableText(raw);
+                if (speakable.length < speakableLenRef.current) {
+                  speakableLenRef.current = speakable.length;
+                  return;
+                }
+                const delta = speakable.slice(speakableLenRef.current);
+                speakableLenRef.current = speakable.length;
+                if (delta) enqueueChunks(speechAggRef.current.push(delta));
+              } catch {
+                /* TTS path must never break token display */
+              }
             },
             onDone: () => {
-              const leftover = sentenceAggRef.current.flush();
-              if (leftover) enqueueSentences([leftover]);
+              speechAggRef.current.clearTimer();
+              const leftover = speechAggRef.current.flush();
+              if (leftover) enqueueChunks([leftover]);
             },
             onError: (code, message) => {
               setError(`${code}: ${message}`);
@@ -321,6 +357,7 @@ export function useVoiceSession() {
         if (!queue.isBusy) setOrb("idle");
       } catch (e) {
         if (e instanceof ChatAbortedError) {
+          speechAggRef.current.reset();
           queue.stop();
           setOrb("idle");
           return;
@@ -402,6 +439,7 @@ export function useVoiceSession() {
   }, [dailyConnected, disconnectDaily, orb]);
 
   const interrupt = useCallback(() => {
+    speechAggRef.current.reset();
     ttsQueueRef.current?.stop();
     stopSpeaking();
     wsRef.current.cancel();

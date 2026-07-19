@@ -52,6 +52,7 @@ export function ModelsPanel() {
         model: values.model,
         baseUrl: values.baseUrl,
         apiKey: values.apiKey,
+        thinking: values.thinking,
       },
       { setActive: values.setActive },
     );
@@ -93,6 +94,7 @@ export function ModelsPanel() {
           base_url: cfg.baseUrl,
           api_key: cfg.apiKey,
           model: cfg.model,
+          thinking: cfg.thinking ?? "disabled",
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {

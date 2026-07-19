@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ModelsPanel } from "@/components/settings/ModelsPanel";
+import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
 import { VoicePanel } from "@/components/settings/VoicePanel";
 
 type Tab = "models" | "voice" | "notifications";
@@ -55,12 +56,7 @@ export default function SettingsPage() {
 
       {tab === "models" && <ModelsPanel />}
       {tab === "voice" && <VoicePanel />}
-      {tab === "notifications" && (
-        <section className="space-y-3 text-sm text-[var(--ink-soft)]">
-          <p>Phase 4：Web Push / 浏览器通知 / 勿扰时段将挂在此处。</p>
-          <p>当前主动 Loop 默认关闭（SCHEDULER_ENABLED=false）。</p>
-        </section>
-      )}
+      {tab === "notifications" && <NotificationsPanel />}
     </main>
   );
 }

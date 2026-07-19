@@ -1,7 +1,11 @@
+/** MiniMax-compatible thinking control (auto = omit provider param). */
+export type ThinkingMode = "auto" | "disabled" | "adaptive";
+
 export type AgentConfig = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  thinking?: ThinkingMode;
 };
 
 const STORAGE_KEY = "fae.agentConfig";
@@ -12,6 +16,8 @@ export const DEFAULT_CONFIG: AgentConfig = {
     "https://dashscope.aliyuncs.com/compatible-mode/v1",
   apiKey: "",
   model: process.env.NEXT_PUBLIC_LLM_MODEL ?? "qwen3-max",
+  // Voice UX: skip long hidden <think> by default; Settings can re-enable.
+  thinking: "disabled",
 };
 
 export function loadConfig(): AgentConfig {

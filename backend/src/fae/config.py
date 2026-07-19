@@ -109,12 +109,14 @@ class Settings(BaseSettings):
     skills_state_path: str = ".data/fae-skills-state.json"
     skills_max_active: int = Field(default=2, ge=1, le=10)
 
-    # Proactive scheduler (Phase 4) — off until heartbeat/jobs are wired
+    # Proactive scheduler (Phase 4) — tests should set SCHEDULER_ENABLED=false
     scheduler_enabled: bool = False
     heartbeat_seconds: float = Field(default=30.0, ge=5.0)
     outreach_idle_hours: float = Field(default=6.0, ge=0.5)
     outreach_cooldown_hours: float = Field(default=12.0, ge=1.0)
     outreach_max_per_day: int = Field(default=1, ge=0)
+    schedules_db_path: str = ".data/fae-schedules.db"
+    notifications_enabled: bool = True
     # Web Push (Phase 4.4) — optional; empty disables push
     vapid_public_key: str = ""
     vapid_private_key: str = ""

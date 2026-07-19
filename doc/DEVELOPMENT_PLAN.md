@@ -14,7 +14,7 @@
 | Phase 2 | 记忆深化 | ✅ 完成 | 三层记忆 + 记忆浏览器 UI |
 | Phase 2.6 | Qwen3-TTS 默认播报 | ✅ 首版 | 浏览器 STT + `/ws/chat` + Qwen3-TTS（无 Daily） |
 | Phase 3 | Skills 体系 | ✅ 完成（有已知残留） | Markdown skill 自动触发 + 6 内置 + `/skills` |
-| Phase 4 | 主动 Loop | 🔜 脚手架就绪 | 心跳 + 定时任务 + 主动问候 |
+| Phase 4 | 主动 Loop | ✅ 完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
 | Phase 5 | 上限扩展 | 待开始 | MCP / Subagent / 多端 / 第三方 channel |
 
 ### 0.1 现状快照（2026-07-19）
@@ -166,53 +166,44 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 > 目标：心跳、定时任务、主动问候、桌面通知。  
 > 主动触达默认 **通知 + 文字**；若用户在线且本地 TTS 可用，可再播一句短语音（不依赖 Daily）。
 
-### 4.0 开工前置（脚手架）— ✅ 2026-07-19
+### 4.0 开工前置（脚手架）— ✅
 
-- [x] `fae/scheduler/`：`activity` / `heartbeat` / `proactive` / `jobs`（规则 + builtin specs）
-- [x] 边界约定：`SleeptimeScheduler`（记忆整理）≠ `fae.scheduler`（主动 Loop）
-- [x] `ActivityTracker` 接入 lifespan `on_persist`（与 sleeptime.touch 并列）
-- [x] `SkillRuntime.activate` / `prepare_activated_request` 供 cron 强制加载 skill
-- [x] `apscheduler` 写入 `pyproject.toml`；`SCHEDULER_ENABLED=false` 默认
-- [x] `.env.example`：heartbeat / outreach / VAPID 占位
-- [x] UI：`AppNav`（含「日程」占位）+ Settings「通知」tab 槽位
-- [x] `api/memory.py` 从 `api/__init__.py` 抽出（为 `api/schedules.py` 腾位置）
-- [ ] `api/schedules.py` + APScheduler 真正 start/stop（4.1）
-- [ ] `/schedules` 页面（4.3）
+- [x] `fae/scheduler/` + `ScheduleStore` / `NotificationDelivery` / `ConnectionHub`
+- [x] 边界约定：`SleeptimeScheduler` ≠ `fae.scheduler`
+- [x] `SkillRuntime.activate` 供 cron / proactive 强制加载
+- [x] `apscheduler` + `pywebpush`；`.env.example`：`SCHEDULER_ENABLED=true`
+- [x] `api/schedules.py` + `api/notifications.py`
+- [x] `/schedules` UI + Settings「通知」面板
 
-### 4.1 APScheduler + Heartbeat
+### 4.1 APScheduler + Heartbeat — ✅
 
-- [x] 脚手架 `backend/src/fae/scheduler/heartbeat.py`（`HeartbeatLoop.evaluate/tick`）
-- [x] 脚手架 `backend/src/fae/scheduler/jobs.py`：builtin job specs
-- [x] 脚手架 `backend/src/fae/scheduler/proactive.py`：`should_outreach` 规则
-  - [x] 规则常量：6h idle / 12h cooldown / max 1/day
-  - [ ] 接 lifespan：`SCHEDULER_ENABLED` 时启动 `AsyncIOScheduler`
-  - [ ] "待办到期"检测：扫 Episodic Memory
-- [ ] 与 LLM 的桥接：心跳默认走「桌面通知 + 文字」；可选本地 TTS 短播报
-- [ ] 主动触达调用 `skills.activate(["proactive_outreach"], …)` + 投递通知
+- [x] `ProactiveLoop` + lifespan：`SCHEDULER_ENABLED` 时启动 `AsyncIOScheduler`
+- [x] `HeartbeatLoop`：6h idle / 12h cooldown / max 1/day
+- [x] 待办到期：扫 past-due `date` jobs
+- [x] `skills.activate(["proactive_outreach"])` + `NotificationDelivery`
+- [x] 通道：inbox + WS + 浏览器 Notification + desktop + Web Push（有 VAPID 时）
 
-### 4.2 内置 cron 任务
+### 4.2 内置 cron 任务 — ✅
 
-- [ ] `daily_checkin`：每天 08:00，检索昨日记忆 → 加载 `daily_check_in` skill
-- [ ] `weekly_recap`：每周日 20:00，生成周报 + 整理记忆
-- [ ] 自定义 cron 工具：`schedule_create_job` / `list_jobs` / `cancel_job`
+- [x] `daily_checkin`：每天 08:00 + `daily_check_in` skill
+- [x] `weekly_recap`：周日 20:00 + 可选 sleeptime consolidate
+- [x] LLM / REST 工具：`schedule_create_job` / `list_jobs` / `cancel_job`
 
-### 4.3 定时任务 UI
+### 4.3 定时任务 UI — ✅
 
-- [ ] 路由 `src/app/schedules/page.tsx`
-- [ ] 列表：所有 job（内置 + 用户自定义）、下次执行时间、状态
-- [ ] 创建表单：自然语言输入（"明天下午 3 点提醒我开会"）→ 解析为 cron
-- [ ] 编辑 / 删除 / 暂停 / 立即触发
+- [x] `/schedules`：列表、NL 创建、暂停/删除/立即触发
+- [x] `POST /api/schedules/parse` 预览
 
-> **冒烟测试**（M4-1）：创建"明早 8 点提醒吃维生素" → 准点收到桌面通知 + 浏览器弹窗。
+> **冒烟**（M4-1）：创建「明早8点提醒吃维生素」→ 立即触发 → Settings 收件箱 + 浏览器通知。
 
-### 4.4 通知通道
+### 4.4 通知通道 — ✅
 
-- [ ] Web Push（VAPID）：用户首次访问时订阅
-- [ ] 浏览器 Notification API：心跳事件触达
-- [ ] 可选：macOS `terminal-notifier` / Linux `notify-send`
-- [ ] 设置页通知开关 + 勿扰时段（可挂在现有 `/settings`）
+- [x] Web Push（VAPID）+ `ui/public/sw.js`
+- [x] 浏览器 Notification API（WS `notification` 事件）
+- [x] macOS `osascript` / Linux `notify-send`
+- [x] Settings → 通知：开关、勿扰、订阅、收件箱
 
-> **Phase 4 收尾验收**：演示 24h 无人值守，FAE 主动发起 1 次合理问候。
+> **Phase 4 收尾验收**：idle 达标后主动问候 1 次（可调 `OUTREACH_IDLE_HOURS` 便于本地演示）。
 
 ---
 
@@ -305,7 +296,7 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 | **M2.6-1** | **无 Daily Key，本地 TTS stub 播报 3 轮** | 🔜 |
 | **M2.6-2** | **真本地模型 TTS，主观明显好于系统朗读** | 🔜 |
 | M3-1 / M3-2 | skill 触发 + 编辑器 | ✅ |
-| M4-1 / M4-2 | 定时任务 + 主动 loop | 待 |
+| M4-1 / M4-2 | 定时任务 + 主动 loop | ✅ |
 | M5+ | MCP / Subagent / 本地 ASR / 可选 WebRTC | 按需 |
 
 ---
@@ -329,30 +320,19 @@ Body: { "model": "...", "input": "...", "voice": "..." }
 - [x] Phase 2 完成
 - [x] Phase 2.6 首版（本地 TTS `/api/tts/speak`；真·本机模型后续）
 - [x] Phase 3 完成（M3-1 / M3-2；见 3.5 残留）
-- [ ] **Phase 4 完成** ← **下一主线**（4.0 脚手架已就绪）
-- [ ] Phase 5 持续推进
+- [x] **Phase 4 完成**（M4-1 / M4-2）
+- [ ] Phase 5 持续推进 ← **下一主线**
 
 ---
 
 ## 近期执行顺序（建议）
 
-1. **Phase 4.1**：`AsyncIOScheduler` 接入 lifespan + `HeartbeatLoop` 真跑
-2. **Phase 4.2–4.3**：builtin cron + `/schedules` UI + `api/schedules.py`
-3. **Phase 4.4**：Web Push / Notification + Settings 通知面板
-4. Phase 2.6.3+：流式首包；补齐 `ARCHITECTURE` 语音默认路径细节
-
-### Phase 4 建议落地顺序（实现时）
-
-```text
-1. api/schedules.py (CRUD stub) + include_router
-2. lifespan: if settings.scheduler_enabled → AsyncIOScheduler + HeartbeatLoop
-3. outreach handler: activate(proactive_outreach) → notify channel
-4. ui/app/schedules + schedules-api.ts
-5. Web Push subscribe + NotificationsPanel
-```
+1. Phase 5：MCP / Subagent / 多端（按需）
+2. Phase 2.6.3+：流式 TTS 首包；补齐语音默认路径文档细节
+3. 主动 Loop 体验：为 outreach 调优 idle / 勿扰默认值
 
 ---
 
-**最后更新**：2026-07-19（Phase 3 审计 + Phase 4 脚手架）  
+**最后更新**：2026-07-19（Phase 4 主动 Loop 落地）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
+import type { ThinkingMode } from "@/lib/config";
 import {
   defaultBaseUrl,
   type ModelProfile,
@@ -14,6 +15,7 @@ export type ModelFormValues = {
   model: string;
   baseUrl: string;
   apiKey: string;
+  thinking: ThinkingMode;
   setActive: boolean;
 };
 
@@ -30,6 +32,7 @@ const EMPTY: ModelFormValues = {
   model: "gpt-4o-mini",
   baseUrl: "",
   apiKey: "",
+  thinking: "disabled",
   setActive: true,
 };
 
@@ -45,6 +48,7 @@ export function ModelFormModal({ open, initial, onClose, onSave }: Props) {
         model: initial.model,
         baseUrl: initial.baseUrl,
         apiKey: initial.apiKey,
+        thinking: initial.thinking ?? "disabled",
         setActive: true,
       });
     } else {
@@ -123,6 +127,27 @@ export function ModelFormModal({ open, initial, onClose, onSave }: Props) {
               onChange={(e) => setForm({ ...form, model: e.target.value })}
               placeholder="gpt-4o-mini"
             />
+          </label>
+
+          <label className="grid gap-1 text-xs text-[var(--ink-soft)]">
+            Thinking（思考强度）
+            <select
+              className="rounded-md border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+              value={form.thinking}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  thinking: e.target.value as ThinkingMode,
+                })
+              }
+            >
+              <option value="disabled">关闭（推荐语音，更快出字）</option>
+              <option value="adaptive">开启 / adaptive（MiniMax-M3）</option>
+              <option value="auto">跟随服务商默认</option>
+            </select>
+            <span className="text-[11px] leading-snug opacity-80">
+              MiniMax-M3 默认会开启 thinking；开启后界面会先显示「思考中…」，再吐正式回答。部分 M2.x 无法关闭。
+            </span>
           </label>
 
           <fieldset className="grid gap-3 border border-black/8 bg-white/40 p-3">

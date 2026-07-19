@@ -10,6 +10,13 @@ export type WsServerMessage =
     }
   | { type: "token"; content: string }
   | { type: "done"; usage: unknown; session_id?: string }
+  | {
+      type: "notification";
+      id?: string;
+      title: string;
+      body: string;
+      quiet?: boolean;
+    }
   | { type: "error"; code: string; message: string };
 
 export type StreamHandlers = {
@@ -17,6 +24,7 @@ export type StreamHandlers = {
   onDone: () => void;
   onError: (code: string, message: string) => void;
   onSkills?: (active: string[]) => void;
+  onNotification?: (title: string, body: string, quiet?: boolean) => void;
 };
 
 export class ChatAbortedError extends Error {
@@ -30,8 +38,17 @@ export class WsChatClient {
   private ws: WebSocket | null = null;
   private activeCleanup: (() => void) | null = null;
   private activeReject: ((err: Error) => void) | null = null;
+  private notifyHandler:
+    | ((title: string, body: string, quiet?: boolean) => void)
+    | null = null;
 
   constructor(private readonly url = `${backendWsBase()}/ws/chat`) {}
+
+  setNotificationHandler(
+    handler: ((title: string, body: string, quiet?: boolean) => void) | null,
+  ) {
+    this.notifyHandler = handler;
+  }
 
   connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -42,6 +59,16 @@ export class WsChatClient {
       this.ws = ws;
       ws.onopen = () => resolve();
       ws.onerror = () => reject(new Error("WebSocket connection failed"));
+      ws.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data)) as WsServerMessage;
+          if (msg.type === "notification") {
+            this.notifyHandler?.(msg.title, msg.body, msg.quiet);
+          }
+        } catch {
+          /* ignore */
+        }
+      });
     });
   }
 
@@ -67,6 +94,8 @@ export class WsChatClient {
         }
         if (msg.type === "skills") {
           handlers.onSkills?.(msg.active ?? []);
+        } else if (msg.type === "notification") {
+          handlers.onNotification?.(msg.title, msg.body, msg.quiet);
         } else if (msg.type === "token") {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {
@@ -98,6 +127,7 @@ export class WsChatClient {
             base_url: config.baseUrl,
             api_key: config.apiKey,
             model: config.model,
+            thinking: config.thinking ?? "disabled",
           },
           messages: [{ role: "user", content: text }],
           session_id: sessionId || undefined,

@@ -738,10 +738,10 @@ evals/
 
 ### Phase 4: 主动 Loop（第 7-8 周）
 
-- [ ] APScheduler + Heartbeat（脚手架已就位：`fae/scheduler/`）
-- [ ] 定时任务 UI
-- [ ] Proactive outreach（主动发起话题）
-- [ ] 通知通道（Web Push / 桌面通知）
+- [x] APScheduler + Heartbeat（`fae/scheduler/loop.py`）
+- [x] 定时任务 UI（`/schedules`）
+- [x] Proactive outreach（主动发起话题）
+- [x] 通知通道（Web Push / 桌面通知 / WS）
 
 ### Phase 5: 上限扩展（第 9 周+）
 

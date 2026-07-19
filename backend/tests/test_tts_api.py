@@ -30,8 +30,8 @@ def test_to_speakable_strips_markdown_and_think() -> None:
 
 def test_clip_for_local_tts_sentence() -> None:
     long = "第一句。" + ("字" * 200)
-    out = clip_for_local_tts(long, max_chars=120)
-    assert "第一句。" in out or len(out) <= 121
+    out = clip_for_local_tts(long, max_chars=72)
+    assert "第一句。" in out or len(out) <= 73
 
 
 def test_speak_local_unavailable(monkeypatch) -> None:  # noqa: ANN001

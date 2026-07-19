@@ -52,9 +52,12 @@ export async function fetchTtsVoices(): Promise<TtsVoicesResponse> {
   return (await res.json()) as TtsVoicesResponse;
 }
 
-/** Stop any in-flight local TTS playback (current Audio element only). */
+/** Pause/clear the current Audio element without touching the play queue. */
 export function stopQwenTts(): void {
   if (currentAudio) {
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
+    currentAudio.ontimeupdate = null;
     currentAudio.pause();
     currentAudio.src = "";
     currentAudio = null;
@@ -153,28 +156,34 @@ export async function speakWithLocalTts(
   });
 }
 
-type QueuedClip = { id: number; url: string };
+type QueuedClip = { id: number; url: string; audio?: HTMLAudioElement };
 
 /**
- * Sentence-level WAV queue: prefetch 1–2 clips while the current one plays.
+ * Phrase-level WAV queue: keep synth ahead of playback (prefetch depth 3).
  */
 export class TtsPlayQueue {
   private opts: TtsSpeakOpts;
   private readonly maxInflight: number;
+  private readonly targetReady: number;
   private pending: string[] = [];
   private ready = new Map<number, QueuedClip>();
   private nextId = 0;
   private playHead = 0;
-  private synthHead = 0;
   private inflight = 0;
   private playing = false;
   private generation = 0;
   private onError: ((err: Error) => void) | null = null;
   private onIdle: (() => void) | null = null;
+  private primed: HTMLAudioElement | null = null;
 
-  constructor(opts: TtsSpeakOpts = {}, maxInflight = 2) {
+  constructor(
+    opts: TtsSpeakOpts = {},
+    maxInflight = 3,
+    targetReady = 2,
+  ) {
     this.opts = opts;
-    this.maxInflight = Math.max(1, Math.min(2, maxInflight));
+    this.maxInflight = Math.max(1, Math.min(4, maxInflight));
+    this.targetReady = Math.max(1, targetReady);
     activeQueue = this;
   }
 
@@ -191,7 +200,7 @@ export class TtsPlayQueue {
   }
 
   enqueue(text: string): void {
-    const chunks = chunkForTts(text, 120);
+    const chunks = chunkForTts(text, 72);
     if (!chunks.length) return;
     if (activeQueue !== this) activeQueue = this;
     for (const chunk of chunks) this.pending.push(chunk);
@@ -207,10 +216,22 @@ export class TtsPlayQueue {
     this.ready.clear();
     this.nextId = 0;
     this.playHead = 0;
-    this.synthHead = 0;
     this.inflight = 0;
     this.playing = false;
-    stopQwenTts();
+    this.primed = null;
+    // Clear audio without going through stopAllLocalTts (would re-enter stop).
+    if (currentAudio) {
+      currentAudio.onended = null;
+      currentAudio.onerror = null;
+      currentAudio.ontimeupdate = null;
+      currentAudio.pause();
+      currentAudio.src = "";
+      currentAudio = null;
+    }
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
     if (activeQueue === this) activeQueue = null;
   }
 
@@ -223,8 +244,20 @@ export class TtsPlayQueue {
     );
   }
 
+  /** How many ready clips sit ahead of the play head (including gaps as 0). */
+  private readyAhead(): number {
+    let n = 0;
+    let id = this.playHead;
+    while (this.ready.has(id)) {
+      n += 1;
+      id += 1;
+    }
+    return n;
+  }
+
   private pumpSynth(): void {
     const gen = this.generation;
+    // Never wait on playback — synthesize whenever text is pending (up to 3).
     while (this.inflight < this.maxInflight && this.pending.length > 0) {
       const text = this.pending.shift()!;
       const id = this.nextId;
@@ -234,14 +267,19 @@ export class TtsPlayQueue {
         .then((blob) => {
           if (gen !== this.generation) return;
           const url = URL.createObjectURL(blob);
-          this.ready.set(id, { id, url });
+          const audio = new Audio();
+          audio.preload = "auto";
+          audio.src = url;
+          this.ready.set(id, { id, url, audio });
+          // Prefer starting playback as soon as the play-head clip is ready.
           this.pumpPlay();
+          // If we are already playing and ready buffer is thin, keep filling.
+          if (this.readyAhead() < this.targetReady) this.pumpSynth();
         })
         .catch((err) => {
           if (gen !== this.generation) return;
           const e = err instanceof Error ? err : new Error(String(err));
           this.onError?.(e);
-          // Skip failed slot so later sentences can still play
           this.ready.set(id, { id, url: "" });
           this.pumpPlay();
         })
@@ -254,8 +292,26 @@ export class TtsPlayQueue {
     }
   }
 
+  private pauseCurrentAudioOnly(): void {
+    if (currentAudio) {
+      currentAudio.onended = null;
+      currentAudio.onerror = null;
+      currentAudio.ontimeupdate = null;
+      currentAudio.pause();
+      currentAudio = null;
+    }
+    // Revoke previous url only — never the clip we are about to play.
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
+  }
+
   private pumpPlay(): void {
-    if (this.playing) return;
+    if (this.playing) {
+      this.primeNext();
+      return;
+    }
     const clip = this.ready.get(this.playHead);
     if (!clip) return;
 
@@ -269,9 +325,12 @@ export class TtsPlayQueue {
     }
 
     this.playing = true;
-    stopQwenTts();
+    this.pauseCurrentAudioOnly();
     currentUrl = clip.url;
     const gen = this.generation;
+    const audio = clip.audio ?? new Audio(clip.url);
+    currentAudio = audio;
+    this.primed = null;
 
     const finish = () => {
       if (gen !== this.generation) return;
@@ -281,22 +340,44 @@ export class TtsPlayQueue {
         currentUrl = null;
         currentAudio = null;
       }
-      this.pumpPlay();
       this.pumpSynth();
+      this.pumpPlay();
       this.maybeIdle();
     };
 
-    const audio = new Audio(clip.url);
-    currentAudio = audio;
     audio.onended = finish;
     audio.onerror = () => {
       this.onError?.(new Error("Audio playback failed"));
       finish();
     };
+    audio.ontimeupdate = () => {
+      if (gen !== this.generation) return;
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      const remaining = audio.duration - audio.currentTime;
+      if (remaining < 0.12) this.primeNext();
+    };
+
     void audio.play().catch((e) => {
       this.onError?.(e instanceof Error ? e : new Error(String(e)));
       finish();
     });
+
+    // Keep synth pipeline full while this clip plays.
+    this.pumpSynth();
+    this.primeNext();
+  }
+
+  /** Pre-decode the next ready clip to shrink gap between plays. */
+  private primeNext(): void {
+    const next = this.ready.get(this.playHead);
+    if (!next?.url || !next.audio) return;
+    if (this.primed === next.audio) return;
+    this.primed = next.audio;
+    try {
+      next.audio.load();
+    } catch {
+      /* ignore */
+    }
   }
 
   private maybeIdle(): void {

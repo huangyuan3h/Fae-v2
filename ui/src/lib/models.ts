@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@/lib/config";
+import type { AgentConfig, ThinkingMode } from "@/lib/config";
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from "@/lib/config";
 
 export type ModelType = "openai" | "ollama";
@@ -10,6 +10,8 @@ export type ModelProfile = {
   model: string;
   baseUrl: string;
   apiKey: string;
+  /** MiniMax-M3 thinking: auto | disabled | adaptive */
+  thinking?: ThinkingMode;
 };
 
 const PROFILES_KEY = "fae.modelProfiles";
@@ -41,6 +43,7 @@ export function profileToConfig(profile: ModelProfile): AgentConfig {
     baseUrl: profile.baseUrl.trim() || defaultBaseUrl(profile.type),
     apiKey: profile.apiKey.trim() || (profile.type === "ollama" ? "ollama" : ""),
     model: profile.model.trim() || DEFAULT_CONFIG.model,
+    thinking: profile.thinking ?? DEFAULT_CONFIG.thinking ?? "disabled",
   };
 }
 
@@ -57,6 +60,7 @@ function ensureSeeded(): ModelProfile[] {
     model: legacy.model || DEFAULT_CONFIG.model,
     baseUrl: legacy.baseUrl || DEFAULT_CONFIG.baseUrl,
     apiKey: legacy.apiKey || "",
+    thinking: legacy.thinking ?? DEFAULT_CONFIG.thinking ?? "disabled",
   };
   writeProfilesRaw([seeded]);
   localStorage.setItem(ACTIVE_KEY, seeded.id);
@@ -122,6 +126,7 @@ export function saveModelProfile(
     model: profile.model.trim(),
     baseUrl: profile.baseUrl.trim() || defaultBaseUrl(profile.type),
     apiKey: profile.apiKey,
+    thinking: profile.thinking ?? "disabled",
   };
   const idx = profiles.findIndex((p) => p.id === id);
   if (idx >= 0) profiles[idx] = next;

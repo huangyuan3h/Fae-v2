@@ -410,6 +410,78 @@ async def test_fake_provider_stream_cancellation_stops_iteration() -> None:
 # ── OpenAICompatibleProvider.stream() error mapping ───────────────────
 
 
+async def test_openai_provider_stream_wraps_reasoning_content() -> None:
+    """reasoning_content chunks are exposed as <think>…</think> for the UI."""
+
+    class _Delta:
+        def __init__(self, content=None, reasoning_content=None):  # noqa: ANN001
+            self.content = content
+            self.reasoning_content = reasoning_content
+
+    class _Choice:
+        def __init__(self, delta):  # noqa: ANN001
+            self.delta = delta
+
+    class _Chunk:
+        def __init__(self, delta):  # noqa: ANN001
+            self.choices = [_Choice(delta)]
+
+    class _Stream:
+        def __init__(self) -> None:
+            self._items = [
+                _Chunk(_Delta(reasoning_content="plan")),
+                _Chunk(_Delta(content="答案")),
+            ]
+            self._i = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._i >= len(self._items):
+                raise StopAsyncIteration
+            item = self._items[self._i]
+            self._i += 1
+            return item
+
+        def close(self) -> None:
+            pass
+
+    captured: dict = {}
+
+    class _StubCompletions:
+        async def create(self, **kwargs):  # noqa: ANN001
+            captured.update(kwargs)
+            return _Stream()
+
+    class _StubChat:
+        completions = _StubCompletions()
+
+    class _StubClient:
+        chat = _StubChat()
+
+        async def close(self) -> None:
+            pass
+
+    import fae.llm.provider as provider_mod
+
+    original = provider_mod.AsyncOpenAI
+    provider_mod.AsyncOpenAI = lambda **_kw: _StubClient()  # type: ignore[assignment]
+    try:
+        req = ChatRequest(
+            config=LLMConfig(api_key="sk-test", thinking="disabled"),
+            messages=[ChatMessage(role="user", content="hi")],
+        )
+        collected: list[str] = []
+        async for token in OpenAICompatibleProvider().stream(req):
+            collected.append(token)
+    finally:
+        provider_mod.AsyncOpenAI = original
+
+    assert captured.get("extra_body") == {"thinking": {"type": "disabled"}}
+    assert collected == ["<think>", "plan", "</think>", "答案"]
+
+
 async def test_openai_provider_stream_maps_auth_error() -> None:
     class _StubCompletions:
         async def create(self, **_kw):  # noqa: ANN001

@@ -7,7 +7,7 @@ const LINKS = [
   { href: "/", label: "对话", exact: true },
   { href: "/memory", label: "记忆", exact: false },
   { href: "/skills", label: "Skills", exact: false },
-  { href: "/schedules", label: "日程", exact: false, soon: true },
+  { href: "/schedules", label: "日程", exact: false },
   { href: "/settings", label: "Settings", exact: false },
 ] as const;
 
@@ -25,18 +25,6 @@ export function AppNav({ className = "" }: { className?: string }) {
     >
       {LINKS.map((link) => {
         const active = isActive(pathname, link.href, link.exact);
-        const soon = "soon" in link && link.soon;
-        if (soon) {
-          return (
-            <span
-              key={link.href}
-              className="rounded-full px-3 py-1.5 text-[var(--ink-soft)] opacity-60"
-              title="Phase 4"
-            >
-              {link.label}
-            </span>
-          );
-        }
         return (
           <Link
             key={link.href}

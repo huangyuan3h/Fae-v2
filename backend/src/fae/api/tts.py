@@ -17,8 +17,8 @@ logger = logging.getLogger("fae.tts")
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
-# Per-request safety cap; UI sends sentence chunks for long replies.
-_MAX_CHARS = 120
+# Per-request safety cap; UI sends short phrase chunks for long replies.
+_MAX_CHARS = 72
 
 
 class SpeakRequest(BaseModel):

@@ -38,6 +38,52 @@ from fae.llm.types import ChatRequest, ChatResponse, ToolCall
 logger = logging.getLogger("fae.llm")
 
 
+def _thinking_extra_body(thinking: str) -> dict[str, object] | None:
+    """Map LLMConfig.thinking → provider extra_body (MiniMax-compatible)."""
+    if thinking == "disabled":
+        return {"thinking": {"type": "disabled"}}
+    if thinking == "adaptive":
+        return {"thinking": {"type": "adaptive"}}
+    return None
+
+
+def _delta_reasoning_text(delta: object) -> str | None:
+    """Extract incremental reasoning/thinking text from a stream delta."""
+    if delta is None:
+        return None
+    for attr in ("reasoning_content", "reasoning"):
+        val = getattr(delta, attr, None)
+        if isinstance(val, str) and val:
+            return val
+    extra = getattr(delta, "model_extra", None)
+    if isinstance(extra, dict):
+        for key in ("reasoning_content", "reasoning"):
+            val = extra.get(key)
+            if isinstance(val, str) and val:
+                return val
+        details = extra.get("reasoning_details")
+        if isinstance(details, list):
+            parts: list[str] = []
+            for item in details:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                else:
+                    text = getattr(item, "text", None)
+                    if isinstance(text, str):
+                        parts.append(text)
+            if parts:
+                return "".join(parts)
+    details = getattr(delta, "reasoning_details", None)
+    if isinstance(details, list):
+        parts = []
+        for item in details:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        if parts:
+            return "".join(parts)
+    return None
+
+
 async def _aclose(resource: object) -> None:
     """Best-effort close of an openai client or streaming response.
 
@@ -167,6 +213,9 @@ class OpenAICompatibleProvider:
                 kwargs["tools"] = request.tools
                 if request.tool_choice is not None:
                     kwargs["tool_choice"] = request.tool_choice
+            extra = _thinking_extra_body(cfg.thinking)
+            if extra:
+                kwargs["extra_body"] = extra
             try:
                 resp = await client.chat.completions.create(**kwargs)
             except Exception as e:  # noqa: BLE001 — normalised below
@@ -222,14 +271,18 @@ class OpenAICompatibleProvider:
         client = self._client_for(request)
         response: object | None = None
         try:
+            create_kwargs: dict = {
+                "model": cfg.model,
+                "messages": [m.model_dump() for m in request.messages],
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "stream": True,
+            }
+            extra = _thinking_extra_body(cfg.thinking)
+            if extra:
+                create_kwargs["extra_body"] = extra
             try:
-                response = await client.chat.completions.create(
-                    model=cfg.model,
-                    messages=[m.model_dump() for m in request.messages],
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    stream=True,
-                )
+                response = await client.chat.completions.create(**create_kwargs)
             except Exception as e:  # noqa: BLE001 — normalised below
                 raise _map_openai_error(
                     e,
@@ -239,12 +292,27 @@ class OpenAICompatibleProvider:
                 ) from e
 
             try:
+                # MiniMax / Qwen may stream reasoning outside delta.content.
+                # Wrap as <think> so the UI can show "思考中" and TTS skips it.
+                in_reasoning = False
                 async for chunk in response:  # type: ignore[union-attr]
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        piece = delta.content if delta and delta.content else None
-                        if piece:
-                            yield piece
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    reasoning = _delta_reasoning_text(delta)
+                    piece = delta.content if delta and delta.content else None
+                    if reasoning:
+                        if not in_reasoning:
+                            yield "<think>"
+                            in_reasoning = True
+                        yield reasoning
+                    if piece:
+                        if in_reasoning:
+                            yield "</think>"
+                            in_reasoning = False
+                        yield piece
+                if in_reasoning:
+                    yield "</think>"
             except asyncio.CancelledError:
                 logger.debug("Stream cancelled by caller")
                 raise

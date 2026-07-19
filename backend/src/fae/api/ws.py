@@ -10,6 +10,7 @@ Protocol (JSON over text frames):
     {"type": "skills", "active": ["technical_debugging"], "lazy_catalog": [...]}
     {"type": "token", "content": "你"}
     {"type": "done",  "usage": {...} | null, "session_id": "..."}
+    {"type": "notification", "id": "...", "title": "...", "body": "..."}
     {"type": "error", "code": "auth", "message": "..."}
 
 Only one active generation per connection. A new `chat` message cancels
@@ -33,6 +34,8 @@ from fae.agent.skills_runtime import SkillRuntime
 from fae.api.deps import get_llm_client
 from fae.llm import ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
+from fae.scheduler.activity import ActivityTracker
+from fae.scheduler.hub import ConnectionHub
 
 logger = logging.getLogger("fae.ws")
 
@@ -119,12 +122,24 @@ async def _run_stream(
 
         assistant_parts: list[str] = []
         last_active = list(activation.active)
+        settings = getattr(ws.app.state, "settings", None)
+        schedule_store = getattr(ws.app.state, "schedule_store", None)
+        if not getattr(settings, "scheduler_enabled", False):
+            schedule_store = None
+        proactive = getattr(ws.app.state, "proactive", None)
+
+        def _on_sched_mut() -> None:
+            if proactive is not None and hasattr(proactive, "resync"):
+                proactive.resync()
+
         async for token, activation in stream_assistant_turn(
             client,
             stream_request,
             activation,
             skills,
             session_id=session_id,
+            schedule_store=schedule_store,
+            on_schedule_mutated=_on_sched_mut,
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)
@@ -145,6 +160,10 @@ async def _run_stream(
                 user_text=user_text,
                 assistant_text="".join(assistant_parts),
             )
+        else:
+            activity = getattr(ws.app.state, "activity", None)
+            if isinstance(activity, ActivityTracker):
+                activity.touch(session_id)
         await _send(
             ws,
             {
@@ -177,6 +196,9 @@ async def ws_chat(
     await websocket.accept()
     active: asyncio.Task[None] | None = None
     connection_session_id = str(uuid.uuid4())
+    hub = getattr(websocket.app.state, "ws_hub", None)
+    if isinstance(hub, ConnectionHub):
+        hub.register(websocket, connection_session_id)
     try:
         while True:
             try:
@@ -234,6 +256,8 @@ async def ws_chat(
                 session_id = _resolve_session_id(
                     raw, request, connection_session_id
                 )
+                if isinstance(hub, ConnectionHub):
+                    hub.update_session(websocket, session_id)
                 memory = _memory_from_app(websocket)
                 skills = _skills_from_app(websocket)
                 active = asyncio.create_task(
@@ -259,4 +283,6 @@ async def ws_chat(
     except WebSocketDisconnect:
         logger.debug("Client disconnected")
     finally:
+        if isinstance(hub, ConnectionHub):
+            hub.unregister(websocket)
         await _cancel_active(active)
