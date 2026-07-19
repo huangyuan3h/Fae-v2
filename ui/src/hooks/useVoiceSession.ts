@@ -22,6 +22,7 @@ import {
   speechSupported,
   stopSpeaking,
 } from "@/lib/speech";
+import { toSpeakableText } from "@/lib/speakable";
 import { stripThinking } from "@/lib/strip-thinking";
 import {
   loadPreferDaily,
@@ -222,7 +223,7 @@ export function useVoiceSession() {
           memorySessionRef.current,
         );
 
-        const reply = stripThinking(assistantBuf.current);
+        const reply = toSpeakableText(assistantBuf.current);
         if (reply && support.tts) {
           setOrb("speaking");
           await speak(reply);

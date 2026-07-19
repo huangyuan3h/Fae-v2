@@ -80,7 +80,11 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
 
     # CORS — comma-separated origins for the Next.js UI
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # Include 3001: Next.js falls back when 3000 is already taken.
+    cors_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:3001,http://127.0.0.1:3001"
+    )
 
     # Optional Daily API key for future WebRTC / Pipecat transport
     daily_api_key: str = ""

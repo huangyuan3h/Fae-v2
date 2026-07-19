@@ -39,6 +39,24 @@ def _runtime(request: Request) -> VoiceRuntime:
     return request.app.state.voice_runtime
 
 
+@router.get("/status")
+async def voice_status(request: Request) -> dict[str, bool | str]:
+    """Whether server-side Daily / DashScope TTS can be used."""
+    settings = request.app.state.settings
+    daily = bool((settings.daily_api_key or "").strip())
+    dashscope = bool((settings.dashscope_api_key or "").strip())
+    return {
+        "daily_configured": daily,
+        "dashscope_tts_configured": dashscope,
+        "default_path": "daily" if daily else "browser",
+        "hint": (
+            "Daily ready — enable in Settings → 语音, then press mic on home"
+            if daily
+            else "Set DAILY_API_KEY (+ DASHSCOPE_API_KEY for TTS) in root .env and restart"
+        ),
+    }
+
+
 @router.post("/session", response_model=VoiceSessionOut)
 async def create_voice_session(
     body: VoiceSessionRequest,
