@@ -1,0 +1,118 @@
+[project]
+name = "fae-v2-backend"
+version = "0.2.0"
+description = "FAE-v2 backend: Pipecat voice pipeline + Letta memory + FastAPI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "FAE-v2 Architecture Team" }
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0",
+    "openai>=1.60",          # OpenAI-compatible client; used for Qwen3 / DeepSeek
+    "httpx>=0.28",           # LLM HTTP client
+    "websockets>=14.0",      # WS client for tests + explicit uvicorn peer
+    # Voice stack (Daily bot + Silero/SmartTurn + local TTS HTTP)
+    "pipecat-ai[daily,silero,soundfile]>=0.0.92",
+    "pyyaml>=6.0",
+    "apscheduler>=3.10",  # Phase 4 proactive loop (heartbeat / cron)
+    "pywebpush>=2.0",     # Phase 4.4 Web Push
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",  # For TestClient async support
+    # "ruff>=0.7",  # Re-enable once network/extract issue is resolved
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fae"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    # Coverage: enforce a minimum line+branch coverage.
+    # Floor is 78% after Phase 5.1/5.2 surface growth (channels + subagents);
+    # restore toward 80% as those paths gain more unit coverage.
+    # Library / OS side-effects are excluded via [tool.coverage.run] omit.
+    "--cov=src/fae",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=78",
+]
+markers = [
+    "integration: marks tests that hit external services (deselect with '-m \"not integration\"')",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/fae"]
+# WS integration tests run uvicorn in a background thread — without this,
+# coverage misses everything executed inside that thread.
+concurrency = ["thread"]
+omit = [
+    # Re-export-only package roots. Do NOT omit api/__init__.py — it holds
+    # the FastAPI app factory and all HTTP routes.
+    "src/fae/__init__.py",
+    "src/fae/llm/__init__.py",
+    # Live Daily / Pipecat bot — integration-only.
+    "src/fae/pipecat/daily_bot.py",
+    "src/fae/pipecat/daily_rooms.py",
+    # OS / network side-effects (covered by delivery orchestration tests).
+    "src/fae/notifications/desktop.py",
+    "src/fae/notifications/webpush.py",
+    # Standalone TTS stub process (not part of the FastAPI app path).
+    "*/tts/stub_server.py",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+# Lines to skip in coverage reports (defensive: never block on a `# pragma`).
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]
+# Show what's missing for the lines we did fail to hit.
+show_missing = true
+skip_covered = false
+# Don't fail twice — fail_under is also set via addopts for the pytest plugin.
+fail_under = 78
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+
+[dependency-groups]
+# Keep in sync with [project.optional-dependencies].dev — `uv sync` installs
+# dependency-groups by default; optional-dependencies need `--extra dev`.
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "coverage<7.10",
+]
+# ruff is disabled until the install issue is resolved; see pyproject.toml comment.

@@ -8,6 +8,8 @@ venv/
 .venv/
 .env
 .pytest_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
@@ -25,6 +27,8 @@ out/
 
 # Project
 data/
+.data/
+.deps/
 models/
 checkpoints/
 *.log

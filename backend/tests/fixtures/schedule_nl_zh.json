@@ -1,0 +1,23 @@
+[
+  {
+    "text": "明早8点提醒吃维生素",
+    "kind": "date",
+    "day_offset": 1,
+    "hour": 8,
+    "minute": 0
+  },
+  {
+    "text": "明天早上八点开会",
+    "kind": "date",
+    "day_offset": 1,
+    "hour": 8,
+    "minute": 0
+  },
+  {
+    "text": "后天9点提醒交报告",
+    "kind": "date",
+    "day_offset": 2,
+    "hour": 9,
+    "minute": 0
+  }
+]

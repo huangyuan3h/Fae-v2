@@ -1,0 +1,9 @@
+{
+  "id": "ws_voice_round_no_daily",
+  "description": "One text turn over /ws/chat (FakeProvider) plus local TTS stub WAV; no Daily",
+  "require_daily": false,
+  "user_text": "你好，请用一句话打招呼",
+  "expect_assistant_contains": "你好",
+  "tts_text": "你好，我是 FAE。",
+  "expect_tts_magic": "RIFF"
+}

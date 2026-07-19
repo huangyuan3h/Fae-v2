@@ -1,341 +1,201 @@
-# FAE-v2 开发计划 Checklist
+# FAE-v2 开发计划 · Personal Assistant（v2）
 
-> 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。
-> 用法：完成一项就打 `[x]`，每条任务都标明所属阶段、依赖、产出物、验收标准。
-> 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。
+> **产品目标**：成为你的**个人助理**——能接各种各样的工具；在**任何时间、任何地点、多数情况下**帮你把任务搞定。  
+> **架构原则**：**Agent Core 是产品**；Web UI / Telegram / 未来 App 都只是 **thin client**。  
+> **工程原则**：代码在 GitHub 持续演进；**一键/快速部署**到本机或一台常驻机器；FE 可替换。
 
----
-
-## 0. 总览：5 个阶段 / 9 周
-
-| 阶段 | 名称 | 周次 | 阶段成果（Demo-Ready 标准） |
-|---|---|---|---|
-| Phase 1 | MVP | W1–W2 | 浏览器对浏览器语音对话 + Docker 一键起 |
-| Phase 2 | 记忆深化 | W3–W4 | 三层记忆 + 记忆浏览器 UI |
-| Phase 3 | Skills 体系 | W5–W6 | Markdown skill 自动触发 + 5 个内置 skill |
-| Phase 4 | 主动 Loop | W7–W8 | 心跳 + 定时任务 + 主动问候 |
-| Phase 5 | 上限扩展 | W9+ | MCP / Subagent / 多端 / 第三方 channel |
+归档：已完成的 Phase 1～Q～5.2（至 stable `v0.2.0`）见  
+[`doc/archive/DEVELOPMENT_PLAN_through_v0.2.md`](./archive/DEVELOPMENT_PLAN_through_v0.2.md)。
 
 ---
 
-## Phase 1 · MVP（W1–W2）
+## 0. 诚实差距：离「随时随地个人助理」还差什么
 
-> 目标：把"麦克风 → 浏览器听到自己回放"这条最短链路打通，再让 Docker 一键起。
+### 0.1 目标拆解（验收语言）
 
-### 1.1 基础设施脚手架
-
-- [ ] 初始化仓库结构：`backend/` + `ui/` + `deploy/` + `docs/`
-- [ ] 创建 `backend/pyproject.toml`（含 `pipecat-ai` / `fastapi` / `letta` / `uvicorn` 等依赖，参考附录 A）
-- [ ] 创建 `ui/package.json`（含 `next@15` / `react@19` / `tailwindcss@4` / `shadcn` 基础）
-- [ ] 创建 `docker-compose.yml`：服务 = `backend` / `ui` / `letta` / `vllm-asr` / `qdrant` / `redis`
-- [ ] 写 `backend/src/fae/config.py`：基于 `pydantic-settings` 加载 `.env`
-- [ ] 写 `.env.example`：DashScope Key / Letta URL / vLLM URL / Qdrant / Redis
-- [ ] 写 `deploy/scripts/setup.sh` + `start.sh`
-
-> **验收**：`./deploy/scripts/start.sh` 起来后，6 个容器全部 `healthy`。
-
-### 1.2 FastAPI 入口 + 健康检查
-
-- [ ] 实现 `backend/src/fae/api.py`：暴露 `/health` `/ready` `/api/sessions`
-- [ ] 把 uvicorn 启动命令固化到 `backend.Dockerfile`
-- [ ] 写最小 pytest：访问 `/health` 断言 200
-- [ ] CI 占位：`.github/workflows/ci.yml` 跑 `pytest` + `pnpm lint`
-
-> **验收**：`curl http://localhost:8000/health` 返回 `{"status":"ok"}`。
-
-### 1.3 Pipecat 最小 Pipeline
-
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`（先打 vLLM-Omni HTTP 占位，再切正式 SDK）
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_tts.py`（DashScope Realtime WebSocket）
-- [ ] 实现 `backend/src/fae/pipecat/services/qwen3_llm.py`（OpenAI 兼容协议指向 Qwen3-Max）
-- [ ] 实现 `backend/src/fae/pipecat/transport.py`（Daily / LiveKit 任选其一，先 Daily）
-- [ ] 实现 `backend/src/fae/pipecat/bot.py`：组装 pipeline `麦克风 → VAD → ASR → LLM → TTS → 扬声器`
-- [ ] 接入 Silero VAD + SmartTurn v3
-- [ ] 实现打断（Barge-in）：`on_user_speech_during_playback()` 停 TTS + 清队列
-- [ ] 实现 SentenceAggregator，把流式 token 攒句
-
-> **冒烟测试**（M1-1）：浏览器说"你好"，2.5s 内听到 FAE 回放"你好"。
-
-### 1.4 最小 UI
-
-- [ ] `npx create-next-app@latest` 初始化 `ui/`
-- [ ] 安装 shadcn/ui：`npx shadcn@latest init`（dark mode 默认）
-- [ ] 实现 `src/components/voice/VoiceOrb.tsx`：3 种状态动效（呼吸 / 旋转 / 脉冲）
-- [ ] 实现 `src/components/voice/MicButton.tsx`：申请麦克风权限
-- [ ] 接入 Pipecat React Client + Daily JS SDK
-- [ ] 实现 `src/lib/pipecat-client.ts` + `useVoiceSession.ts`
-- [ ] 主对话页 `src/app/page.tsx`：VoiceOrb + 文本回退输入框
-
-> **冒烟测试**（M1-2）：浏览器对浏览器完整对话 ≥ 3 轮。
-
-### 1.5 部署闭环
-
-- [ ] `ui.Dockerfile` 多阶段构建（pnpm install → build → standalone output）
-- [ ] `backend.Dockerfile` 多阶段构建（uv lock → 精简 runtime）
-- [ ] `vllm-asr.Dockerfile`：拉 `vllm/vllm-openai:latest`，跑 `Qwen3-ASR-1.7B`
-- [ ] README 写启动流程：clone → cp .env → setup.sh → start.sh → open :3000
-
-> **Phase 1 收尾验收**：录 30s 演示视频，发布到团队频道。
-
----
-
-## Phase 2 · 记忆深化（W3–W4）
-
-> 目标：让 FAE 真正"记得住"——三层记忆 + 事件日志 + 用户可见的记忆浏览器。
-
-### 2.1 Letta 接入
-
-- [ ] 启动 Letta server（SQLite 持久化到 `/data/letta.db`）
-- [ ] 创建首个 agent：`fae-main`，挂上 persona / user / current 三块 core memory
-- [ ] 实现 `backend/src/fae/memory/letta_client.py`：封装 Letta REST API
-- [ ] 写三个最基础工具：`memory_save_fact` / `memory_search` / `memory_update_user`
-- [ ] 写 Pydantic schema：`FactIn` / `FactOut` / `UserProfile`
-
-> **冒烟测试**（M2-1）：说"我叫小明"，关掉浏览器，重开，问"我叫什么" → 答"小明"。
-
-### 2.2 Pipecat Memory Service
-
-- [ ] 实现 `backend/src/fae/pipecat/services/letta_memory.py`：注入到 LLM 上游
-- [ ] 每次 LLM 调用前自动注入 top-k=10 相关历史记忆
-- [ ] 每轮对话结束落库到 Recall Memory（带 session_id + 时间戳）
-- [ ] 自动归档：Recall 超过 N 轮时移到 Archival（Qdrant）
-
-> **冒烟测试**（M2-2）：连续聊 5 个话题后问"我刚才提到 Python 那个项目怎么样"。
-
-### 2.3 三层记忆 + Episodic 扩展
-
-- [ ] Core Memory：persona / user / current 三个 block，监控 token 占用
-- [ ] Recall Memory：SQLite + session 分桶
-- [ ] Archival Memory：Qdrant 集合 `fae_archival`，embedding 用 `bge-m3` 或 `text-embedding-v3`
-- [ ] **Episodic Memory 扩展**：实现 `backend/src/fae/memory/episodic.py`
-  - [ ] 关键事件检测（"用户搬家"/"换了工作"等 LLM 标记）
-  - [ ] 事件 ↔ 记忆的双向链接
-  - [ ] 6 个月未访问的 archival 记忆自动降权
-
-### 2.4 sleeptime 整理
-
-- [ ] 实现 `backend/src/fae/memory/consolidation.py`
-- [ ] 触发时机：每日凌晨 + 闲时（对话空闲 5min）
-- [ ] 工作流：归纳 Recall → 摘要 → 决定是否上提到 Core / 归档到 Archival
-- [ ] 加 rate limit：单次整理最长 30s，避免阻塞
-
-### 2.5 记忆浏览器 UI
-
-- [ ] 路由 `src/app/memory/page.tsx`：按时间线展示（Recharts 时间轴）
-- [ ] 路由 `src/app/memory/facts/page.tsx`：结构化事实列表 + 增删改
-- [ ] 路由 `src/app/memory/search/page.tsx`：语义搜索框 + 命中高亮
-- [ ] 组件 `MemoryTimeline.tsx` + `MemorySearch.tsx`
-- [ ] 数据请求：TanStack Query + 乐观更新
-
-> **Phase 2 收尾验收**：演示"跨天记忆"——昨天告诉 FAE 喜欢的咖啡，今天它主动提起。
-
----
-
-## Phase 3 · Skills 体系（W5–W6）
-
-> 目标：Skill = Markdown，按需加载。落地 5+ 内置 skill + 编辑器。
-
-### 3.1 Skill 格式 & 加载器
-
-- [ ] 定义 `SkillMetadata` Pydantic schema（见架构 3.4）
-- [ ] 实现 `backend/src/fae/agent/skills.py`
-  - [ ] YAML frontmatter 解析（用 `pyyaml`）
-  - [ ] 目录扫描 `backend/src/skills/`
-  - [ ] 元数据缓存（避免每次重读文件）
-- [ ] 实现加载策略枚举：`ALWAYS_ON` / `TRIGGER_BASED` / `MANUAL` / `LAZY`
-- [ ] 触发器匹配：关键词 + 简单 embedding 余弦（不引重型模型）
-
-### 3.2 内置 Skills（W6 累计 ≥ 5 个）
-
-- [ ] `daily_check_in.md`：每日问候 + 行程确认
-- [ ] `technical_debugging.md`：stack trace 解析 + 排查
-- [ ] `travel_planning.md`：行程规划（结合记忆）
-- [ ] `reading_companion.md`：一起读文章 / 总结
-- [ ] `writing_assistant.md`：写作助手
-- [ ] `proactive_outreach.md`：主动发起话题（Phase 4 会深度用）
-
-> 每个 skill 都要写：触发条件、依赖工具、边界（不做什么）、冷却时间。
-
-### 3.3 自动触发 + 优先级
-
-- [ ] 实现 trigger matcher：同时匹配多个 skill 时按 `priority` 选
-- [ ] 注入到 LLM 的 system prompt：`<active_skills>...</active_skills>`
-- [ ] LLM 主动 `request_skill(name)` 工具（LAZY 模式）
-- [ ] 冷却机制：`cooldown_seconds` 内同一 skill 不重复触发
-
-> **冒烟测试**（M3-1）：贴一段 stack trace → 10s 内看到 `technical_debugging` 被加载。
-
-### 3.4 Skill 编辑器 UI
-
-- [ ] 路由 `src/app/skills/page.tsx`
-- [ ] 列表：所有 skill、状态（enabled/disabled）、最近触发时间
-- [ ] 编辑：Monaco Editor 写 markdown，实时校验 frontmatter
-- [ ] 启用/停用 + `requires_approval` 开关
-- [ ] "测试触发"按钮：输入一句话看哪些 skill 会被加载
-
-> **Phase 3 收尾验收**：演示 3 个 skill 场景各 1 分钟。
-
----
-
-## Phase 4 · 主动 Loop（W7–W8）
-
-> 目标：让 FAE 主动起来——心跳、定时任务、主动问候、桌面通知。
-
-### 4.1 APScheduler + Heartbeat
-
-- [ ] 实现 `backend/src/fae/scheduler/heartbeat.py`：每 30s 检查
-- [ ] 实现 `backend/src/fae/scheduler/jobs.py`：注册 job 的统一入口
-- [ ] 实现 `backend/src/fae/scheduler/proactive.py`
-  - [ ] 用户超过 6h 未交互 + 有未回应话题 → 主动发起
-  - [ ] `outreach_cooldown = 12h`，每天最多 1 次主动问候
-  - [ ] "待办到期"检测：扫 Episodic Memory
-- [ ] 与 LLM 的桥接：心跳触发时不走 TTS，走"桌面通知 + 文字"通道
-
-### 4.2 内置 cron 任务
-
-- [ ] `daily_checkin`：每天 08:00，检索昨日记忆 → 加载 `daily_check_in` skill
-- [ ] `weekly_recap`：每周日 20:00，生成周报 + 整理记忆
-- [ ] 自定义 cron 工具：`schedule_create_job` / `list_jobs` / `cancel_job`
-
-### 4.3 定时任务 UI
-
-- [ ] 路由 `src/app/schedules/page.tsx`
-- [ ] 列表：所有 job（内置 + 用户自定义）、下次执行时间、状态
-- [ ] 创建表单：自然语言输入（"明天下午 3 点提醒我开会"）→ 解析为 cron
-- [ ] 编辑 / 删除 / 暂停 / 立即触发
-
-> **冒烟测试**（M4-1）：创建"明早 8 点提醒吃维生素" → 准点收到桌面通知 + 浏览器弹窗。
-
-### 4.4 通知通道
-
-- [ ] Web Push（VAPID）：用户首次访问时订阅
-- [ ] 浏览器 Notification API：心跳事件触达
-- [ ] 可选：macOS `terminal-notifier` / Linux `notify-send`
-- [ ] 设置页 `src/app/settings/privacy/page.tsx`：通知开关 + 勿扰时段
-
-> **Phase 4 收尾验收**：演示 24h 无人值守，FAE 主动发起 1 次合理问候。
-
----
-
-## Phase 5 · 上限扩展（W9+）
-
-> 进入"无上限"阶段，按需取用，不强排期。
-
-### 5.1 MCP 集成
-
-- [ ] 实现 MCP client：stdio + SSE 两种 transport
-- [ ] 工具注册表自动合并 MCP server 暴露的 tools
-- [ ] 权限分级复用现有 4 级
-- [ ] 内置连接示例：filesystem / github / postgres
-
-### 5.2 Subagents
-
-- [ ] 设计 subagent 接口：`run_subagent(name, task, context)`
-- [ ] 内置 3 个：researcher / coder / reviewer
-- [ ] 主 agent 可委派任务，结果回灌
-
-### 5.3 多端 & 第三方 channel
-
-- [ ] PWA 化（manifest.json + service worker，离线可用）
-- [ ] 移动端响应式适配
-- [ ] Slack bot 适配器
-- [ ] Telegram bot 适配器
-
-### 5.4 多用户 / 多角色
-
-- [ ] Letta agent 池化（每用户独立 agent_id）
-- [ ] NextAuth.js 接入（OAuth + Email magic link）
-- [ ] 数据隔离：每个用户独立 SQLite 文件 / Qdrant collection
-
----
-
-## 跨阶段横切关注（Continuous）
-
-> 这些不是"阶段"，但每个 PR 都要 review。
-
-### 安全 / 隐私
-
-- [ ] 工具权限分级实现（Safe / Caution / Sensitive / Dangerous）
-- [ ] UI 确认弹窗：每次 Sensitive / Dangerous 工具执行前
-- [ ] 5s 倒计时：Dangerous 工具二次确认
-- [ ] "一键遗忘"：清空所有记忆 + 重置 Letta agent
-- [ ] 数据导出：`src/app/settings/privacy/page.tsx` 下载 JSONL
-
-### 可观测性
-
-- [ ] 结构化日志（loguru / structlog）：每次 tool call 持久化
-- [ ] "现在在做什么"面板：UI 透明显示 `FAE 正在调用 memory_search...`
-- [ ] Token 用量统计（Recharts 折线图）
-- [ ] 工具调用历史页 `src/app/tools/page.tsx`
-
-### 性能
-
-- [ ] 端到端延迟埋点：每个阶段打点（VAD / ASR / LLM / TTS）
-- [ ] P50 / P95 仪表盘
-- [ ] ASR 准确率评测（librispeech + common-voice-zh）
-- [ ] TTS 自然度评测（seed-tts）
-- [ ] 端到端对话评测（`evals/e2e/`）
-
-### 评测（Evals）
-
-- [ ] `evals/asr/`：librispeech-test.jsonl / common-voice-zh.jsonl / noisy-mixed.jsonl
-- [ ] `evals/tts/`：seed-tts-test.jsonl / voice-clone-test.jsonl
-- [ ] `evals/agent/`：tool-calling / memory-recall / multi-turn / proactive-loop
-- [ ] `evals/e2e/`：daily-checkin / technical-debug / travel-planning
-- [ ] CI 集成：每次 PR 跑核心 eval，回归报警
-
-### 文档
-
-- [ ] `docs/design/memory-design.md`：记忆系统设计细节
-- [ ] `docs/design/skills-format.md`：Skill 格式规范
-- [ ] `docs/design/ui-mockups.md`：UI 草图
-- [ ] `docs/api/api-reference.md`：REST API 文档（OpenAPI 自动生成 + 人工注释）
-- [ ] README：项目介绍 + Quick Start + 截图 + 演示视频链接
-
----
-
-## 关键里程碑（Milestones）
-
-| ID | 时间 | 验收标准 |
+| 目标说法 | 可检验含义 | 今天（v0.2） |
 |---|---|---|
-| M0 | W0 末 | 仓库脚手架 + Docker 5 服务全绿 |
-| M1-1 | W1 末 | 浏览器听到自己声音回放 |
-| M1-2 | W2 末 | 端到端对话 ≥ 3 轮，录 30s 视频 |
-| M2-1 | W3 末 | 跨会话记忆冒烟通过 |
-| M2-2 | W4 末 | 记忆浏览器 UI 可用 |
-| M3-1 | W5 末 | skill 自动触发可用 |
-| M3-2 | W6 末 | 5+ 内置 skill + 编辑器 |
-| M4-1 | W7 末 | 定时任务 + 通知通道 |
-| M4-2 | W8 末 | 24h 主动 loop 演示 |
-| M5+ | W9+ | 按需取用 MCP / Subagent / 多端 |
+| **任何时间** | 服务常驻；主动 Loop / 日程能在无人打开浏览器时推送 | 本机进程依赖你开机；无可靠公网常驻默认路径 |
+| **任何地点** | 手机 / Telegram / 外网能打到**同一** Agent Core + 同一记忆 | Telegram 可选；默认仍绑本机浏览器 + localStorage Key |
+| **任何情况搞定任务** | 能调用**你的**工具（日历、邮件、文件、脚本、浏览器、第三方 API…）并回灌结果 | 工具面很窄（天气/日程/skill/subagent）；无通用工具运行时与权限模型 |
+| **FE 只是壳** | Chat/Notify/Settings 经稳定 HTTP/WS API；换 client 不改 Core | API 已有雏形，但身份、配置、会话仍偏「单页应用约定」 |
+| **快速部署** | `git pull` + 一份 compose/脚本 → 起 Core；CI 出可运行产物 | 有 Docker/脚本/CI 测后端；缺「发布即部署」与配置契约 |
+
+**粗估**：骨架与体验首版约 **35～45%** 到「愿意天天用的本地助理」；到「真正随时随地 + 工具齐全」大约还在 **全程的 1/3 处**——后面主要是 **Core 可部署性、Channel 统一、Tool Runtime、身份与配置外置**，不是再堆 UI。
+
+### 0.2 已有资产（不要推倒）
+
+- 默认对话：浏览器 STT → `/ws/chat` → 本机 TTS；Daily 可选
+- 记忆：embedded/remote Letta 路径 + recall/archival（质量首版）
+- Skills + `run_subagent`（researcher/coder/reviewer）
+- 主动 Loop + inbox / WS / desktop / Web Push / Telegram outbound
+- Telegram inbound long-polling（共享 `session_id=default`）
+- 最小 evals 进 CI；stable tag `v0.2.0`
+
+### 0.3 最大结构性缺口
+
+```text
+今日：  [Browser UI] ──Key在浏览器──► [FastAPI on laptop]
+              │                              │
+              └──── Telegram（可选）──────────┘
+
+目标：  [Any Client] ──token/session──► [Agent Core 常驻]
+              │                              │
+              │                    ┌─────────┴─────────┐
+              │                    │ Tool Runtime      │
+              │                    │ Memory · Loop     │
+              │                    │ Channel adapters  │
+              └────────────────────┴───────────────────┘
+```
+
+1. **Core 未「产品化部署」**：配置分裂（浏览器 Key vs 服务端 Key）；无标准「远程客户端连常驻 Core」故事。
+2. **Client 契约弱**：缺稳定的「会话 / 身份 / 能力发现」API；UI 仍是主叙事。
+3. **工具上限不够**：无统一 Tool Registry、权限分级、人机确认、连接器生命周期。
+4. **「任何情况」不可承诺**：没有可靠执行环境（sandbox / 本机 agent worker）、失败重试与任务状态机。
 
 ---
 
-## 风险登记（Risk Register）
+## 1. 北极星与非目标
 
-| 风险 | 概率 | 影响 | 缓解 |
+### 1.1 北极星（写进每次阶段验收）
+
+> 我在外面用 Telegram（或手机壳）给 FAE 一句话；它用**同一套记忆与工具**办完事，并把结果推回来——**无需打开桌面浏览器**。
+
+### 1.2 非目标（本计划默认不做）
+
+- 多租户 SaaS / 商业化账号体系（个人助理 ≠ 平台）
+- 「多智能体产品」叙事膨胀（subagent 保持工具级委派）
+- 强绑某一家 WebRTC（LiveKit 仅在明确需要全双工时评估）
+- 把 MCP 当唯一扩展面（可作为**一种**连接器，不是宗教）
+
+---
+
+## 2. 新阶段总览（P6 起）
+
+| 阶段 | 名称 | 状态 | Demo-Ready |
 |---|---|---|---|
-| Qwen3-TTS Realtime 商用授权变化 | 低 | 高 | 锁定版本号 + 备选 Fish Audio S2 Pro |
-| Letta 0.50 API 变动 | 中 | 中 | 固定 `letta==0.50.*`，加 client 抽象层 |
-| vLLM-Omni 不支持 Qwen3-ASR | 中 | 中 | 先打 HTTP 协议，必要时切 `transformers` 直跑 |
-| WebRTC 在国内网络不稳定 | 中 | 中 | 增加 WebSocket 音频 fallback |
-| 端到端延迟突破 2.5s | 中 | 高 | 各阶段埋点 + 按阶段优化（先用云端 LLM 跑通） |
-| 主动 loop 误触 | 中 | 中 | 严格 cooldown + 用户勿扰时段 + 灰度发布 |
+| P0～P5.2 | 骨架 + 质量 + 多端首版 | 已归档 | `v0.2.0` |
+| **P6** | **Core 常驻 & 快速部署** | 下一主线 | 一台机器 compose up → API 可用；GitHub Release |
+| **P7** | **Client 契约 & 壳化** | 待开始 | 任意 client 只依赖 OpenAPI/WS；Web 降级为参考壳 |
+| **P8** | **Tool Runtime & 连接器** | 待开始 | 插件式工具 + 权限；接 3～5 个你真用的工具 |
+| **P9** | **任务可靠性 & 主动助理** | 待开始 | 长任务状态、失败可追、外出也能闭环 |
+| **P10** | **可选增强** | 按需 | 本地 ASR、更深语音、第二 channel、MCP 适配器 |
 
 ---
 
-## 完成度跟踪
+## 3. Phase 细节
 
-> 每个 Phase 收尾时更新本节，给团队一目了然的进度。
+### P6 · Core 常驻 & 快速部署 ← 下一主线
 
-- [ ] Phase 1 完成（M1-2 通过）
-- [ ] Phase 2 完成（M2-2 通过）
-- [ ] Phase 3 完成（M3-2 通过）
-- [ ] Phase 4 完成（M4-2 通过）
-- [ ] Phase 5 持续推进
+**为什么先做**：没有「常驻 Core」，「任何地点」和「FE 是壳」都是空话。
+
+- [ ] **配置外置**：服务端为唯一真相源（LLM / TTS / 记忆 / Telegram / tools）；浏览器 Key 仅作本地开发捷径，文档标明「远程模式不依赖 localStorage」
+- [ ] **部署契约**：`docker compose`（或等价）一键起 API +（可选）TTS stub；`.env.example` = 生产清单
+- [ ] **GitHub**：推送 `init`/`main` + tag；Release 附部署说明；CI 绿才能合
+- [ ] **健康与就绪**：`/health` `/ready` 含 memory / scheduler / channel 状态；失败可诊断
+- [ ] **远程访问最小集**：反向代理 / Tailscale / Cloudflare Tunnel 三选一写进文档（个人助理优先私有网络，不默认裸奔公网）
+
+**验收（M6）**：笔记本休眠时，云端或家里常驻机上的 Core 仍响应 Telegram；新机器按 README 30 分钟内起得来。
 
 ---
 
-**最后更新**：2026-07-12
-**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
-**反馈**：GitHub Issues / PR
+### P7 · Client 契约 & 壳化
+
+**为什么**：FE 必须可替换；否则永远困在 Next 页。
+
+- [ ] **稳定 API 面**（版本前缀或明确兼容策略）：
+  - 对话：HTTP chat + WS stream（已有）
+  - 记忆 / skills / schedules / notifications（已有，需契约测试）
+  - **能力发现**：`GET /api/capabilities`（channels、tools、modes）
+- [ ] **会话与身份（个人级）**：`session_id` / device binding；可选简单 token（不是完整 OAuth 平台）
+- [ ] **Web UI 降级为 Reference Client**：只消费公开 API；去掉「必须本机」假设
+- [ ] **Client SDK（薄）**：TypeScript 一小包（connect / chat / onNotification），Telegram 已是第二 client 样板
+
+**验收（M7）**：用 curl + Telegram 完成「对话 → 记忆 → 提醒」全链路；Web 关掉也不影响 Core。
+
+---
+
+### P8 · Tool Runtime & 连接器
+
+**为什么**：这是「各种各样工具」的真正上限。
+
+- [ ] **统一 Tool Registry**：name / schema / 权限级（Safe / Caution / Sensitive / Dangerous）/ timeout
+- [ ] **执行与确认**：Sensitive+ 需 client 确认或预授权；结果结构化回灌 memory
+- [ ] **内置连接器优先（按你个人清单排序，示例）**：
+  - 本机/服务器文件系统（沙箱根目录）
+  - Shell（Dangerous，默认关）
+  - 日历 / 邮件（OAuth 或应用密码）
+  - HTTP 通用 webhook
+  - （可选）MCP client 作为连接器一种
+- [ ] **Skill 只编排，不发明工具**：playbook 调用 registry 内工具；与 `run_subagent` 同级扩展
+
+**验收（M8）**：至少 3 个真实个人工具可调用；危险操作有确认；结果第二天仍能 recall。
+
+---
+
+### P9 · 任务可靠性 & 主动助理
+
+- [ ] 任务状态机：queued / running / needs_input / done / failed
+- [ ] 长任务可查进度；失败可重试；主动 Loop 引用任务而非罐头句
+- [ ] 外出通道：Telegram（已有）+ 至少一个可靠推送（Push 或 IM）默认可用
+- [ ] 审计日志：谁在何时调了什么工具（本地文件即可）
+
+**验收（M9）**：出差一天，只靠手机 IM：提醒到达、回一句写入记忆、委托一项工具任务并收到结果。
+
+---
+
+### P10 · 按需增强
+
+- 本地 ASR / 更好语音
+- Slack 或其他 channel
+- LiveKit 全双工
+- 多设备高级同步
+
+不阻塞 P6～P9。
+
+---
+
+## 4. 工具接入原则（写给未来的自己）
+
+1. **先 Registry，后 MCP**：MCP 是适配器，不是架构中心。
+2. **权限默认拒绝**：新工具默认 Sensitive；显式降级到 Safe。
+3. **结果可记忆**：工具输出要能 `archival` / fact，否则「助理」隔天失忆。
+4. **Client 无关**：工具确认协议走 API，不绑 React 组件。
+
+---
+
+## 5. 部署与 GitHub 节奏
+
+| 节奏 | 做法 |
+|---|---|
+| 日常 | `init`/`main` PR；CI（backend pytest + UI build）必须绿 |
+| 阶段完成 | tag `v0.3.0` / `v0.4.0`…；CHANGELOG 一节；Release 附 compose 说明 |
+| 机器 | 一台常驻（家用 NUC / 小 VPS / 现有 Mac mini）跑 Core；笔记本只做开发 client |
+| 网络 | 优先 Tailscale/私有隧道；公网 webhook 按需 |
+
+---
+
+## 6. 近期执行顺序（建议）
+
+1. **P6** Core 常驻 & 快速部署（含把当前仓库推到 GitHub、Release 流程跑顺）
+2. **P7** Client 契约 & Web 壳化
+3. **P8** 按你真实工具清单接连接器（先 3 个最高频）
+4. **P9** 任务可靠性，闭环「外出一天」
+5. P10 按痛点插入
+
+---
+
+## 7. 里程碑
+
+| ID | 验收 | 状态 |
+|---|---|---|
+| M0～M5.2 | 见归档计划 / `v0.2.0` | 完成 |
+| **M6** | 常驻 Core + 快速部署 + 远程 Telegram 闭环 | 下一主线 |
+| **M7** | 无 Web 也可完整使用（API + 至少一 IM client） | 待定 |
+| **M8** | ≥3 个个人真实工具 + 权限 | 待定 |
+| **M9** | 外出一天仅靠手机办完提醒/记忆/一工具任务 | 待定 |
+
+---
+
+**最后更新**：2026-07-19  
+**关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`archive/DEVELOPMENT_PLAN_through_v0.2.md`](./archive/DEVELOPMENT_PLAN_through_v0.2.md) · [`../CHANGELOG.md`](../CHANGELOG.md) · [`../README.md`](../README.md)

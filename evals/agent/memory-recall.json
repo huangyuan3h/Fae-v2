@@ -1,0 +1,27 @@
+[
+  {
+    "id": "name_city_dietary",
+    "setup": {
+      "user_text": "我叫小明，住在上海，忌香菜",
+      "assistant_text": "好的，小明，已记住你在上海、忌香菜。"
+    },
+    "query": "我叫什么？住哪？有什么忌口？",
+    "expect_substrings": ["小明", "上海", "香菜"]
+  },
+  {
+    "id": "name_fact_save",
+    "setup": {
+      "facts": [
+        {"content": "User's name is Yuan", "tags": ["name", "identity"]}
+      ]
+    },
+    "query": "What is my name?",
+    "expect_substrings": ["Yuan"]
+  },
+  {
+    "id": "persona_present",
+    "setup": {},
+    "query": "hello",
+    "expect_substrings": ["[persona]"]
+  }
+]
