@@ -39,7 +39,7 @@ export default function SkillsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
-  const [testText, setTestText] = useState(MQ2_PRESETS[0].text);
+  const [testText, setTestText] = useState<string>(MQ2_PRESETS[0].text);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
