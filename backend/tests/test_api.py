@@ -60,4 +60,4 @@ def test_module_level_app_is_well_formed() -> None:
     # Trigger any lazy module-level work.
     _ = api_module.app
     assert api_module.app.title == "FAE-v2 Backend"
-    assert api_module.app.version == "0.1.0"
+    assert api_module.app.version == "0.2.0"

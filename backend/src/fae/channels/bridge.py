@@ -89,10 +89,16 @@ async def handle_inbound_text(
         weather_on = bool(getattr(settings, "weather_enabled", True)) and (
             weather_likely(user_text) or "weather_briefing" in activation.active
         )
+        from fae.agent.llm_turn import activation_wants_subagent
+
+        subagent_on = bool(
+            getattr(settings, "subagent_enabled", True)
+        ) and activation_wants_subagent(activation, skills)
         tools_needed = bool(
             (isinstance(skills, SkillRuntime) and activation.tools)
             or sched
             or weather_on
+            or subagent_on
         )
         if tools_needed:
             prepared, activation, early = await apply_lazy_skill_tool(
@@ -104,6 +110,11 @@ async def handle_inbound_text(
                 schedule_store=sched,
                 weather_enabled=weather_on,
                 default_city=default_city,
+                memory=memory,
+                subagent_enabled=subagent_on,
+                subagent_timeout_s=float(
+                    getattr(settings, "subagent_timeout_s", 60.0) or 60.0
+                ),
             )
             if early and "日程工具" in early and callable(on_schedule_mutated):
                 on_schedule_mutated()

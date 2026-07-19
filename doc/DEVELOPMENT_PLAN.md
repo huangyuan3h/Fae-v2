@@ -3,7 +3,7 @@
 > 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。  
 > 用法：完成一项就打 `[x]`，每条任务标明阶段、依赖、产出、验收。  
 > 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。  
-> **现行优先级**：**质量 > 上限**。Phase 5.1 首版已收口；**下一主线 = Phase 5.2 Subagents**。
+> **现行优先级**：**质量 > 上限**。Phase 5.1～5.2 首版已收口；**下一主线 = 按需（本地 ASR / 5.3）**。
 
 ---
 
@@ -18,8 +18,8 @@
 | Phase 4 | 主动 Loop | ✅ 骨架完成 | 心跳 + 定时任务 + 主动问候 + 通知 |
 | **Phase Q** | **质量硬化** | **✅ 首版收口** | 语音 · Skill · 记忆 · Loop · 横切 evals |
 | **Phase 5.1** | **多端 & channel** | **✅ 首版** | 手机 PWA 壳 + Telegram long-polling |
-| **Phase 5.2** | **Subagents** | **🔜 下一主线** | 委派回灌 |
-| Phase 5 | 上限扩展（其余） | 待开始（按优先级取用） | 多用户 / 本地 ASR / WebRTC / MCP |
+| **Phase 5.2** | **Subagents** | **✅ 首版** | `run_subagent` 工具 + researcher/coder/reviewer |
+| Phase 5 | 上限扩展（其余） | 按需 | 本地 ASR / 多用户 / WebRTC / Slack / MCP |
 
 ### 0.1 现状判断（Q 首版后）
 
@@ -31,8 +31,9 @@
 | Loop | ✅ | ✅ 首版可用 | 有记忆的主动问候 + 日程确认；服务端 LLM Key |
 | 横切 | ✅ | ✅ | ARCH/README 诚实；无 Daily 语音回合 eval 进 CI |
 | 多端 | ✅ | ✅ 首版 | 手机对话壳 + Telegram 可选 channel |
+| Subagents | ✅ | ✅ 首版 | 工具委派 + 摘要回灌 archival；WS 系统行可见 |
 
-**结论**：Phase Q + 5.1 首版已收口。下一主线 **Phase 5.2 Subagents**；MCP / LiveKit / Slack 仍暂缓。
+**结论**：Phase Q + 5.1 + 5.2 首版已收口。其后按需（本地 ASR / 5.3）；MCP / LiveKit / Slack 仍暂缓。
 
 ### 0.2 概念速查（易混淆项）
 
@@ -216,8 +217,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 ## Phase 5 · 上限扩展（按优先级，不并行冲）
 
-> Phase Q 主验收（MQ-0～MQ-5）与 **5.1（M5-1）** 首版已完成。  
-> 下列顺序 = 当前产品优先级（高 → 低）；**下一主线 = 5.2 Subagents**。
+> Phase Q 主验收（MQ-0～MQ-5）与 **5.1 / 5.2** 首版已完成。  
+> 下列顺序 = 当前产品优先级（高 → 低）；**其后按需推进**。
 
 ### 5.1 多端 & 第三方 channel — ✅ 首版
 
@@ -231,16 +232,16 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 **验收（M5-1）**：手机浏览器可用主对话；Telegram 能收主动提醒并回一句写入记忆。 ✅
 
-### 5.2 Subagents ← **下一主线**
+### 5.2 Subagents — ✅ 首版
 
 > 主 agent 委派重活，结果回灌；不做「多智能体产品」叙事膨胀。
 
-- [ ] 接口：`run_subagent(name, task, context)` + 超时 / 取消 / 结果摘要
-- [ ] 内置 2～3 个：`researcher` / `coder`（或 `reviewer`）— 先质量后数量
-- [ ] 主对话可委派；UI 可见「子任务进行中 / 结果」
-- [ ] 与 Skills：委派可由 skill 剧本触发，而非另起一套触发器
+- [x] 接口：`run_subagent(name, task, context)` + 超时 / 取消 / 结果摘要（`fae/agent/subagents/`）
+- [x] 内置 3 个：`researcher` / `coder` / `reviewer`
+- [x] 主对话可委派；WS `subagent` 事件 → UI 系统行
+- [x] 与 Skills：`research_delegate` + `technical_debugging` 剧本触发（同工具环）
 
-**验收（M5-2）**：主对话委托「调研 X」→ 子 agent 回摘要进记忆，主回复可引用。
+**验收（M5-2）**：主对话委托「调研 X」→ 子 agent 回摘要进记忆，主回复可引用。 ✅
 
 ### 5.3 多用户 / 多角色 ← **低优先级**
 
@@ -315,8 +316,9 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 | **MQ-4** | Loop：有记忆的主动问候 + 可靠提醒 | ✅ Q.4 首版 |
 | **MQ-5** | 横切：ARCH/README 诚实 + 最小 evals 进 CI | ✅ Q.5 |
 | **M5-1** | 多端 / Telegram（手机壳 + long polling） | ✅ 首版 |
-| **M5-2** | Subagent 委派回灌 | 🔜 下一主线 |
+| **M5-2** | Subagent 委派回灌（researcher/coder/reviewer） | ✅ 首版 |
 | M5.3+ | 多用户 / 本地 ASR / WebRTC / MCP / Slack | 按需 |
+
 
 ---
 
@@ -345,8 +347,8 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 - [x] Phase Q.2 Skills 变强（首版）
 - [x] Phase Q.5 横切（文档 + 最小 evals）
 - [x] Phase 5.1 多端 & channel（PWA + Telegram）
-- [ ] **Phase 5.2 Subagents** ← **下一主线**
-- [ ] Phase 5.3+ 按需（多用户 / ASR / WebRTC / Slack）；MCP 暂缓
+- [x] Phase 5.2 Subagents（`run_subagent` + builtins）
+- [ ] **按需**：本地 ASR / Phase 5.3 多用户 / WebRTC / Slack；MCP 暂缓
 
 ---
 
@@ -354,11 +356,11 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 
 1. **Phase Q.0～Q.5** 质量硬化 — ✅  
 2. **Phase 5.1** 多端 & Telegram — ✅  
-3. **Phase 5.2** Subagents ← 下一主线  
+3. **Phase 5.2** Subagents — ✅  
 4. 可选：本地 ASR → Daily 对齐 →（仅必要时）LiveKit；Slack / **MCP 默认不做**
 
 ---
 
-**最后更新**：2026-07-19（Phase 5.1 首版；下一主线 Phase 5.2）  
+**最后更新**：2026-07-19（Phase 5.2 首版；其后按需）  
 **关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
 **反馈**：GitHub Issues / PR

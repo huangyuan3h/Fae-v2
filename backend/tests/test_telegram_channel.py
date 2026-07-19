@@ -260,3 +260,100 @@ async def test_delivery_skips_telegram_when_quiet(tmp_path: Path) -> None:
     finally:
         del_mod.in_quiet_hours = original
         store.close()
+
+
+def test_telegram_client_requires_token() -> None:
+    with pytest.raises(ValueError):
+        TelegramClient("")
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_truncates_and_handles_errors() -> None:
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sendMessage"):
+            body = json.loads(request.content.decode())
+            assert len(body["text"]) <= 4000
+            return httpx.Response(400, json={"ok": False, "description": "bad"})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(transport=transport)
+    bot = TelegramClient("tok", http=http, api_base="https://tg.test")
+    assert not await bot.send_message("1", "x" * 5000)
+    assert not await bot.send_message("1", "")
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_telegram_get_updates_not_ok() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": False, "result": []})
+
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(transport=transport)
+    bot = TelegramClient("tok", http=http, api_base="https://tg.test")
+    assert await bot.get_updates() == []
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_telegram_poll_empty_chat_id_and_on_text_error() -> None:
+    stop = asyncio.Event()
+    stop.set()
+    await telegram_poll_loop(
+        object(),  # type: ignore[arg-type]
+        allowed_chat_id="",
+        on_text=lambda t: asyncio.sleep(0, result="x"),  # type: ignore[arg-type,return-value]
+        stop_event=stop,
+    )
+
+    class _Bot:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def get_updates(self, offset=None, *, timeout=25):
+            self.n += 1
+            if self.n == 1:
+                return [
+                    {
+                        "update_id": 1,
+                        "message": {"chat": {"id": 7}, "text": "boom"},
+                    }
+                ]
+            return []
+
+        async def send_message(self, chat_id: str, text: str) -> bool:
+            assert "出错" in text
+            return True
+
+    stop2 = asyncio.Event()
+
+    async def bad_on_text(text: str) -> str:
+        stop2.set()
+        raise RuntimeError("fail")
+
+    await telegram_poll_loop(
+        _Bot(),  # type: ignore[arg-type]
+        allowed_chat_id="7",
+        on_text=bad_on_text,
+        stop_event=stop2,
+        long_poll_timeout=0,
+        error_backoff_s=0.01,
+    )
+
+
+@pytest.mark.asyncio
+async def test_bridge_handle_inbound_success() -> None:
+    settings = Settings(
+        dashscope_api_key="sk-test",
+        scheduler_enabled=False,
+        subagent_enabled=True,
+    )
+    reply = await handle_inbound_text(
+        "hello",
+        settings=settings,
+        llm=LLMClient(provider=FakeProvider(responses=["hi there"], echo=False)),
+    )
+    assert "hi" in reply.lower() or reply == "hi there"

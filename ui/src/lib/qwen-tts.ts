@@ -219,6 +219,8 @@ export class TtsPlayQueue {
     this.maxInflight = Math.max(1, Math.min(4, maxInflight));
     this.targetReady = Math.max(1, targetReady);
     this.minStartReady = Math.max(1, minStartReady);
+    // Module singleton pointer (not a local this-alias).
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- register active queue
     activeQueue = this;
   }
 
@@ -241,7 +243,10 @@ export class TtsPlayQueue {
   enqueue(text: string): void {
     const chunks = chunkForTts(text, TTS_CHUNK_CHARS);
     if (!chunks.length) return;
-    if (activeQueue !== this) activeQueue = this;
+    if (activeQueue !== this) {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias -- register active queue
+      activeQueue = this;
+    }
     for (const chunk of chunks) this.pending.push(chunk);
     this.pumpSynth();
   }

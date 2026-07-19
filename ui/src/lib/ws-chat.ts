@@ -8,6 +8,15 @@ export type WsServerMessage =
       lazy_catalog?: string[];
       scores?: Record<string, number>;
     }
+  | {
+      type: "subagent";
+      phase: "start" | "done";
+      name: string;
+      task?: string;
+      ok?: boolean;
+      error?: string | null;
+      summary?: string;
+    }
   | { type: "token"; content: string }
   | { type: "done"; usage: unknown; session_id?: string }
   | {
@@ -27,6 +36,15 @@ export type NotifyHandler = (
   speak?: boolean,
 ) => void;
 
+export type SubagentHandler = (msg: {
+  phase: "start" | "done";
+  name: string;
+  task?: string;
+  ok?: boolean;
+  error?: string | null;
+  summary?: string;
+}) => void;
+
 export type StreamHandlers = {
   onToken: (token: string) => void;
   onDone: () => void;
@@ -36,6 +54,7 @@ export type StreamHandlers = {
     scores?: Record<string, number>,
     lazyCatalog?: string[],
   ) => void;
+  onSubagent?: SubagentHandler;
   onNotification?: NotifyHandler;
 };
 
@@ -106,6 +125,15 @@ export class WsChatClient {
             msg.scores,
             msg.lazy_catalog,
           );
+        } else if (msg.type === "subagent") {
+          handlers.onSubagent?.({
+            phase: msg.phase,
+            name: msg.name,
+            task: msg.task,
+            ok: msg.ok,
+            error: msg.error,
+            summary: msg.summary,
+          });
         } else if (msg.type === "notification") {
           handlers.onNotification?.(
             msg.title,

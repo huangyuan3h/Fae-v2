@@ -8,6 +8,7 @@ Protocol (JSON over text frames):
 
   server -> client:
     {"type": "skills", "active": ["technical_debugging"], "lazy_catalog": [...]}
+    {"type": "subagent", "phase": "start"|"done", "name": "researcher", ...}
     {"type": "token", "content": "你"}
     {"type": "done",  "usage": {...} | null, "session_id": "..."}
     {"type": "notification", "id": "...", "title": "...", "body": "..."}
@@ -95,6 +96,7 @@ async def _run_stream(
     memory: LettaMemoryService | None,
     skills: SkillRuntime | None,
     session_id: str,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
     """Pump tokens from the provider to the client until done or cancelled."""
     user_text = ""
@@ -134,10 +136,19 @@ async def _run_stream(
         weather_on = bool(getattr(settings, "weather_enabled", True)) and (
             weather_likely(user_text) or "weather_briefing" in activation.active
         )
+        subagent_on = bool(getattr(settings, "subagent_enabled", True))
+        subagent_timeout = float(
+            getattr(settings, "subagent_timeout_s", 60.0) or 60.0
+        )
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
 
         def _on_sched_mut() -> None:
             if proactive is not None and hasattr(proactive, "resync"):
                 proactive.resync()
+
+        async def _on_subagent(ev: dict) -> None:
+            await _send(ws, ev)
 
         async for token, activation in stream_assistant_turn(
             client,
@@ -149,6 +160,11 @@ async def _run_stream(
             weather_enabled=weather_on,
             default_city=default_city,
             on_schedule_mutated=_on_sched_mut,
+            memory=memory,
+            subagent_enabled=subagent_on,
+            subagent_timeout_s=subagent_timeout,
+            cancel_event=cancel_event,
+            on_subagent_event=_on_subagent,
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)
@@ -204,6 +220,7 @@ async def ws_chat(
     """Streaming chat over WebSocket."""
     await websocket.accept()
     active: asyncio.Task[None] | None = None
+    stream_cancel: asyncio.Event | None = None
     # Fallback when client omits session_id; UI should send stable "default".
     connection_session_id = "default"
     hub = getattr(websocket.app.state, "ws_hub", None)
@@ -240,13 +257,19 @@ async def ws_chat(
             msg_type = raw.get("type")
 
             if msg_type == "cancel":
+                if stream_cancel is not None:
+                    stream_cancel.set()
                 await _cancel_active(active)
                 active = None
+                stream_cancel = None
                 continue
 
             if msg_type == "chat":
+                if stream_cancel is not None:
+                    stream_cancel.set()
                 await _cancel_active(active)
                 active = None
+                stream_cancel = None
 
                 try:
                     request = ChatRequest.model_validate(raw.get("request", {}))
@@ -270,6 +293,7 @@ async def ws_chat(
                     hub.update_session(websocket, session_id)
                 memory = _memory_from_app(websocket)
                 skills = _skills_from_app(websocket)
+                stream_cancel = asyncio.Event()
                 active = asyncio.create_task(
                     _run_stream(
                         websocket,
@@ -278,6 +302,7 @@ async def ws_chat(
                         memory,
                         skills,
                         session_id,
+                        cancel_event=stream_cancel,
                     )
                 )
                 continue

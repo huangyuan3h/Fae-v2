@@ -392,7 +392,7 @@ def create_app(
     settings = settings or get_settings()
     app = FastAPI(
         title="FAE-v2 Backend",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -528,7 +528,10 @@ def create_app(
                 default_timezone=getattr(settings, "weather_default_timezone", "")
                 or "",
             )
-            from fae.agent.llm_turn import apply_lazy_skill_tool
+            from fae.agent.llm_turn import (
+                activation_wants_subagent,
+                apply_lazy_skill_tool,
+            )
             from fae.scheduler.store import ScheduleStore as _ScheduleStore
             from fae.tools.weather import weather_likely
 
@@ -545,10 +548,18 @@ def create_app(
             weather_on = bool(getattr(settings, "weather_enabled", True)) and (
                 weather_likely(user_text) or "weather_briefing" in activation.active
             )
+
+            subagent_on = bool(
+                getattr(settings, "subagent_enabled", True)
+            ) and activation_wants_subagent(
+                activation,
+                skills_rt if isinstance(skills_rt, SkillRuntime) else None,
+            )
             tools_needed = bool(
                 (isinstance(skills_rt, SkillRuntime) and activation.tools)
                 or sched
                 or weather_on
+                or subagent_on
             )
             if tools_needed:
                 prepared, activation, early = await apply_lazy_skill_tool(
@@ -560,6 +571,11 @@ def create_app(
                     schedule_store=sched,
                     weather_enabled=weather_on,
                     default_city=default_city,
+                    memory=memory,
+                    subagent_enabled=subagent_on,
+                    subagent_timeout_s=float(
+                        getattr(settings, "subagent_timeout_s", 60.0) or 60.0
+                    ),
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)

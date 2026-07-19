@@ -8,6 +8,8 @@ Python backend for FAE-v2: FastAPI (`/ws/chat`, memory, skills, scheduler, local
 
 **Telegram (optional)**: set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — long polling via `fae/channels/`; inbound uses the same agent bridge as `/api/chat`; outbound hooks `NotificationDelivery`.
 
+**Subagents (Phase 5.2)**: tool `run_subagent` in `fae/agent/subagents/` (researcher / coder / reviewer); summaries upsert to archival; WS emits `subagent` start/done events.
+
 **Evals**: case data in [`../evals/`](../evals/); runners are `tests/test_evals_*.py` (picked up by `uv run pytest`).
 
 ## Layout

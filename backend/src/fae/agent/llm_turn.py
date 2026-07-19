@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
+from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL, dispatch_run_subagent
 from fae.llm.client import LLMClient
 from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
+from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.tools import SCHEDULE_TOOLS, dispatch_schedule_tool
 from fae.tools.weather import WEATHER_TOOLS, dispatch_weather_tool
 
@@ -25,6 +28,8 @@ _SCHEDULE_TOOL_NAMES = {
 }
 
 _WEATHER_TOOL_NAMES = {"get_weather"}
+
+OnSubagentEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _strip_tools(request: ChatRequest) -> ChatRequest:
@@ -46,17 +51,38 @@ def _append_unique_tools(tools: list[dict], extra: list[dict]) -> None:
             names.add(n)
 
 
+def activation_wants_subagent(
+    activation: SkillActivationInfo,
+    skills: SkillRuntime | None,
+) -> bool:
+    """True when an active skill declares requires_tools: [run_subagent]."""
+    if skills is None or not activation.active:
+        return False
+    by_name = {s.meta.name: s for s in skills._skills_with_meta()}
+    for name in activation.active:
+        skill = by_name.get(name)
+        if skill is None:
+            continue
+        required = skill.meta.requires_tools or []
+        if "run_subagent" in required:
+            return True
+    return False
+
+
 def _merge_tools(
     activation: SkillActivationInfo,
     schedule_store: ScheduleStore | None,
     *,
     weather_enabled: bool = False,
+    attach_subagent: bool = False,
 ) -> list[dict]:
     tools = list(activation.tools or [])
     if schedule_store is not None:
         _append_unique_tools(tools, SCHEDULE_TOOLS)
     if weather_enabled:
         _append_unique_tools(tools, WEATHER_TOOLS)
+    if attach_subagent:
+        _append_unique_tools(tools, [RUN_SUBAGENT_TOOL])
     return tools
 
 
@@ -81,16 +107,27 @@ async def apply_lazy_skill_tool(
     schedule_store: ScheduleStore | None = None,
     weather_enabled: bool = False,
     default_city: str | None = None,
+    memory: LettaMemoryService | None = None,
+    subagent_enabled: bool = True,
+    subagent_timeout_s: float = 60.0,
+    cancel_event: asyncio.Event | None = None,
+    on_subagent_event: OnSubagentEvent | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
     If the model answers with plain content and no tool call, early_content is set
     and the caller should not stream again.
-    Weather tools inject results and return early_content=None so the caller
-    streams a natural-language answer.
+    Weather / subagent tools inject results and return early_content=None so the
+    caller streams a natural-language answer.
     """
+    attach_subagent = bool(subagent_enabled) and activation_wants_subagent(
+        activation, skills
+    )
     tools = _merge_tools(
-        activation, schedule_store, weather_enabled=weather_enabled
+        activation,
+        schedule_store,
+        weather_enabled=weather_enabled,
+        attach_subagent=attach_subagent,
     )
     if not tools:
         return request, activation, None
@@ -130,6 +167,23 @@ async def apply_lazy_skill_tool(
             enriched = request.model_copy(update={"messages": messages})
             return _strip_tools(enriched), activation, None
 
+        if tc.name == "run_subagent" and attach_subagent:
+            result = await dispatch_run_subagent(
+                tc.arguments,
+                llm=client,
+                config=request.config,
+                memory=memory,
+                session_id=session_id,
+                timeout_s=subagent_timeout_s,
+                cancel_event=cancel_event,
+                on_event=on_subagent_event,
+            )
+            logger.info("run_subagent result_len=%s", len(result))
+            messages = list(request.messages)
+            messages.append(_tool_result_message(tc.name, result))
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
     if (probe.content or "").strip():
         return _strip_tools(request), activation, probe.content
     return _strip_tools(request), activation, None
@@ -146,12 +200,25 @@ async def stream_assistant_turn(
     weather_enabled: bool = False,
     default_city: str | None = None,
     on_schedule_mutated: Callable[[], None] | None = None,
+    memory: LettaMemoryService | None = None,
+    subagent_enabled: bool = True,
+    subagent_timeout_s: float = 60.0,
+    cancel_event: asyncio.Event | None = None,
+    on_subagent_event: OnSubagentEvent | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
     req = request
     early: str | None = None
-    tools = _merge_tools(act, schedule_store, weather_enabled=weather_enabled)
+    attach_subagent = bool(subagent_enabled) and activation_wants_subagent(
+        act, skills
+    )
+    tools = _merge_tools(
+        act,
+        schedule_store,
+        weather_enabled=weather_enabled,
+        attach_subagent=attach_subagent,
+    )
     if tools:
         act = SkillActivationInfo(
             active=act.active,
@@ -168,6 +235,11 @@ async def stream_assistant_turn(
             schedule_store=schedule_store,
             weather_enabled=weather_enabled,
             default_city=default_city,
+            memory=memory,
+            subagent_enabled=subagent_enabled,
+            subagent_timeout_s=subagent_timeout_s,
+            cancel_event=cancel_event,
+            on_subagent_event=on_subagent_event,
         )
         if early is not None and on_schedule_mutated is not None:
             if "日程工具" in early:

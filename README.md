@@ -1,7 +1,8 @@
 # FAE-v2
 
-> **F**ully **A**utonomous **E**cho · v2  
-> 有长期记忆、能主动 loop、可本地部署的语音 Agent。
+> **F**ully **A**utonomous **E**cho · v2 · **stable 0.2.0**  
+> 有长期记忆、能主动 loop、可本地部署的语音 Agent。  
+> 变更摘要见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 文档
 
@@ -21,7 +22,8 @@
 | Q.4 Loop 真主动（服务端 LLM · 持久化 idle） | ✅ MQ-4 |
 | Q.5 横切（文档 + 最小 evals） | ✅ |
 | 5.1 多端 & Telegram（PWA 壳 + long polling） | ✅ M5-1 |
-| **下一主线** | **Phase 5.2 Subagents** |
+| 5.2 Subagents（`run_subagent` · researcher/coder/reviewer） | ✅ M5-2 |
+| **下一主线** | **按需（本地 ASR / 5.3）** |
 
 MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 
@@ -32,6 +34,7 @@ MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 | 浏览器语音（Web Speech + `/ws/chat` + 本机 TTS） | ✅ **默认** |
 | 手机 PWA 壳（manifest + 窄屏对话） | ✅ 首版 |
 | Telegram channel（long polling · 共享 `default` 记忆） | ✅ 可选 |
+| Subagents（工具委派 · 摘要回灌 archival） | ✅ 首版 |
 | Daily + Pipecat 全双工 | ✅ 可选（需 `DAILY_API_KEY`） |
 | 本机 TTS（Qwen3-TTS / CosyVoice / stub） | ✅ `VLLM_TTS_URL` |
 | 长期记忆（Letta remote / embedded） | ✅ |

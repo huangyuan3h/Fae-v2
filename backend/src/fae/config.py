@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # Subagents (Phase 5.2)
+    subagent_enabled: bool = True
+    subagent_timeout_s: float = Field(default=60.0, ge=5.0, le=600.0)
+
     # Security
     secret_key: str = "change-me"
 

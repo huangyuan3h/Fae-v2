@@ -713,12 +713,14 @@ Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说
 ### Phase 5: 上限扩展（按优先级）
 
 - [x] **5.1** 多端 & Telegram（首版：PWA 壳 + long polling；共享 `session_id=default`）
-- [ ] **5.2** Subagents（下一主线）
+- [x] **5.2** Subagents（`run_subagent` 工具；builtins researcher/coder/reviewer；摘要 → archival）
 - [ ] 多用户 / 本地 ASR / Daily 加深 / Slack（按需）
 - [ ] **MCP 暂缓**（默认不做）
 - [ ] LiveKit：仅在明确需要时再评估（当前未实现）
 
 **Telegram（可选）**：`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` 启用 `fae/channels/` long-polling；inbound 经 `bridge.handle_inbound_text`（与 `/api/chat` 同 core）；outbound 挂在 `NotificationDelivery.notify`。无 Token 时零影响。默认路径仍是浏览器。
+
+**Subagents**：与 `request_skill` / weather 同属工具环（`fae/agent/subagents/`）。仅当**已激活 skill** 声明 `requires_tools: [run_subagent]` 时挂上工具（避免每轮额外 probe）。子 turn **不**再挂 `run_subagent`。WS 推送 `type: subagent` 供 UI 系统行展示。不是多智能体产品叙事。
 
 ---
 

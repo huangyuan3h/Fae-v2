@@ -200,6 +200,7 @@ export function useVoiceSession() {
 
     const stt = sttRef.current;
     const ws = wsRef.current;
+    const speechAgg = speechAggRef.current;
     return () => {
       window.removeEventListener(CONFIG_CHANGED_EVENT, onConfigChanged);
       window.removeEventListener(
@@ -208,7 +209,7 @@ export function useVoiceSession() {
       );
       window.removeEventListener(TTS_PREFS_CHANGED_EVENT, onTtsPrefsChanged);
       stt.stop();
-      speechAggRef.current.reset();
+      speechAgg.reset();
       stopSpeaking();
       ttsQueueRef.current?.stop();
       ttsQueueRef.current = null;
@@ -458,6 +459,23 @@ export function useVoiceSession() {
               setActiveSkills(names);
               setSkillScores(scores ?? {});
             },
+            onSubagent: (ev) => {
+              if (ev.phase === "start") {
+                appendLine(
+                  "system",
+                  `子任务 ${ev.name || "subagent"} 进行中…`,
+                );
+                return;
+              }
+              const ok = ev.ok !== false;
+              const clip = (ev.summary || "").trim().slice(0, 160);
+              appendLine(
+                "system",
+                ok
+                  ? `子任务 ${ev.name || "subagent"} 完成${clip ? `：${clip}` : ""}`
+                  : `子任务 ${ev.name || "subagent"} 失败${clip ? `：${clip}` : ""}`,
+              );
+            },
             onToken: (token) => {
               if (metrics.llmFirstTokenAt == null) {
                 metrics.llmFirstTokenAt = performance.now();
@@ -510,7 +528,13 @@ export function useVoiceSession() {
         resumeListeningIfWanted();
       }
     },
-    [config, ensureTtsQueue, logTurnMetrics, resumeListeningIfWanted],
+    [
+      appendLine,
+      config,
+      ensureTtsQueue,
+      logTurnMetrics,
+      resumeListeningIfWanted,
+    ],
   );
 
   const sendText = useCallback(
