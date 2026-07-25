@@ -361,3 +361,29 @@ async def test_bridge_handle_inbound_success() -> None:
         llm=LLMClient(provider=FakeProvider(responses=["hi there"], echo=False)),
     )
     assert "hi" in reply.lower() or reply == "hi there"
+
+
+@pytest.mark.asyncio
+async def test_bridge_handle_inbound_writes_chat_history(tmp_path: Path) -> None:
+    from fae.chat_history import ChatHistoryStore
+
+    settings = Settings(
+        dashscope_api_key="sk-test",
+        scheduler_enabled=False,
+        subagent_enabled=True,
+    )
+    history = ChatHistoryStore(tmp_path / "tg-history.db")
+    try:
+        reply = await handle_inbound_text(
+            "你好",
+            settings=settings,
+            llm=LLMClient(provider=FakeProvider(responses=["你好呀"], echo=False)),
+            chat_history_store=history,
+            session_id="tg-1",
+        )
+        assert reply == "你好呀"
+        turns = history.list("tg-1")
+        assert [t.user_text for t in turns] == ["你好"]
+        assert [t.assistant_text for t in turns] == ["你好呀"]
+    finally:
+        history.close()

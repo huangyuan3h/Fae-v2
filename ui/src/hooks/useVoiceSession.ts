@@ -3,7 +3,11 @@
 import type { DailyCall } from "@daily-co/daily-js";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { getMemorySessionId } from "@/lib/client-identity";
+import {
+  DEFAULT_MEMORY_SESSION_ID,
+  getMemorySessionId,
+  MEMORY_SESSION_KEY,
+} from "@/lib/client-identity";
 import {
   type AgentConfig,
   loadConfig,
@@ -47,7 +51,15 @@ import {
   savePreferDaily,
 } from "@/lib/voice-prefs";
 import { showBrowserNotification } from "@/lib/notifications-api";
-import { ChatAbortedError, WsChatClient } from "@/lib/ws-chat";
+import {
+  ChatAbortedError,
+  fetchChatHistory,
+  fetchChatSessions,
+  setChatSessionPinned,
+  updateChatSessionTitle,
+  WsChatClient,
+  type ChatSessionSummary,
+} from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
@@ -57,6 +69,8 @@ export type ChatLine = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  historyTurnId?: string;
+  historyCreatedAt?: string;
 };
 
 export type ChatStep = {
@@ -76,7 +90,8 @@ export function useVoiceSession() {
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
   // Stable memory bucket shared with proactive / consolidate (localStorage).
-  const [sessionId] = useState(getMemorySessionId);
+  // Mutable so the user can switch sessions from the sidebar.
+  const [sessionId, setSessionIdState] = useState<string>(DEFAULT_MEMORY_SESSION_ID);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransportMode>("browser");
   // Browser path always uses local TTS when available; do not wait for first enqueue.
@@ -92,6 +107,11 @@ export function useVoiceSession() {
   const [preferDaily, setPreferDailyState] = useState<boolean>(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support] = useState(() => speechSupported());
+  const [historyNote, setHistoryNote] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
+  const [retentionDays, setRetentionDays] = useState(7);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Final transcript queued by the STT callback; consumed by an Effect so the
   // latest `sendText` is always used without mutating a Ref.
   const [pendingText, setPendingText] = useState<string | null>(null);
@@ -111,6 +131,9 @@ export function useVoiceSession() {
   const connectingDaily = useRef(false);
   const memorySessionRef = useRef(sessionId);
   const voiceSessionRef = useRef<string | null>(null);
+  const historyTurnIdsRef = useRef<Set<string>>(new Set());
+  const historyLoadedRef = useRef(false);
+  const oldestLoadedAtRef = useRef<string | null>(null);
   /** User clicked 开始听写 — resume after assistant / interrupt. */
   const wantListeningRef = useRef(false);
   const metricsRef = useRef<TurnMetrics | null>(null);
@@ -142,6 +165,180 @@ export function useVoiceSession() {
   useEffect(() => {
     voiceSessionRef.current = voiceSessionId;
   }, [voiceSessionId]);
+
+  const reloadSessions = useCallback(async () => {
+    try {
+      const data = await fetchChatSessions();
+      setSessions(data.sessions);
+      if (data.retention_days) {
+        setRetentionDays(data.retention_days);
+      }
+    } catch {
+      /* ignore — sidebar is best-effort */
+    }
+  }, []);
+
+  const applyHistoryPayload = useCallback(
+    (
+      payload: Awaited<ReturnType<typeof fetchChatHistory>>,
+      mode: "replace" | "prepend",
+    ) => {
+      const restored: ChatLine[] = payload.turns.flatMap((turn) => {
+        const key = `history-${turn.id}`;
+        historyTurnIdsRef.current.add(turn.id);
+        return [
+          {
+            id: `${key}-u`,
+            role: "user" as const,
+            content: turn.user_text,
+            historyTurnId: turn.id,
+            historyCreatedAt: turn.created_at,
+          },
+          {
+            id: `${key}-a`,
+            role: "assistant" as const,
+            content: turn.assistant_text,
+            historyTurnId: turn.id,
+            historyCreatedAt: turn.created_at,
+          },
+        ];
+      });
+      if (restored.length > 0) {
+        oldestLoadedAtRef.current =
+          restored[0].historyCreatedAt ?? oldestLoadedAtRef.current;
+      } else if (mode === "replace") {
+        oldestLoadedAtRef.current = null;
+      }
+      historyLoadedRef.current = true;
+      if (payload.retention_days) {
+        setRetentionDays(payload.retention_days);
+      }
+      const retention = Math.max(1, payload.retention_days || 7);
+      const totalLoaded = payload.turns.length;
+      if (mode === "replace") {
+        setHistoryHasMore(payload.has_more);
+        setHistoryNote(
+          totalLoaded > 0
+            ? `已加载近 ${retention} 天内的 ${totalLoaded} 条对话`
+            : null,
+        );
+        if (totalLoaded > 0) {
+          setLines((prev) => {
+            const existing = new Set(prev.map((line) => line.id));
+            const additions = restored.filter((line) => !existing.has(line.id));
+            return additions.length > 0 ? [...additions, ...prev] : prev;
+          });
+        }
+      } else {
+        setHistoryHasMore(payload.has_more);
+        setLines((prev) => {
+          const existing = new Set(prev.map((line) => line.id));
+          const additions = restored.filter((line) => !existing.has(line.id));
+          return additions.length > 0 ? [...additions, ...prev] : prev;
+        });
+      }
+    },
+    [],
+  );
+
+  const loadSession = useCallback(
+    async (sid: string) => {
+      historyLoadedRef.current = false;
+      historyTurnIdsRef.current = new Set();
+      oldestLoadedAtRef.current = null;
+      setLines([]);
+      setHistoryNote(null);
+      setHistoryHasMore(false);
+      try {
+        const payload = await fetchChatHistory(sid, { limit: 50 });
+        applyHistoryPayload(payload, "replace");
+      } catch {
+        setHistoryNote(null);
+      }
+      void reloadSessions();
+    },
+    [applyHistoryPayload, reloadSessions],
+  );
+
+  useEffect(() => {
+    // Hydrate sessionId from localStorage on first mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot localStorage hydration
+    setSessionIdState(getMemorySessionId());
+  }, []);
+
+  useEffect(() => {
+    // Initial / sessionId-change sync with backend history + sessions list.
+    /* eslint-disable react-hooks/set-state-in-effect -- data sync, not cascading render */
+    void reloadSessions();
+    void loadSession(sessionId);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [sessionId, loadSession, reloadSessions]);
+
+  const switchSession = useCallback(
+    async (nextId: string) => {
+      const target = (nextId || "").trim() || DEFAULT_MEMORY_SESSION_ID;
+      if (target === sessionId) return;
+      setSessionIdState(target);
+      try {
+        window.localStorage.setItem(MEMORY_SESSION_KEY, target);
+      } catch {
+        /* ignore */
+      }
+      await loadSession(target);
+    },
+    [sessionId, loadSession],
+  );
+
+  const loadEarlier = useCallback(async () => {
+    const sid = memorySessionRef.current;
+    const cursor = oldestLoadedAtRef.current;
+    if (!cursor || loadingEarlier) return;
+    setLoadingEarlier(true);
+    try {
+      const payload = await fetchChatHistory(sid, {
+        limit: 50,
+        before: cursor,
+      });
+      applyHistoryPayload(payload, "prepend");
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [applyHistoryPayload, loadingEarlier]);
+
+  const renameSession = useCallback(
+    async (sid: string, title: string) => {
+      try {
+        const summary = await updateChatSessionTitle(sid, title);
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.session_id === summary.session_id ? summary : s,
+          ),
+        );
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
+
+  const pinSession = useCallback(async (sid: string, pinned: boolean) => {
+    try {
+      const summary = await setChatSessionPinned(sid, pinned);
+      setSessions((prev) => {
+        const next = prev.map((s) =>
+          s.session_id === summary.session_id ? summary : s,
+        );
+        return next.sort((a, b) => {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return b.last_activity_at.localeCompare(a.last_activity_at);
+        });
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     const client = wsRef.current;
@@ -306,10 +503,37 @@ export function useVoiceSession() {
   }, []);
 
   const appendLine = useCallback((role: ChatLine["role"], content: string) => {
-    setLines((prev) => [
-      ...prev,
-      { id: `${Date.now()}-${Math.random()}`, role, content },
-    ]);
+    setLines((prev) => {
+      if (
+        historyLoadedRef.current &&
+        historyTurnIdsRef.current.size > 0 &&
+        prev.some((line) => historyTurnIdsRef.current.has(line.historyTurnId ?? ""))
+      ) {
+        const cutoff = prev.findIndex(
+          (line) => line.historyTurnId && historyTurnIdsRef.current.has(line.historyTurnId),
+        );
+        const tail = cutoff >= 0 ? prev.slice(cutoff) : prev;
+        const seenUser = new Set<string>();
+        const filtered = tail.filter((line) => {
+          if (line.role !== "user") return true;
+          if (seenUser.has(line.content)) return false;
+          seenUser.add(line.content);
+          return true;
+        });
+        return [
+          ...filtered,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            role,
+            content,
+          },
+        ];
+      }
+      return [
+        ...prev,
+        { id: `${Date.now()}-${Math.random()}`, role, content },
+      ];
+    });
   }, []);
 
   const resumeListeningIfWanted = useCallback(() => {
@@ -755,6 +979,14 @@ export function useVoiceSession() {
     partial,
     error,
     sessionId,
+    sessions,
+    retentionDays,
+    switchSession,
+    renameSession,
+    pinSession,
+    historyHasMore,
+    loadingEarlier,
+    loadEarlier,
     voiceSessionId,
     mode,
     ttsMode,
@@ -763,6 +995,7 @@ export function useVoiceSession() {
     skillScores,
     steps,
     lastVoiceDebug,
+    historyNote,
     preferDaily,
     setPreferDaily,
     dailyConnected,

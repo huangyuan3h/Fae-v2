@@ -48,9 +48,58 @@ async def test_persist_daily_turn_writes_recall(tmp_path: Path) -> None:
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_persist_daily_turn_writes_chat_history(tmp_path: Path) -> None:
+    from fae.chat_history import ChatHistoryStore
+
+    history = ChatHistoryStore(tmp_path / "daily-history.db")
+    try:
+        await persist_daily_turn(
+            memory=None,
+            session_id="d-no-mem",
+            user_text="语音问一下",
+            assistant_text="语音答复",
+            chat_history_store=history,
+        )
+        turns = history.list("d-no-mem")
+        assert [t.user_text for t in turns] == ["语音问一下"]
+        assert [t.assistant_text for t in turns] == ["语音答复"]
+    finally:
+        history.close()
+
+
+@pytest.mark.asyncio
+async def test_persist_daily_turn_dedupes_against_history(tmp_path: Path) -> None:
+    from fae.chat_history import ChatHistoryStore
+
+    history = ChatHistoryStore(tmp_path / "daily-history2.db")
+    try:
+        await persist_daily_turn(
+            memory=None,
+            session_id="d-x",
+            user_text="",
+            assistant_text="",
+            chat_history_store=history,
+        )
+        assert history.list("d-x") == []
+    finally:
+        history.close()
+
+
 def test_build_memory_turn_processor_none_when_disabled() -> None:
     assert build_memory_turn_processor(None, "s") is None
     assert build_memory_turn_processor(LettaMemoryService(None), "s") is None
+
+
+def test_build_memory_turn_processor_active_with_only_history(tmp_path: Path) -> None:
+    from fae.chat_history import ChatHistoryStore
+
+    history = ChatHistoryStore(tmp_path / "daily-history3.db")
+    try:
+        proc = build_memory_turn_processor(None, "s", chat_history_store=history)
+        assert proc is not None
+    finally:
+        history.close()
 
 
 @pytest.mark.asyncio

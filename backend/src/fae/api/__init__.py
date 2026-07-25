@@ -25,6 +25,10 @@ from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_loader import default_skills_dir
 from fae.agent.skills_runtime import SkillRuntime
 from fae.api.capabilities import router as capabilities_router
+from fae.api.chat_history import (
+    persist_chat_history_turn,
+    router as chat_history_router,
+)
 from fae.api.deps import get_llm_client
 from fae.api.memory import router as memory_router
 from fae.api.notifications import router as notifications_router
@@ -44,6 +48,7 @@ from fae.channels.bridge import (
     resolve_server_llm_config,
 )
 from fae.channels.telegram import TelegramClient, telegram_poll_loop, telegram_ready
+from fae.chat_history import ChatHistoryStore, chat_history_cleanup_loop
 from fae.config import REPO_ROOT, Settings, get_settings
 from fae.llm import (
     ChatRequest,
@@ -65,6 +70,13 @@ from fae.voice_runtime import VoiceRuntime
 
 def _schedules_db_path(settings: Settings) -> Path:
     db_path = Path(settings.schedules_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _chat_history_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.chat_history_db_path)
     if not db_path.is_absolute():
         db_path = REPO_ROOT / db_path
     return db_path
@@ -140,6 +152,22 @@ async def lifespan(app: FastAPI):
 
     hub: ConnectionHub = getattr(app.state, "ws_hub", None) or ConnectionHub()
     app.state.ws_hub = hub
+
+    history_store = getattr(app.state, "chat_history", None)
+    if not isinstance(history_store, ChatHistoryStore) or history_store.closed:
+        history_store = ChatHistoryStore(
+            _chat_history_db_path(settings),
+            retention_days=settings.chat_history_retention_days,
+        )
+        app.state.chat_history = history_store
+    history_cleanup_task = asyncio.create_task(
+        chat_history_cleanup_loop(
+            history_store,
+            settings.chat_history_cleanup_interval_s,
+        ),
+        name="fae-chat-history-cleanup",
+    )
+    app.state.chat_history_cleanup_task = history_cleanup_task
 
     # Schedule store always available for REST even when loop is disabled.
     # Recreate if previous lifespan closed the connection.
@@ -262,6 +290,7 @@ async def lifespan(app: FastAPI):
         async def _on_tg_text(text: str) -> str:
             skills_rt = getattr(app.state, "skills", None)
             proactive = getattr(app.state, "proactive", None)
+            chat_history_store = getattr(app.state, "chat_history", None)
 
             def _resync() -> None:
                 if isinstance(proactive, ProactiveLoop):
@@ -275,6 +304,9 @@ async def lifespan(app: FastAPI):
                 skills=skills_rt if isinstance(skills_rt, SkillRuntime) else None,
                 schedule_store=getattr(app.state, "schedule_store", None),
                 activity=getattr(app.state, "activity", None),
+                chat_history_store=chat_history_store
+                if isinstance(chat_history_store, ChatHistoryStore)
+                else None,
                 session_id="default",
                 on_schedule_mutated=_resync,
             )
@@ -294,6 +326,15 @@ async def lifespan(app: FastAPI):
         delivery.set_telegram_sender(None)
 
     yield
+
+    history_cleanup_task.cancel()
+    try:
+        await history_cleanup_task
+    except asyncio.CancelledError:
+        pass
+    app.state.chat_history_cleanup_task = None
+    history_store.close()
+    app.state.chat_history = None
 
     tg_stop.set()
     if tg_task is not None:
@@ -410,6 +451,11 @@ def create_app(
     )
     app.state.sessions = SessionStore()
     app.state.voice_runtime = VoiceRuntime()
+    app.state.chat_history = ChatHistoryStore(
+        _chat_history_db_path(settings),
+        retention_days=settings.chat_history_retention_days,
+    )
+    app.state.chat_history_cleanup_task = None
     app.state.memory = None
     app.state.memory_client = None
     app.state.memory_stack = MemoryStack()
@@ -676,6 +722,12 @@ def create_app(
                 )
             else:
                 response = await client.chat(prepared)
+            await persist_chat_history_turn(
+                request.app,
+                session_id=session_id,
+                user_text=user_text,
+                assistant_text=response.content,
+            )
             if memory is not None and memory.enabled and user_text:
                 await memory.persist_turn(
                     session_id=session_id,
@@ -722,6 +774,7 @@ def create_app(
 
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
+    app.include_router(chat_history_router)
 
     # ── P7: capability discovery ───────────────────────────────────────
     app.include_router(capabilities_router)

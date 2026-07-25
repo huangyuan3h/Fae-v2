@@ -33,6 +33,7 @@ from fae.agent.llm_turn import stream_assistant_turn
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_runtime import SkillRuntime
 from fae.api.auth import ensure_ws_client_token
+from fae.api.chat_history import persist_chat_history_turn
 from fae.api.deps import get_llm_client
 from fae.channels.bridge import MissingServerLLMError, merge_chat_request
 from fae.llm import ChatRequest, LLMClient, LLMError
@@ -195,11 +196,18 @@ async def _run_stream(
                 )
             assistant_parts.append(token)
             await _send(ws, {"type": "token", "content": token})
+        assistant_text = "".join(assistant_parts)
+        await persist_chat_history_turn(
+            ws.app,
+            session_id=session_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+        )
         if memory is not None and memory.enabled and user_text:
             await memory.persist_turn(
                 session_id=session_id,
                 user_text=user_text,
-                assistant_text="".join(assistant_parts),
+                assistant_text=assistant_text,
             )
         else:
             activity = getattr(ws.app.state, "activity", None)

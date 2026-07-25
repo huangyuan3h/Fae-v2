@@ -8,6 +8,7 @@ from typing import Any
 from fae.agent.llm_turn import apply_lazy_skill_tool
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_runtime import SkillRuntime
+from fae.chat_history import ChatHistoryStore
 from fae.config import Settings
 from fae.llm import ChatMessage, ChatRequest, LLMClient, LLMConfig, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -89,6 +90,7 @@ async def handle_inbound_text(
     skills: SkillRuntime | None = None,
     schedule_store: ScheduleStore | None = None,
     activity: ActivityTracker | None = None,
+    chat_history_store: ChatHistoryStore | None = None,
     session_id: str = DEFAULT_SESSION_ID,
     on_schedule_mutated: Any | None = None,
 ) -> str:
@@ -179,6 +181,18 @@ async def handle_inbound_text(
         else:
             response = await llm.chat(prepared)
             reply = response.content or ""
+
+        if (
+            chat_history_store is not None
+            and not chat_history_store.closed
+            and user_text
+        ):
+            try:
+                chat_history_store.append(
+                    sid, user_text, reply,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Channel chat history persist failed")
 
         if memory is not None and memory.enabled and user_text:
             await memory.persist_turn(

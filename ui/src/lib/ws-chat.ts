@@ -4,6 +4,9 @@
 import {
   buildWsChatUrl,
   ChatAbortedError,
+  type ChatHistory,
+  type ChatSessionsResponse,
+  type ChatSessionSummary,
   WsChatClient as SdkWsChatClient,
   type LlmConfigInput,
   type NotifyHandler,
@@ -14,9 +17,12 @@ import {
 } from "@fae/client";
 
 import type { AgentConfig } from "./config";
-import { backendHttpBase, clientAccessToken } from "./config";
+import { authHeaders, backendHttpBase, clientAccessToken } from "./config";
 
 export type {
+  ChatHistory,
+  ChatSessionsResponse,
+  ChatSessionSummary,
   NotifyHandler,
   StreamHandlers,
   SubagentHandler,
@@ -65,4 +71,66 @@ export class WsChatClient {
   close(): void {
     this.inner.close();
   }
+}
+
+async function jsonFetch<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const res = await fetch(`${backendHttpBase()}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
+      ...authHeaders(),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`chat history failed: HTTP ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+export async function fetchChatHistory(
+  sessionId: string,
+  opts: { limit?: number; before?: string } = {},
+): Promise<ChatHistory> {
+  const params = new URLSearchParams({ session_id: sessionId });
+  if (opts.limit && opts.limit > 0) {
+    params.set("limit", String(opts.limit));
+  }
+  if (opts.before) {
+    params.set("before", opts.before);
+  }
+  return jsonFetch<ChatHistory>(`/api/chat/history?${params}`);
+}
+
+export async function fetchChatSessions(): Promise<ChatSessionsResponse> {
+  return jsonFetch<ChatSessionsResponse>(`/api/chat/sessions`);
+}
+
+export async function updateChatSessionTitle(
+  sessionId: string,
+  title: string,
+): Promise<ChatSessionSummary> {
+  return jsonFetch<ChatSessionSummary>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    },
+  );
+}
+
+export async function setChatSessionPinned(
+  sessionId: string,
+  pinned: boolean,
+): Promise<ChatSessionSummary> {
+  return jsonFetch<ChatSessionSummary>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/pin`,
+    {
+      method: "POST",
+      body: JSON.stringify({ pinned }),
+    },
+  );
 }

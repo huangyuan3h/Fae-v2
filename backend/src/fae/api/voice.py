@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from fae.chat_history import ChatHistoryStore
 from fae.sessions import SessionStore
 from fae.voice_runtime import VoiceRuntime
 
@@ -107,6 +108,7 @@ async def create_voice_session(
 
         memory = getattr(request.app.state, "memory", None)
         skills = getattr(request.app.state, "skills", None)
+        chat_history_store = getattr(request.app.state, "chat_history", None)
         memory_sid = (body.memory_session_id or "").strip() or "default"
         session.meta["memory_session_id"] = memory_sid
         runtime.spawn(
@@ -122,6 +124,9 @@ async def create_voice_session(
                 memory=memory,
                 session_id=memory_sid,
                 skills=skills,
+                chat_history_store=chat_history_store
+                if isinstance(chat_history_store, ChatHistoryStore)
+                else None,
             ),
         )
         return VoiceSessionOut(

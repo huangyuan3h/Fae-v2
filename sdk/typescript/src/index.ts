@@ -5,6 +5,10 @@ export {
   WsChatClient,
 } from "./ws-chat";
 export type {
+  ChatHistory,
+  ChatHistoryTurn,
+  ChatSessionsResponse,
+  ChatSessionSummary,
   CreateClientOptions,
   FaeCapabilities,
   FaeReady,

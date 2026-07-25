@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
 
+    chat_history_db_path: str = ".data/fae-chat-history.db"
+    chat_history_retention_days: int = Field(default=7, ge=1, le=3650)
+    chat_history_cleanup_interval_s: float = Field(default=3600.0, ge=0.05)
+
     # CORS — comma-separated origins for the Next.js UI
     # Include 3001: Next.js falls back when 3000 is already taken.
     cors_origins: str = (

@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from fae.chat_history import ChatHistoryStore
+
 if TYPE_CHECKING:
     from fae.agent.skills_runtime import SkillRuntime
     from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -91,10 +93,21 @@ async def persist_daily_turn(
     session_id: str,
     user_text: str,
     assistant_text: str,
+    chat_history_store: ChatHistoryStore | None = None,
 ) -> None:
-    if memory is None or not memory.enabled:
-        return
     if not (user_text or "").strip():
+        return
+    if (
+        chat_history_store is not None
+        and not chat_history_store.closed
+    ):
+        try:
+            chat_history_store.append(
+                session_id, user_text, assistant_text or "",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Daily chat history persist failed")
+    if memory is None or not memory.enabled:
         return
     try:
         await memory.persist_turn(
@@ -109,9 +122,19 @@ async def persist_daily_turn(
 def build_memory_turn_processor(
     memory: LettaMemoryService | None,
     session_id: str,
+    *,
+    chat_history_store: ChatHistoryStore | None = None,
 ) -> Any | None:
-    """Return a FrameProcessor that persists completed LLM turns, or None."""
-    if memory is None or not memory.enabled:
+    """Return a FrameProcessor that persists completed LLM turns, or None.
+
+    A processor is returned whenever either memory or chat_history_store can
+    accept writes — memory is optional, history persists regardless.
+    """
+    has_memory = memory is not None and memory.enabled
+    has_history = (
+        chat_history_store is not None and not chat_history_store.closed
+    )
+    if not has_memory and not has_history:
         return None
 
     from pipecat.frames.frames import (
@@ -157,6 +180,7 @@ def build_memory_turn_processor(
                         session_id=session_id,
                         user_text=user,
                         assistant_text=assistant,
+                        chat_history_store=chat_history_store,
                     )
             await self.push_frame(frame, direction)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
+from fae.chat_history import ChatHistoryStore
 from fae.config import Settings
 from fae.pipecat.memory_processor import (
     build_memory_turn_processor,
@@ -36,6 +37,7 @@ async def run_daily_bot(
     memory: LettaMemoryService | None = None,
     session_id: str | None = None,
     skills: object | None = None,
+    chat_history_store: ChatHistoryStore | None = None,
 ) -> None:
     """Join a Daily room and run the voice pipeline until the call ends."""
     from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -123,7 +125,9 @@ async def run_daily_bot(
         ),
     )
 
-    mem_proc = build_memory_turn_processor(memory, sid)
+    mem_proc = build_memory_turn_processor(
+        memory, sid, chat_history_store=chat_history_store,
+    )
     skills_proc = build_skills_turn_processor(skills, sid, context)  # type: ignore[arg-type]
     # Skills rematch after STT / before user aggregator so context is updated
     # before the LLM turn. Memory processor stays after LLM for persist.

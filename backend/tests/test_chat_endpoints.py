@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fae.api import create_app
+from fae.config import Settings
 from fae.llm import LLMClient
 from fae.llm.errors import LLMError
 from fae.llm.provider import FakeProvider, OpenAICompatibleProvider

@@ -27,6 +27,7 @@ services:
       RECALL_DB_PATH: /app/.data/fae-recall.db
       EPISODIC_DB_PATH: /app/.data/fae-episodic.db
       SCHEDULES_DB_PATH: /app/.data/fae-schedules.db
+      CHAT_HISTORY_DB_PATH: /app/.data/fae-chat-history.db
       SKILLS_STATE_PATH: /app/.data/fae-skills-state.json
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
       # When profile tts is enabled, override via compose merge below is not automatic;

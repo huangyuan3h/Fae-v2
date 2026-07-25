@@ -117,6 +117,34 @@ export type FaeReady = {
   letta?: string;
 };
 
+export type ChatHistoryTurn = {
+  id: string;
+  session_id: string;
+  user_text: string;
+  assistant_text: string;
+  created_at: string;
+};
+
+export type ChatHistory = {
+  session_id: string;
+  retention_days: number;
+  turns: ChatHistoryTurn[];
+  has_more: boolean;
+};
+
+export type ChatSessionSummary = {
+  session_id: string;
+  title: string;
+  pinned: boolean;
+  turn_count: number;
+  last_activity_at: string;
+};
+
+export type ChatSessionsResponse = {
+  retention_days: number;
+  sessions: ChatSessionSummary[];
+};
+
 export type CreateClientOptions = {
   /** HTTP base, e.g. http://127.0.0.1:8000 */
   baseUrl: string;

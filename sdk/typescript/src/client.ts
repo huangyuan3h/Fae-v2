@@ -1,4 +1,7 @@
 import type {
+  ChatHistory,
+  ChatSessionsResponse,
+  ChatSessionSummary,
   CreateClientOptions,
   FaeCapabilities,
   FaeReady,
@@ -48,6 +51,80 @@ export class FaeClient {
 
   private authHeaders(): Record<string, string> {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+  }
+
+  async listChatHistory(
+    sessionId: string,
+    opts: { limit?: number; before?: string } = {},
+  ): Promise<ChatHistory> {
+    const params = new URLSearchParams({ session_id: sessionId });
+    if (opts.limit && opts.limit > 0) {
+      params.set("limit", String(opts.limit));
+    }
+    if (opts.before) {
+      params.set("before", opts.before);
+    }
+    const res = await fetch(
+      `${this.baseUrl}/api/chat/history?${params}`,
+      { headers: this.authHeaders() },
+    );
+    if (!res.ok) {
+      throw new Error(`chat history failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as ChatHistory;
+  }
+
+  async listChatSessions(): Promise<ChatSessionsResponse> {
+    const res = await fetch(
+      `${this.baseUrl}/api/chat/sessions`,
+      { headers: this.authHeaders() },
+    );
+    if (!res.ok) {
+      throw new Error(`chat sessions failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as ChatSessionsResponse;
+  }
+
+  async updateChatSessionTitle(
+    sessionId: string,
+    title: string,
+  ): Promise<ChatSessionSummary> {
+    const res = await fetch(
+      `${this.baseUrl}/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...this.authHeaders(),
+        },
+        body: JSON.stringify({ title }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`update session title failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as ChatSessionSummary;
+  }
+
+  async setChatSessionPinned(
+    sessionId: string,
+    pinned: boolean,
+  ): Promise<ChatSessionSummary> {
+    const res = await fetch(
+      `${this.baseUrl}/api/chat/sessions/${encodeURIComponent(sessionId)}/pin`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...this.authHeaders(),
+        },
+        body: JSON.stringify({ pinned }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`pin session failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as ChatSessionSummary;
   }
 
   async getCapabilities(): Promise<FaeCapabilities> {
