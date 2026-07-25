@@ -30,17 +30,31 @@ type VoiceStatus = {
 const PREVIEW_TEXT = "你好，这是语音试听。Hello, this is a voice preview.";
 
 export function VoicePanel() {
-  const [preferDaily, setPreferDaily] = useState<boolean>(() => loadPreferDaily());
+  // SSR / first client render must agree on the initial <select> contents,
+  // otherwise React reports a hydration mismatch on the <option value="...">
+  // children (server says "Vivian", client reads localStorage → "shimmer").
+  // We always seed from DEFAULT_TTS_PREFS, then hydrate from localStorage in
+  // a post-mount effect. This is the same pattern HomeContent uses for its
+  // `mounted` flag.
+  const [preferDaily, setPreferDaily] = useState<boolean>(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<TtsPrefs>(() => loadTtsPrefs());
+  const [prefs, setPrefs] = useState<TtsPrefs>(DEFAULT_TTS_PREFS);
   const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
   const [languages, setLanguages] = useState<string[]>([]);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Post-mount: pull anything persisted in localStorage. Triggers a normal
+    // re-render after hydration, which is safe. Mirrors HomeContent's
+    // `mounted` flag pattern: we always render the SSR-safe default first,
+    // then sync real prefs from localStorage after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration sync
+    setPrefs(loadTtsPrefs());
+    setPreferDaily(loadPreferDaily());
+
     void Promise.all([
       fetch(`${backendHttpBase()}/api/voice/status`, {
         headers: authHeaders(),

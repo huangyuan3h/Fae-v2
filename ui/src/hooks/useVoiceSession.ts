@@ -74,9 +74,11 @@ export function useVoiceSession() {
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>({});
   const [lastVoiceDebug, setLastVoiceDebug] = useState<string | null>(null);
-  const [preferDaily, setPreferDailyState] = useState<boolean>(() =>
-    loadPreferDaily(),
-  );
+  // SSR-safe initial value: localStorage may be `true` on the client but the
+  // server always returns `false` here. Reading the persisted flag inside a
+  // post-mount effect avoids hydration mismatches if a future change ever
+  // surfaces `preferDaily` into the DOM.
+  const [preferDaily, setPreferDailyState] = useState<boolean>(false);
   const [dailyConnected, setDailyConnected] = useState(false);
   const [support] = useState(() => speechSupported());
   // Final transcript queued by the STT callback; consumed by an Effect so the
@@ -174,6 +176,11 @@ export function useVoiceSession() {
       });
 
     // Stale Daily preference (no server key) → clear so mic won't show Daily errors.
+    // First sync the SSR-safe default from localStorage so the UI matches the
+    // user's last selection. Stays inside the effect so SSR/CSR agree on the
+    // initial render before this re-render fires.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration sync
+    setPreferDailyState(loadPreferDaily());
     void fetch(`${backendHttpBase()}/api/voice/status`, {
       headers: authHeaders(),
     })
