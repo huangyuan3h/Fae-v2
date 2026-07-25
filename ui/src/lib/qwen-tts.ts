@@ -1,4 +1,4 @@
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 import { formatNetworkError } from "@/lib/network-error";
 import { chunkForTts, TTS_CHUNK_CHARS } from "@/lib/sentence-agg";
 
@@ -46,13 +46,17 @@ export type TtsVoicesResponse = {
 };
 
 export async function fetchTtsStatus(): Promise<TtsStatus> {
-  const res = await fetch(`${backendHttpBase()}/api/tts/status`);
+  const res = await fetch(`${backendHttpBase()}/api/tts/status`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`TTS status HTTP ${res.status}`);
   return (await res.json()) as TtsStatus;
 }
 
 export async function fetchTtsVoices(): Promise<TtsVoicesResponse> {
-  const res = await fetch(`${backendHttpBase()}/api/tts/voices`);
+  const res = await fetch(`${backendHttpBase()}/api/tts/voices`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`TTS voices HTTP ${res.status}`);
   return (await res.json()) as TtsVoicesResponse;
 }
@@ -107,7 +111,7 @@ async function fetchSpeakBlob(
   try {
     res = await fetch(`${backendHttpBase()}/api/tts/speak`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
     });
   } catch (err) {

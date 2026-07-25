@@ -1,4 +1,4 @@
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 
 export type MemoryFact = {
   id: string;
@@ -77,6 +77,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...(init?.headers || {}),
     },
   });

@@ -9,6 +9,7 @@ import {
   DEFAULT_CONFIG,
   loadConfig,
   saveConfig,
+  authHeaders,
   backendHttpBase,
 } from "@/lib/config";
 import { joinDailyRoom, leaveDailyRoom } from "@/lib/daily-session";
@@ -172,7 +173,9 @@ export function useVoiceSession() {
       });
 
     // Stale Daily preference (no server key) → clear so mic won't show Daily errors.
-    void fetch(`${backendHttpBase()}/api/voice/status`)
+    void fetch(`${backendHttpBase()}/api/voice/status`, {
+      headers: authHeaders(),
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((st: { daily_configured?: boolean } | null) => {
         if (st && !st.daily_configured && loadPreferDaily()) {
@@ -229,7 +232,7 @@ export function useVoiceSession() {
     try {
       await fetch(`${backendHttpBase()}/api/voice/barge-in`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ session_id: id }),
       });
     } catch {
@@ -239,10 +242,6 @@ export function useVoiceSession() {
 
   const connectDaily = useCallback(async (): Promise<boolean> => {
     if (connectingDaily.current || dailyConnected) return dailyConnected;
-    if (!config.apiKey.trim()) {
-      setError("Daily 模式仍需要在 Settings → 模型 中配置 API Key");
-      return false;
-    }
     connectingDaily.current = true;
     setError(null);
     setOrb("thinking");
@@ -380,10 +379,7 @@ export function useVoiceSession() {
 
   const runAssistant = useCallback(
     async (userText: string) => {
-      if (!config.apiKey.trim()) {
-        setError("请先在 Settings → 模型 中配置 API Key");
-        return;
-      }
+      // Browser Key optional — Core merges server DASHSCOPE / PROACTIVE_LLM_*.
       setError(null);
       setOrb("thinking");
       assistantBuf.current = "";

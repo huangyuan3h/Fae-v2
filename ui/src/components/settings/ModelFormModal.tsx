@@ -155,14 +155,18 @@ export function ModelFormModal({ open, initial, onClose, onSave }: Props) {
               {form.type === "ollama" ? "Ollama 配置" : "OpenAI 配置"}
             </legend>
             <label className="grid gap-1 text-xs text-[var(--ink-soft)]">
-              API Key
+              API Key（可选 — 留空则用服务端 Key）
               <input
                 type="password"
                 autoComplete="off"
                 className="rounded-md border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
                 value={form.apiKey}
                 onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-                placeholder={form.type === "ollama" ? "ollama（可留空）" : "sk-…"}
+                placeholder={
+                  form.type === "ollama"
+                    ? "ollama（可留空）"
+                    : "留空 = Core 服务端 Key"
+                }
               />
             </label>
             <label className="grid gap-1 text-xs text-[var(--ink-soft)]">

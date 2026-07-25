@@ -6,7 +6,7 @@
  */
 
 import type { AgentConfig } from "./config";
-import { backendHttpBase } from "./config";
+import { authHeaders, backendHttpBase } from "./config";
 import { formatNetworkError } from "./network-error";
 
 export type VoiceSessionMode = "browser" | "daily";
@@ -29,7 +29,7 @@ export async function createVoiceSession(opts: {
   try {
     res = await fetch(`${backendHttpBase()}/api/voice/session`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         prefer_daily: Boolean(opts.preferDaily),
         llm_api_key: opts.config?.apiKey || null,

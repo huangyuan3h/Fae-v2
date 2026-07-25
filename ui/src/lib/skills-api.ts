@@ -1,4 +1,4 @@
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 
 export type SkillListItem = {
   name: string;
@@ -41,22 +41,26 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json", ...authHeaders() };
+}
+
 export function listSkills() {
-  return fetch(`${backendHttpBase()}/api/skills`).then((r) =>
-    jsonOrThrow<SkillListItem[]>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/skills`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<SkillListItem[]>(r));
 }
 
 export function getSkill(name: string) {
-  return fetch(`${backendHttpBase()}/api/skills/${encodeURIComponent(name)}`).then(
-    (r) => jsonOrThrow<SkillDetail>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/skills/${encodeURIComponent(name)}`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<SkillDetail>(r));
 }
 
 export function putSkill(name: string, markdown: string) {
   return fetch(`${backendHttpBase()}/api/skills/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({ markdown }),
   }).then((r) => jsonOrThrow<SkillDetail>(r));
 }
@@ -67,7 +71,7 @@ export function patchSkill(
 ) {
   return fetch(`${backendHttpBase()}/api/skills/${encodeURIComponent(name)}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(patch),
   }).then((r) => jsonOrThrow<SkillListItem>(r));
 }
@@ -75,7 +79,7 @@ export function patchSkill(
 export function testTrigger(text: string) {
   return fetch(`${backendHttpBase()}/api/skills/test-trigger`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({ text }),
   }).then((r) => jsonOrThrow<TestTriggerResult>(r));
 }

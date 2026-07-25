@@ -1,9 +1,12 @@
-# FAE Core 常驻部署（P6）
+# FAE Core 常驻部署（P6）+ Client 契约（P7）
 
 用瘦栈 `docker-compose.core.yml` 在一台常驻机上跑 **Agent Core**（API + embedded 记忆 + 可选 Telegram / Loop）。  
 全栈开发仍用根目录 `docker-compose.yml`（Letta remote + UI 等）。
 
-浏览器 `/ws/chat` 自动使用服务端 Key 留给 **P7**；本阶段 Telegram / Loop **只认服务端 `.env`**。
+**P7**：浏览器 `/ws/chat` 与 `POST /api/chat` **默认使用服务端 LLM Key**（client 非空 `api_key` 可覆盖）。  
+可选 `FAE_CLIENT_TOKEN`：设了之后 mutating API / WS 需要 Bearer 或 `?access_token=`；`/health` `/ready` `/api/capabilities` 仍公开。
+
+API 兼容策略：不加 `/v1` 前缀；只增字段、不删既有路径。
 
 ---
 
@@ -28,8 +31,9 @@ cp .env.example .env
 |---|---|
 | `LETTA_MODE=embedded` | 记忆落在 volume `/app/.data` |
 | `SCHEDULER_ENABLED=true` | 主动 Loop |
-| `DASHSCOPE_API_KEY` 或 `PROACTIVE_LLM_*` | Telegram / Loop 服务端模型 |
+| `DASHSCOPE_API_KEY` 或 `PROACTIVE_LLM_*` | 服务端模型（Telegram / Loop / **浏览器 chat**） |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | 可选；私聊与主动推送 |
+| `FAE_CLIENT_TOKEN` | 可选；Tailscale 暴露时建议开启 |
 
 3. **启动**
 
@@ -38,18 +42,27 @@ cp .env.example .env
 # 等价：docker compose -f docker-compose.core.yml up -d --build
 ```
 
-可选 TTS stub：`WITH_TTS_STUB=1 ./deploy/scripts/start-core.sh`  
-（或 `docker compose -f docker-compose.core.yml --profile tts up -d --build`，并把 `VLLM_TTS_URL=http://tts:8880/v1` 写入 `.env`）
+可选 TTS stub：`WITH_TTS_STUB=1 ./deploy/scripts/start-core.sh`
 
 4. **就绪检查**
 
 ```bash
 curl -s http://127.0.0.1:8000/ready | jq
+curl -s http://127.0.0.1:8000/api/capabilities | jq
 ```
 
-期望：`status=ready`，`memory=ok`，有 Key 时 `proactive_llm=ok`；配好 Telegram 后 `telegram=ok`。
+期望：`status=ready`，`memory=ok`，有 Key 时 `proactive_llm=ok` / `llm.server_configured=true`。
 
-5. **Telegram 试聊**（若已配置）：私聊 Bot 一句 → 应有回复；重启容器后记忆仍在（named volume `fae-data`）。
+5. **curl 无浏览器 Key 对话**
+
+```bash
+curl -sS http://127.0.0.1:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"config":{"api_key":""},"messages":[{"role":"user","content":"我叫小明"}]}' | jq
+# 若设了 FAE_CLIENT_TOKEN，加：-H "Authorization: Bearer $FAE_CLIENT_TOKEN"
+```
+
+6. **Telegram 试聊**（若已配置）：私聊 Bot → 回复；重启容器后记忆仍在（volume `fae-data`）。
 
 ---
 
@@ -67,34 +80,28 @@ curl -s http://127.0.0.1:8000/ready | jq
 
 ## Tailscale（推荐远程访问）
 
-个人助理优先私有网络，**不默认裸奔公网 webhook**。
-
-1. 在常驻机与笔记本/手机安装 [Tailscale](https://tailscale.com/download)，加入同一 tailnet。
-2. Core 默认监听 `0.0.0.0:8000`；在 tailnet 内用常驻机的 Tailscale IP：`http://100.x.y.z:8000`。
-3. 可选：用 Tailscale ACL / serve 只把 `8000` 暴露给自己的设备；本机防火墙可拒绝非 tailnet 入站。
-4. Telegram 走 Bot API long polling，**不需要**公网 HTTPS；笔记本休眠不影响常驻机上的 Core。
+1. 常驻机与客户端加入同一 [Tailscale](https://tailscale.com/download) tailnet。
+2. 用 Tailscale IP 访问 `:8000`。
+3. 建议设置 `FAE_CLIENT_TOKEN`；UI 用 `NEXT_PUBLIC_FAE_CLIENT_TOKEN` 或 Settings → Models。
+4. Telegram long polling **不需要**公网 HTTPS。
 
 ### 附录：Cloudflare Tunnel
 
-若无 Tailscale：可用 `cloudflared tunnel` 把 `localhost:8000` 映到私有 hostname。仍建议加访问控制，勿把管理面裸奔到公网。
+可用 `cloudflared` 映 `localhost:8000`；勿裸奔公网管理面。
 
 ---
 
-## `/ready` 字段含义
+## `/ready` 与 `/api/capabilities`
 
-| 字段 | 含义 |
+| `/ready` 字段 | 含义 |
 |---|---|
-| `status` | `ready` 或 `degraded`（memory down） |
-| `memory` / `letta` | `ok` / `down` / `off` / `skipped`（`letta` 兼容旧客户端） |
-| `scheduler` | Loop：`ok` / `down` / `off`（`SCHEDULER_ENABLED`） |
-| `telegram` | `ok` / `down` / `off` / `misconfigured`（缺 token/chat_id） |
-| `proactive_llm` | 服务端 Key：`ok` / `misconfigured` |
+| `status` | `ready` 或 `degraded`（memory down → HTTP 503） |
+| `memory` / `letta` | `ok` / `down` / `off` / `skipped` |
+| `scheduler` | `ok` / `down` / `off` |
+| `telegram` | `ok` / `down` / `off` / `misconfigured` |
+| `proactive_llm` | `ok` / `misconfigured` |
 
-HTTP：**memory=`down` → 503**；仅 Telegram misconfigured **不** 503（进程仍可服务其它通道）。
-
-```bash
-curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:8000/ready
-```
+`GET /api/capabilities`：channels / modes / tools / `llm.server_configured` / `auth.client_token_required`（不回传密钥）。
 
 ---
 
@@ -103,18 +110,14 @@ curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:8000/ready
 ```bash
 docker compose -f docker-compose.core.yml logs -f backend
 docker compose -f docker-compose.core.yml restart backend
-docker compose -f docker-compose.core.yml down    # 保留 volume
-# 危险：连数据一起删
-# docker compose -f docker-compose.core.yml down -v
+docker compose -f docker-compose.core.yml down
 ```
 
-OpenAPI：`http://127.0.0.1:8000/docs`
+OpenAPI：`http://127.0.0.1:8000/docs`  
+薄 TS SDK：[`sdk/typescript`](../sdk/typescript)（`@fae/client`）
 
 ---
 
-## 本阶段明确不做（P7+）
+## 延后（P8+）
 
-- 浏览器聊天自动注入服务端 Key、去掉 UI localStorage
-- 默认全栈 compose 改为 embedded
-- 真 Qwen3-TTS GPU 镜像强塞进 core compose（本机仍用 `scripts/tts/run.sh`）
-- LiveKit / 公网裸奔 webhook
+OAuth、`/v1` 前缀、完整 SDK REST 面、GPU TTS 进 core compose、LiveKit。

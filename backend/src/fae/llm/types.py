@@ -22,7 +22,10 @@ class LLMConfig(BaseModel):
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         description="OpenAI-compatible base URL (include /v1).",
     )
-    api_key: str = Field(min_length=1, description="Provider API key.")
+    api_key: str = Field(
+        default="",
+        description="Provider API key (optional when server DASHSCOPE/PROACTIVE_LLM is set).",
+    )
     model: str = Field(default="qwen3-max", description="Model name to invoke.")
     # MiniMax-M3 / compatible: auto=omit, disabled|adaptive → extra_body.thinking.type
     thinking: Literal["auto", "disabled", "adaptive"] = Field(

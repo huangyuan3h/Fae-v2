@@ -23,6 +23,14 @@ NO_LLM_REPLY = (
 )
 
 
+class MissingServerLLMError(Exception):
+    """Neither client nor server provided a usable LLM API key."""
+
+    def __init__(self, message: str = NO_LLM_REPLY) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 def resolve_server_llm_config(settings: Settings) -> LLMConfig | None:
     """Server-side model for channels / proactive (never browser localStorage)."""
     key = (
@@ -36,6 +44,40 @@ def resolve_server_llm_config(settings: Settings) -> LLMConfig | None:
     )
     model = (settings.proactive_llm_model or "").strip() or "qwen3-max"
     return LLMConfig(api_key=key, base_url=base, model=model)
+
+
+def merge_llm_config(config: LLMConfig, settings: Settings) -> LLMConfig:
+    """Client non-empty fields win; otherwise fill from server env.
+
+    Raises MissingServerLLMError when no API key is available after merge.
+    """
+    server = resolve_server_llm_config(settings)
+    api_key = (config.api_key or "").strip()
+    base_url = (config.base_url or "").strip()
+    model = (config.model or "").strip()
+
+    if not api_key:
+        if server is None:
+            raise MissingServerLLMError()
+        api_key = server.api_key
+    if not base_url:
+        base_url = (
+            server.base_url
+            if server is not None
+            else "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+    if not model:
+        model = server.model if server is not None else "qwen3-max"
+
+    return config.model_copy(
+        update={"api_key": api_key, "base_url": base_url, "model": model}
+    )
+
+
+def merge_chat_request(request: ChatRequest, settings: Settings) -> ChatRequest:
+    """Return a ChatRequest whose config has an effective API key."""
+    merged = merge_llm_config(request.config, settings)
+    return request.model_copy(update={"config": merged})
 
 
 async def handle_inbound_text(

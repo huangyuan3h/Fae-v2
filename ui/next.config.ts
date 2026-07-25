@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // Monorepo: root has package-lock.json; ui has pnpm-lock.yaml.
   outputFileTracingRoot: path.join(__dirname, ".."),
+  transpilePackages: ["@fae/client"],
 };
 
 export default nextConfig;

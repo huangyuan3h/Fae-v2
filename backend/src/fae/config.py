@@ -147,6 +147,9 @@ class Settings(BaseSettings):
     subagent_enabled: bool = True
     subagent_timeout_s: float = Field(default=60.0, ge=5.0, le=600.0)
 
+    # Client auth (P7) — empty disables; when set, required on mutating API / WS
+    fae_client_token: str = ""
+
     # Security
     secret_key: str = "change-me"
 

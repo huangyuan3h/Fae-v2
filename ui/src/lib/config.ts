@@ -9,6 +9,7 @@ export type AgentConfig = {
 };
 
 const STORAGE_KEY = "fae.agentConfig";
+const CLIENT_TOKEN_KEY = "fae.clientToken";
 
 export const DEFAULT_CONFIG: AgentConfig = {
   baseUrl:
@@ -46,4 +47,29 @@ export function backendWsBase(): string {
   const http = backendHttpBase();
   if (http.startsWith("https://")) return http.replace("https://", "wss://");
   return http.replace("http://", "ws://");
+}
+
+/** Optional FAE_CLIENT_TOKEN — env or localStorage override. */
+export function clientAccessToken(): string {
+  if (typeof window !== "undefined") {
+    try {
+      const local = localStorage.getItem(CLIENT_TOKEN_KEY);
+      if (local?.trim()) return local.trim();
+    } catch {
+      /* ignore */
+    }
+  }
+  return (process.env.NEXT_PUBLIC_FAE_CLIENT_TOKEN || "").trim();
+}
+
+export function saveClientAccessToken(token: string): void {
+  if (typeof window === "undefined") return;
+  const t = token.trim();
+  if (!t) localStorage.removeItem(CLIENT_TOKEN_KEY);
+  else localStorage.setItem(CLIENT_TOKEN_KEY, t);
+}
+
+export function authHeaders(): Record<string, string> {
+  const t = clientAccessToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
 }

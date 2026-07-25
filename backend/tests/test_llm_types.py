@@ -18,9 +18,10 @@ def test_llm_config_defaults() -> None:
     assert cfg.model == "qwen3-max"
 
 
-def test_llm_config_rejects_empty_api_key() -> None:
-    with pytest.raises(ValidationError):
-        LLMConfig(api_key="")
+def test_llm_config_allows_empty_api_key() -> None:
+    """Empty key is valid inbound; merge fills from server before calling provider."""
+    cfg = LLMConfig(api_key="")
+    assert cfg.api_key == ""
 
 
 def test_chat_message_accepts_all_roles() -> None:

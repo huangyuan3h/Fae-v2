@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 import {
   fetchTtsStatus,
   fetchTtsVoices,
@@ -44,7 +44,9 @@ export function VoicePanel() {
     setPreferDaily(loadPreferDaily());
     setPrefs(loadTtsPrefs());
     void Promise.all([
-      fetch(`${backendHttpBase()}/api/voice/status`).then(async (res) => {
+      fetch(`${backendHttpBase()}/api/voice/status`, {
+        headers: authHeaders(),
+      }).then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as VoiceStatus;
       }),

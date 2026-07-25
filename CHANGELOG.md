@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 — 2026-07-19 (P7 Client contract)
+
+Thin-client contract: server LLM key default for chat, capability discovery, optional client token, reference Web UI, `@fae/client` SDK.
+
+### Highlights
+
+- **LLM merge**: empty client `api_key` → `DASHSCOPE` / `PROACTIVE_LLM_*` on `/api/chat`, `/ws/chat`, `/api/test-connection`
+- **`GET /api/capabilities`**: channels / modes / tools / server LLM / auth flags
+- **`FAE_CLIENT_TOKEN`**: optional Bearer (or WS `access_token`); health/ready/capabilities stay public
+- **Web Reference Client**: no browser Key required to chat; Models Key is optional override
+- **`sdk/typescript` (`@fae/client`)**: `createClient` / `chatStream` / `getCapabilities` / notifications hook
+
+### Notes
+
+- API compatibility: additive fields only; no `/v1` prefix yet
+- OAuth, full REST SDK coverage, and device binding productization deferred
+
 ## 0.3.0 — 2026-07-19 (P6 Core always-on)
 
 Always-on Agent Core deploy path: slim compose, richer `/ready`, Tailscale-oriented docs, GitHub Release.

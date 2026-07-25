@@ -1,4 +1,4 @@
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 
 export type NotificationItem = {
   id: string;
@@ -34,25 +34,29 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json", ...authHeaders() };
+}
+
 export function listNotifications(unreadOnly = false) {
   const q = unreadOnly ? "?unread_only=true" : "";
-  return fetch(`${backendHttpBase()}/api/notifications${q}`).then((r) =>
-    jsonOrThrow<{ items: NotificationItem[] }>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/notifications${q}`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<{ items: NotificationItem[] }>(r));
 }
 
 export function markNotificationsRead(ids?: string[]) {
   return fetch(`${backendHttpBase()}/api/notifications/read`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({ ids: ids ?? null }),
   }).then((r) => jsonOrThrow<{ ok: boolean; updated: number }>(r));
 }
 
 export function getNotificationPrefs() {
-  return fetch(`${backendHttpBase()}/api/notifications/prefs`).then((r) =>
-    jsonOrThrow<NotificationPrefs>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/notifications/prefs`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<NotificationPrefs>(r));
 }
 
 export function putNotificationPrefs(
@@ -68,21 +72,21 @@ export function putNotificationPrefs(
 ) {
   return fetch(`${backendHttpBase()}/api/notifications/prefs`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(prefs),
   }).then((r) => jsonOrThrow<NotificationPrefs>(r));
 }
 
 export function getVapidPublicKey() {
-  return fetch(`${backendHttpBase()}/api/notifications/vapid-public-key`).then((r) =>
-    jsonOrThrow<{ publicKey: string }>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/notifications/vapid-public-key`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<{ publicKey: string }>(r));
 }
 
 export function subscribePush(subscription: PushSubscriptionJSON) {
   return fetch(`${backendHttpBase()}/api/notifications/subscribe`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       endpoint: subscription.endpoint,
       keys: subscription.keys,
@@ -93,7 +97,7 @@ export function subscribePush(subscription: PushSubscriptionJSON) {
 export function unsubscribePush(endpoint: string) {
   return fetch(`${backendHttpBase()}/api/notifications/subscribe`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({ endpoint, keys: { p256dh: "-", auth: "-" } }),
   }).then((r) => jsonOrThrow<{ ok: boolean }>(r));
 }

@@ -102,6 +102,8 @@ below 80%, the test run fails until more tests are added.
 |--------|-----------------------|--------------------------------------------|
 | GET    | /health               | Liveness probe                             |
 | GET    | /ready                | Readiness: memory/scheduler/telegram/proactive_llm |
+| GET    | /api/capabilities     | Discover channels/modes/tools (P7)         |
+| POST   | /api/test-connection  | Probe LLM (empty key → server)             |
 | POST   | /api/test-connection  | Probe an LLM provider (1-token, temp=0)    |
 | POST   | /api/chat             | Synchronous text-only chat completion      |
 | WS     | /ws/chat              | Streaming chat over WebSocket (Checkpoint 3) |

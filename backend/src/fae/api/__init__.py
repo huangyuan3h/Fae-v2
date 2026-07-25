@@ -24,6 +24,7 @@ from pathlib import Path
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_loader import default_skills_dir
 from fae.agent.skills_runtime import SkillRuntime
+from fae.api.capabilities import router as capabilities_router
 from fae.api.deps import get_llm_client
 from fae.api.memory import router as memory_router
 from fae.api.notifications import router as notifications_router
@@ -34,7 +35,14 @@ from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
-from fae.channels.bridge import handle_inbound_text, resolve_server_llm_config
+from fae.api.auth import require_client_token_http
+from fae.channels.bridge import (
+    MissingServerLLMError,
+    handle_inbound_text,
+    merge_chat_request,
+    merge_llm_config,
+    resolve_server_llm_config,
+)
 from fae.channels.telegram import TelegramClient, telegram_poll_loop, telegram_ready
 from fae.config import REPO_ROOT, Settings, get_settings
 from fae.llm import (
@@ -393,7 +401,7 @@ def create_app(
     settings = settings or get_settings()
     app = FastAPI(
         title="FAE-v2 Backend",
-        version="0.3.0",
+        version="0.4.0",
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -444,6 +452,14 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def client_token_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        try:
+            require_client_token_http(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return await call_next(request)
 
     # ── Checkpoint 1 endpoints ────────────────────────────────────────
     @app.get("/health")
@@ -522,17 +538,26 @@ def create_app(
     @app.post("/api/test-connection", response_model=dict[str, str])
     async def test_connection(
         config: LLMConfig,
+        request: Request,
         client: Annotated[LLMClient, Depends(get_llm_client)],
     ) -> dict[str, str]:
         """Send a 1-token probe to verify the provider is reachable
         and the API key is valid."""
+        settings = request.app.state.settings
         try:
-            content = await client.test_connection(config)
+            effective = merge_llm_config(config, settings)
+        except MissingServerLLMError as e:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "no_llm", "message": e.message},
+            ) from e
+        try:
+            content = await client.test_connection(effective)
         except LLMError as e:
             raise _llm_error_to_http(e) from e
         return {
             "status": "ok",
-            "model": config.model,
+            "model": effective.model,
             "echo": content,
         }
 
@@ -561,6 +586,13 @@ def create_app(
                 break
         try:
             settings = request.app.state.settings
+            try:
+                body = merge_chat_request(body, settings)
+            except MissingServerLLMError as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "no_llm", "message": e.message},
+                ) from e
             prepared, activation, default_city = await prepare_chat_request(
                 body,
                 session_id=session_id,
@@ -677,6 +709,9 @@ def create_app(
 
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
+
+    # ── P7: capability discovery ───────────────────────────────────────
+    app.include_router(capabilities_router)
 
     # ── Phase 1.3: text pipeline smoke ─────────────────────────────────
     app.include_router(pipeline_router)

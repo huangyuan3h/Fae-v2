@@ -70,14 +70,16 @@ def test_test_connection_maps_timeout_to_504() -> None:
     assert resp.status_code == 504
 
 
-def test_test_connection_rejects_empty_api_key(client: TestClient) -> None:
-    """The endpoint uses LLMConfig which validates api_key length."""
+def test_test_connection_empty_api_key_without_server_returns_503(
+    client: TestClient,
+) -> None:
+    """Empty key is accepted by schema; merge fails when server has no key."""
     resp = client.post(
         "/api/test-connection",
         json={"base_url": "https://x", "api_key": "", "model": "m"},
     )
-    assert resp.status_code == 422
-
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "no_llm"
 
 def test_create_app_binds_llm_client_on_app_state() -> None:
     """Each create_app() owns its own LLMClient on app.state — no globals."""

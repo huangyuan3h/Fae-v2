@@ -1,4 +1,4 @@
-import { backendHttpBase } from "@/lib/config";
+import { authHeaders, backendHttpBase } from "@/lib/config";
 
 export type ScheduleJob = {
   id: string;
@@ -32,8 +32,14 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json", ...authHeaders() };
+}
+
 export function listSchedules() {
-  return fetch(`${backendHttpBase()}/api/schedules`).then((r) =>
+  return fetch(`${backendHttpBase()}/api/schedules`, {
+    headers: authHeaders(),
+  }).then((r) =>
     jsonOrThrow<{ jobs: ScheduleJob[]; scheduler_enabled: boolean }>(r),
   );
 }
@@ -41,7 +47,7 @@ export function listSchedules() {
 export function parseSchedule(text: string) {
   return fetch(`${backendHttpBase()}/api/schedules/parse`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify({ text }),
   }).then((r) =>
     jsonOrThrow<{
@@ -63,7 +69,7 @@ export function createSchedule(payload: {
 }) {
   return fetch(`${backendHttpBase()}/api/schedules`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   }).then((r) => jsonOrThrow<ScheduleJob>(r));
 }
@@ -74,7 +80,7 @@ export function patchSchedule(
 ) {
   return fetch(`${backendHttpBase()}/api/schedules/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   }).then((r) => jsonOrThrow<ScheduleJob>(r));
 }
@@ -82,13 +88,14 @@ export function patchSchedule(
 export function deleteSchedule(id: string) {
   return fetch(`${backendHttpBase()}/api/schedules/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   }).then((r) => jsonOrThrow<{ ok: boolean }>(r));
 }
 
 export function triggerSchedule(id: string) {
   return fetch(
     `${backendHttpBase()}/api/schedules/${encodeURIComponent(id)}/trigger`,
-    { method: "POST" },
+    { method: "POST", headers: authHeaders() },
   ).then((r) => jsonOrThrow<{ ok: boolean; id: string }>(r));
 }
 
@@ -109,7 +116,7 @@ export type SchedulerStatus = {
 };
 
 export function getSchedulerStatus() {
-  return fetch(`${backendHttpBase()}/api/scheduler/status`).then((r) =>
-    jsonOrThrow<SchedulerStatus>(r),
-  );
+  return fetch(`${backendHttpBase()}/api/scheduler/status`, {
+    headers: authHeaders(),
+  }).then((r) => jsonOrThrow<SchedulerStatus>(r));
 }

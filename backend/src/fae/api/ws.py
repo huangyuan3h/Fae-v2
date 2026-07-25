@@ -32,7 +32,9 @@ from starlette.websockets import WebSocketState
 from fae.agent.llm_turn import stream_assistant_turn
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_runtime import SkillRuntime
+from fae.api.auth import ensure_ws_client_token
 from fae.api.deps import get_llm_client
+from fae.channels.bridge import MissingServerLLMError, merge_chat_request
 from fae.llm import ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.activity import ActivityTracker
@@ -218,6 +220,8 @@ async def ws_chat(
     client: Annotated[LLMClient, Depends(get_llm_client)],
 ) -> None:
     """Streaming chat over WebSocket."""
+    if not await ensure_ws_client_token(websocket):
+        return
     await websocket.accept()
     active: asyncio.Task[None] | None = None
     stream_cancel: asyncio.Event | None = None
@@ -285,6 +289,21 @@ async def ws_chat(
                         },
                     )
                     continue
+
+                settings = getattr(websocket.app.state, "settings", None)
+                if settings is not None:
+                    try:
+                        request = merge_chat_request(request, settings)
+                    except MissingServerLLMError as e:
+                        await _send(
+                            websocket,
+                            {
+                                "type": "error",
+                                "code": "no_llm",
+                                "message": e.message,
+                            },
+                        )
+                        continue
 
                 session_id = _resolve_session_id(
                     raw, request, connection_session_id

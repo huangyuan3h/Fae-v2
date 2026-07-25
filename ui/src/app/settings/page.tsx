@@ -36,7 +36,10 @@ function SettingsInner() {
           Settings
         </h1>
         <p className="mt-1 text-sm text-[var(--ink-soft)]">
-          人设、重要信息、模型与语音；密钥仅保存在本机浏览器。
+          Reference Client：密钥可选；常驻 Core 用服务端{" "}
+          <code className="text-[11px]">DASHSCOPE</code> /{" "}
+          <code className="text-[11px]">PROACTIVE_LLM_*</code>。见{" "}
+          <code className="text-[11px]">doc/DEPLOY.md</code>。
         </p>
       </header>
 

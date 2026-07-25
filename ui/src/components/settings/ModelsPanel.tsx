@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ModelFormModal, type ModelFormValues } from "@/components/settings/ModelFormModal";
-import { backendHttpBase } from "@/lib/config";
+import {
+  authHeaders,
+  backendHttpBase,
+  clientAccessToken,
+  saveClientAccessToken,
+} from "@/lib/config";
 import {
   deleteModelProfile,
   getActiveModelId,
@@ -14,6 +19,12 @@ import {
   type ModelProfile,
 } from "@/lib/models";
 
+type CapsLlm = {
+  llm?: { server_configured?: boolean };
+  auth?: { client_token_required?: boolean };
+  status?: { proactive_llm?: string };
+};
+
 export function ModelsPanel() {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -21,6 +32,9 @@ export function ModelsPanel() {
   const [editing, setEditing] = useState<ModelProfile | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [serverLlm, setServerLlm] = useState<string>("…");
+  const [tokenRequired, setTokenRequired] = useState(false);
+  const [clientToken, setClientToken] = useState("");
 
   const refresh = useCallback(() => {
     setProfiles(listModelProfiles());
@@ -29,7 +43,27 @@ export function ModelsPanel() {
 
   useEffect(() => {
     refresh();
+    setClientToken(clientAccessToken());
   }, [refresh]);
+
+  useEffect(() => {
+    void fetch(`${backendHttpBase()}/api/capabilities`)
+      .then(async (res) => {
+        if (!res.ok) {
+          setServerLlm("不可用");
+          return;
+        }
+        const data = (await res.json()) as CapsLlm;
+        const ok = Boolean(data.llm?.server_configured);
+        setServerLlm(
+          ok
+            ? `已配置（${data.status?.proactive_llm ?? "ok"}）`
+            : "未配置 — 请在 Core .env 设置 DASHSCOPE_API_KEY / PROACTIVE_LLM_*",
+        );
+        setTokenRequired(Boolean(data.auth?.client_token_required));
+      })
+      .catch(() => setServerLlm("无法连接 Core"));
+  }, []);
 
   const active = profiles.find((p) => p.id === activeId) ?? profiles[0] ?? null;
 
@@ -75,21 +109,15 @@ export function ModelsPanel() {
 
   const testConnection = async (profile?: ModelProfile | null) => {
     const target = profile ?? active;
-    if (!target) {
-      setStatus("请先添加模型配置");
-      return;
-    }
-    const cfg = profileToConfig(target);
-    if (!cfg.apiKey.trim()) {
-      setStatus("请先填写 API Key");
-      return;
-    }
+    const cfg = target
+      ? profileToConfig(target)
+      : { baseUrl: "", apiKey: "", model: "", thinking: "disabled" as const };
     setBusy(true);
     setStatus("测试中…");
     try {
       const res = await fetch(`${backendHttpBase()}/api/test-connection`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           base_url: cfg.baseUrl,
           api_key: cfg.apiKey,
@@ -100,13 +128,20 @@ export function ModelsPanel() {
       const data = (await res.json().catch(() => ({}))) as {
         status?: string;
         echo?: string;
-        detail?: string;
+        detail?: string | { code?: string; message?: string };
       };
       if (!res.ok) {
-        setStatus(data.detail || `连接失败 (${res.status})`);
+        const detail =
+          typeof data.detail === "string"
+            ? data.detail
+            : data.detail?.message || `连接失败 (${res.status})`;
+        setStatus(detail);
         return;
       }
-      setStatus(`连接成功 · ${data.echo || target.model}`);
+      setStatus(
+        `连接成功 · ${data.echo || target?.model || "server"}` +
+          (cfg.apiKey.trim() ? "" : "（服务端 Key）"),
+      );
     } catch (e) {
       setStatus(e instanceof Error ? e.message : String(e));
     } finally {
@@ -125,13 +160,15 @@ export function ModelsPanel() {
             模型配置
           </h2>
           <p className="mt-1 text-sm text-[var(--ink-soft)]">
-            管理 OpenAI / Ollama 配置，选择当前对话使用的模型。
+            浏览器 Key 为可选覆盖；常驻 Core 对话默认使用服务端 Key。
           </p>
           <p className="mt-1 text-xs text-[var(--ink-soft)]">
-            主动 Loop 使用服务端{" "}
+            Server LLM：<span className="font-medium text-[var(--ink)]">{serverLlm}</span>
+          </p>
+          <p className="mt-1 text-xs text-[var(--ink-soft)]">
+            主动 Loop / Telegram 使用服务端{" "}
             <code className="text-[11px]">PROACTIVE_LLM_*</code> /{" "}
-            <code className="text-[11px]">DASHSCOPE_API_KEY</code>
-            ，不会读取此处浏览器 Key。
+            <code className="text-[11px]">DASHSCOPE_API_KEY</code>。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -144,7 +181,7 @@ export function ModelsPanel() {
           </button>
           <button
             type="button"
-            disabled={busy || !active}
+            disabled={busy}
             onClick={() => void testConnection()}
             className="rounded-full border border-black/15 bg-white/60 px-3 py-2 text-sm disabled:opacity-50"
           >
@@ -171,9 +208,24 @@ export function ModelsPanel() {
             </span>
           </span>
         ) : (
-          <span className="text-[var(--ink-soft)]">尚未配置</span>
+          <span className="text-[var(--ink-soft)]">未配置本地模型 — 将使用服务端默认</span>
         )}
       </div>
+
+      {(tokenRequired || clientToken) && (
+        <label className="mt-3 grid gap-1 text-xs text-[var(--ink-soft)]">
+          Client token（FAE_CLIENT_TOKEN）
+          <input
+            type="password"
+            autoComplete="off"
+            className="rounded-md border border-black/10 bg-white/70 px-3 py-2 text-sm"
+            value={clientToken}
+            onChange={(e) => setClientToken(e.target.value)}
+            onBlur={() => saveClientAccessToken(clientToken)}
+            placeholder={tokenRequired ? "Core 要求 Bearer token" : "可选"}
+          />
+        </label>
+      )}
 
       {status && (
         <p className="mt-2 text-sm text-[var(--ink-soft)]" role="status">
@@ -197,7 +249,7 @@ export function ModelsPanel() {
             {profiles.length === 0 && (
               <tr>
                 <td colSpan={6} className="py-8 text-center text-[var(--ink-soft)]">
-                  还没有模型配置，点击「添加」开始。
+                  还没有本地模型配置；可直接依赖服务端 Key，或点击「添加」。
                 </td>
               </tr>
             )}

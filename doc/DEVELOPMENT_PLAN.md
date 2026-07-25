@@ -76,8 +76,8 @@
 |---|---|---|---|
 | P0～P5.2 | 骨架 + 质量 + 多端首版 | 已归档 | `v0.2.0` |
 | **P6** | **Core 常驻 & 快速部署** | ✅ 完成 | 一台机器 compose up → API 可用；GitHub Release `v0.3.0` |
-| **P7** | **Client 契约 & 壳化** | **下一主线** | 任意 client 只依赖 OpenAPI/WS；Web 降级为参考壳 |
-| **P8** | **Tool Runtime & 连接器** | 待开始 | 插件式工具 + 权限；接 3～5 个你真用的工具 |
+| **P7** | **Client 契约 & 壳化** | ✅ 完成 | 任意 client 只依赖 OpenAPI/WS；Web 降级为参考壳；`v0.4.0` |
+| **P8** | **Tool Runtime & 连接器** | **下一主线** | 插件式工具 + 权限；接 3～5 个你真用的工具 |
 | **P9** | **任务可靠性 & 主动助理** | 待开始 | 长任务状态、失败可追、外出也能闭环 |
 | **P10** | **可选增强** | 按需 | 本地 ASR、更深语音、第二 channel、MCP 适配器 |
 
@@ -99,23 +99,23 @@
 
 ---
 
-### P7 · Client 契约 & 壳化 ← 下一主线
+### P7 · Client 契约 & 壳化 ✅
 
 **为什么**：FE 必须可替换；否则永远困在 Next 页。
 
-- [ ] **稳定 API 面**（版本前缀或明确兼容策略）：
-  - 对话：HTTP chat + WS stream（已有）
-  - 记忆 / skills / schedules / notifications（已有，需契约测试）
-  - **能力发现**：`GET /api/capabilities`（channels、tools、modes）
-- [ ] **会话与身份（个人级）**：`session_id` / device binding；可选简单 token（不是完整 OAuth 平台）
-- [ ] **Web UI 降级为 Reference Client**：只消费公开 API；去掉「必须本机」假设
-- [ ] **Client SDK（薄）**：TypeScript 一小包（connect / chat / onNotification），Telegram 已是第二 client 样板
+- [x] **稳定 API 面**（兼容策略：只增不删路径，暂不加 `/v1`）：
+  - 对话：HTTP chat + WS stream；服务端 Key 默认 merge
+  - 记忆 / skills / schedules / notifications（UI 带可选 Bearer）
+  - **能力发现**：`GET /api/capabilities`
+- [x] **会话与身份（个人级）**：`session_id`；可选 `FAE_CLIENT_TOKEN`（非 OAuth）
+- [x] **Web UI 降级为 Reference Client**：无浏览器 Key 可聊；Models Key 为可选覆盖
+- [x] **Client SDK（薄）**：[`sdk/typescript`](../sdk/typescript) `@fae/client`（connect / chatStream / capabilities / notifications）
 
-**验收（M7）**：用 curl + Telegram 完成「对话 → 记忆 → 提醒」全链路；Web 关掉也不影响 Core。
+**验收（M7）**：用 curl + Telegram 完成「对话 → 记忆」；Web 关掉也不影响 Core。
 
 ---
 
-### P8 · Tool Runtime & 连接器
+### P8 · Tool Runtime & 连接器 ← 下一主线
 
 **为什么**：这是「各种各样工具」的真正上限。
 
@@ -177,10 +177,9 @@
 
 ## 6. 近期执行顺序（建议）
 
-1. **P7** Client 契约 & Web 壳化 ← 当前主线
-2. **P8** 按你真实工具清单接连接器（先 3 个最高频）
-3. **P9** 任务可靠性，闭环「外出一天」
-4. P10 按痛点插入
+1. **P8** 按你真实工具清单接连接器（先 3 个最高频） ← 当前主线
+2. **P9** 任务可靠性，闭环「外出一天」
+3. P10 按痛点插入
 
 ---
 
@@ -190,11 +189,11 @@
 |---|---|---|
 | M0～M5.2 | 见归档计划 / `v0.2.0` | 完成 |
 | **M6** | 常驻 Core + 快速部署 + 远程 Telegram 闭环 | ✅ `v0.3.0` |
-| **M7** | 无 Web 也可完整使用（API + 至少一 IM client） | 下一主线 |
-| **M8** | ≥3 个个人真实工具 + 权限 | 待定 |
+| **M7** | 无 Web 也可完整使用（API + 至少一 IM client） | ✅ `v0.4.0` |
+| **M8** | ≥3 个个人真实工具 + 权限 | 下一主线 |
 | **M9** | 外出一天仅靠手机办完提醒/记忆/一工具任务 | 待定 |
 
 ---
 
-**最后更新**：2026-07-19（P6 / M6 完成）  
+**最后更新**：2026-07-19（P7 / M7 完成）  
 **关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`DEPLOY.md`](./DEPLOY.md) · [`archive/DEVELOPMENT_PLAN_through_v0.2.md`](./archive/DEVELOPMENT_PLAN_through_v0.2.md) · [`../CHANGELOG.md`](../CHANGELOG.md) · [`../README.md`](../README.md)
