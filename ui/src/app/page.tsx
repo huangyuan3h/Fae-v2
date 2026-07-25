@@ -46,9 +46,20 @@ function HomeContent() {
   } = useVoiceSession();
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<ModelProfile | null>(null);
+  // Gate browser-only output behind a post-mount flag so the server-rendered
+  // HTML and the first client render stay identical. `speechSupported()`
+  // returns `stt:false` on the server (no `window`) but `stt:true` in Chrome,
+  // which would otherwise cause a hydration mismatch when the STT warning
+  // appears/disappears between SSR and client.
+  const [mounted, setMounted] = useState(false);
   const debug = search.get("debug") === "1";
 
   useEffect(() => {
+    // Post-mount flip so browser-only output (e.g. the STT warning that
+    // depends on `window.SpeechRecognition`) is only rendered after the
+    // client has hydrated, eliminating SSR/CSR divergence on first paint.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot mount flag
+    setMounted(true);
     const refresh = () => setActive(getActiveProfile());
     refresh();
     window.addEventListener(CONFIG_CHANGED_EVENT, refresh);
@@ -137,7 +148,7 @@ function HomeContent() {
         )}
       </div>
 
-      {!support.stt && (
+      {mounted && !support.stt && (
         <p className="mt-3 text-xs text-[var(--ink-soft)]">
           当前环境无 Web Speech STT，请用文字输入（推荐 Chrome）。
         </p>
