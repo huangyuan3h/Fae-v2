@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("fae.agent.skills")
 
+_MAX_TOOL_ROUNDS = 6
+
 _SCHEDULE_TOOL_NAMES = {
     "schedule_create_job",
     "list_jobs",
@@ -106,10 +108,41 @@ def _tool_result_message(tool_name: str, result: str) -> ChatMessage:
         role="system",
         content=(
             f'<tool_result name="{tool_name}">\n{result}\n</tool_result>\n'
-            "Use this live tool data to answer the user. "
-            "Do not claim you lack access to this information."
+            "Use this tool result to continue the task. If more tool actions are "
+            "needed, call the next tool. Never claim an action succeeded when the "
+            "result reports an error."
         ),
     )
+
+
+async def _dispatch_coding_tool(
+    tool_name: str,
+    arguments: str,
+    *,
+    workspace_root: str,
+    filesystem_enabled: bool,
+    bash_enabled: bool,
+    bash_timeout_s: float,
+    git_enabled: bool,
+    git_timeout_s: float,
+) -> str | None:
+    if tool_name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled:
+        return dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
+    if tool_name in _BASH_TOOL_NAMES and bash_enabled:
+        return await dispatch_bash_tool(
+            tool_name,
+            arguments,
+            root=workspace_root,
+            timeout_s=bash_timeout_s,
+        )
+    if tool_name in _GIT_TOOL_NAMES and git_enabled:
+        return await dispatch_git_tool(
+            tool_name,
+            arguments,
+            root=workspace_root,
+            timeout_s=git_timeout_s,
+        )
+    return None
 
 
 async def apply_lazy_skill_tool(
@@ -156,8 +189,53 @@ async def apply_lazy_skill_tool(
     if not tools:
         return request, activation, None
 
-    probe_req = request.model_copy(update={"tools": tools, "tool_choice": "auto"})
-    probe: ChatResponse = await client.chat(probe_req)
+    probe_request = request
+    for _round in range(_MAX_TOOL_ROUNDS):
+        probe_req = probe_request.model_copy(
+            update={"tools": tools, "tool_choice": "auto"}
+        )
+        probe: ChatResponse = await client.chat(probe_req)
+        coding_calls = [
+            tc
+            for tc in probe.tool_calls
+            if tc.name in _FILESYSTEM_TOOL_NAMES | _BASH_TOOL_NAMES | _GIT_TOOL_NAMES
+        ]
+        if not coding_calls:
+            break
+        messages = list(probe_request.messages)
+        executed = False
+        for tc in coding_calls:
+            result = await _dispatch_coding_tool(
+                tc.name,
+                tc.arguments,
+                workspace_root=workspace_root,
+                filesystem_enabled=filesystem_enabled,
+                bash_enabled=bash_enabled,
+                bash_timeout_s=bash_timeout_s,
+                git_enabled=git_enabled,
+                git_timeout_s=git_timeout_s,
+            )
+            if result is None:
+                continue
+            messages.append(_tool_result_message(tc.name, result))
+            executed = True
+        if not executed:
+            break
+        probe_request = request.model_copy(update={"messages": messages})
+    else:
+        messages = list(probe_request.messages)
+        messages.append(
+            _tool_result_message(
+                "tool_runtime",
+                json.dumps({"ok": False, "error": "max_tool_rounds_reached"}),
+            )
+        )
+        return _strip_tools(request.model_copy(update={"messages": messages})), activation, None
+
+    if probe_request is not request:
+        if not probe.tool_calls and (probe.content or "").strip():
+            return _strip_tools(probe_request), activation, probe.content
+        return _strip_tools(probe_request), activation, None
 
     for tc in probe.tool_calls:
         if tc.name == "request_skill" and skills is not None:
@@ -186,41 +264,6 @@ async def apply_lazy_skill_tool(
                 default_city=default_city,
             )
             logger.info("get_weather result_len=%s", len(result))
-            messages = list(request.messages)
-            messages.append(_tool_result_message(tc.name, result))
-            enriched = request.model_copy(update={"messages": messages})
-            return _strip_tools(enriched), activation, None
-
-        if tc.name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled:
-            result = dispatch_filesystem_tool(
-                tc.name,
-                tc.arguments,
-                root=workspace_root,
-            )
-            messages = list(request.messages)
-            messages.append(_tool_result_message(tc.name, result))
-            enriched = request.model_copy(update={"messages": messages})
-            return _strip_tools(enriched), activation, None
-
-        if tc.name in _BASH_TOOL_NAMES and bash_enabled:
-            result = await dispatch_bash_tool(
-                tc.name,
-                tc.arguments,
-                root=workspace_root,
-                timeout_s=bash_timeout_s,
-            )
-            messages = list(request.messages)
-            messages.append(_tool_result_message(tc.name, result))
-            enriched = request.model_copy(update={"messages": messages})
-            return _strip_tools(enriched), activation, None
-
-        if tc.name in _GIT_TOOL_NAMES and git_enabled:
-            result = await dispatch_git_tool(
-                tc.name,
-                tc.arguments,
-                root=workspace_root,
-                timeout_s=git_timeout_s,
-            )
             messages = list(request.messages)
             messages.append(_tool_result_message(tc.name, result))
             enriched = request.model_copy(update={"messages": messages})

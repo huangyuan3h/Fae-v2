@@ -21,6 +21,12 @@ def _memory_off_by_default(
     monkeypatch.setenv("SKILLS_ENABLED", "false")
     # Proactive APScheduler off unless a Phase 4 test opts in.
     monkeypatch.setenv("SCHEDULER_ENABLED", "false")
+    # Coding tools off unless a test explicitly opts in; local .env must not
+    # add an unexpected tool-probe LLM round to unrelated tests.
+    monkeypatch.setenv("CODING_WORKSPACE_ROOT", "")
+    monkeypatch.setenv("CODING_FILESYSTEM_ENABLED", "false")
+    monkeypatch.setenv("CODING_BASH_ENABLED", "false")
+    monkeypatch.setenv("CODING_GIT_ENABLED", "false")
     # Isolate schedule/notification SQLite per test.
     monkeypatch.setenv("SCHEDULES_DB_PATH", str(tmp_path / "fae-schedules.db"))
     config_module.get_settings.cache_clear()

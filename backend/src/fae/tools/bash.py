@@ -15,7 +15,11 @@ BASH_TOOLS = [
         "type": "function",
         "function": {
             "name": "run_bash",
-            "description": "Run one allowlisted command in the workspace without shell expansion.",
+            "description": (
+                "Run one allowlisted command in the workspace without shell expansion. "
+                "Use write_file with create_parents=true instead of mkdir; use this tool "
+                "for builds, tests, and executing code after files have been written."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

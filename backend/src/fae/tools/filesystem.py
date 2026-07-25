@@ -48,7 +48,11 @@ FILESYSTEM_TOOLS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Create or overwrite a UTF-8 text file inside the workspace.",
+            "description": (
+                "Create or overwrite a UTF-8 text file inside the workspace. "
+                "Set create_parents=true to create missing parent directories; "
+                "use this instead of mkdir when creating a new project and its first file."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

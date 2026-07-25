@@ -8,6 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from fae.agent.llm_turn import apply_lazy_skill_tool
+from fae.agent.skills_runtime import SkillActivationInfo
+from fae.llm import ChatMessage, ChatRequest, LLMClient, LLMConfig, ToolCall
+from fae.llm.provider import FakeProvider
 from fae.tools.bash import dispatch_bash_tool
 from fae.tools.filesystem import dispatch_filesystem_tool
 from fae.tools.git import dispatch_git_tool
@@ -72,3 +76,66 @@ async def test_git_tools_are_read_only(tmp_path: Path) -> None:
     assert "a.txt" in status["stdout"]
     assert "+two" in diff["stdout"]
     assert "initial" in log["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_coding_tool_loop_writes_then_runs_node(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        responses=["", "", "Created and verified Hello World."],
+        tool_call_responses=[
+            [
+                ToolCall(
+                    id="1",
+                    name="write_file",
+                    arguments=json.dumps(
+                        {
+                            "path": "test-fae/helloworld.js",
+                            "content": 'console.log("Hello, World!");\n',
+                            "create_parents": True,
+                        }
+                    ),
+                )
+            ],
+            [
+                ToolCall(
+                    id="2",
+                    name="run_bash",
+                    arguments=json.dumps(
+                        {"command": "node test-fae/helloworld.js"}
+                    ),
+                )
+            ],
+            [],
+        ],
+    )
+    request = ChatRequest(
+        config=LLMConfig(api_key="k", model="m"),
+        messages=[ChatMessage(role="user", content="创建并运行 Node hello world")],
+    )
+    prepared, _activation, early = await apply_lazy_skill_tool(
+        LLMClient(provider),
+        request,
+        SkillActivationInfo(),
+        None,
+        workspace_root=str(tmp_path),
+        filesystem_enabled=True,
+        bash_enabled=True,
+    )
+
+    assert early == "Created and verified Hello World."
+    assert (tmp_path / "test-fae" / "helloworld.js").is_file()
+    assert len(provider.calls) == 3
+    results = [m.content for m in prepared.messages if "tool_result" in m.content]
+    assert any("write_file" in result for result in results)
+    assert any("Hello, World!" in result for result in results)
+
+
+def test_write_file_schema_guides_directory_creation() -> None:
+    from fae.tools.filesystem import FILESYSTEM_TOOLS
+
+    write_tool = next(
+        tool for tool in FILESYSTEM_TOOLS if tool["function"]["name"] == "write_file"
+    )
+    description = write_tool["function"]["description"]
+    assert "create_parents=true" in description
+    assert "instead of mkdir" in description
