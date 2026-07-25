@@ -42,6 +42,12 @@ def build_capabilities(request: Request) -> dict[str, Any]:
             "tts_local": bool((settings.vllm_tts_url or "").strip()),
         },
         "tools": sorted(known_tool_names()),
+        "tool_runtime": {
+            "workspace_configured": bool((settings.coding_workspace_root or "").strip()),
+            "filesystem_enabled": bool(settings.coding_filesystem_enabled),
+            "bash_enabled": bool(settings.coding_bash_enabled),
+            "git_enabled": bool(settings.coding_git_enabled),
+        },
         "skills_enabled": bool(settings.skills_enabled),
         "subagent_enabled": bool(settings.subagent_enabled),
         "scheduler_enabled": bool(settings.scheduler_enabled),

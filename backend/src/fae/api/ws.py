@@ -142,6 +142,10 @@ async def _run_stream(
         subagent_timeout = float(
             getattr(settings, "subagent_timeout_s", 60.0) or 60.0
         )
+        coding_root = str(getattr(settings, "coding_workspace_root", "") or "").strip()
+        filesystem_on = bool(coding_root and getattr(settings, "coding_filesystem_enabled", False))
+        bash_on = bool(coding_root and getattr(settings, "coding_bash_enabled", False))
+        git_on = bool(coding_root and getattr(settings, "coding_git_enabled", False))
         if cancel_event is None:
             cancel_event = asyncio.Event()
 
@@ -165,6 +169,12 @@ async def _run_stream(
             memory=memory,
             subagent_enabled=subagent_on,
             subagent_timeout_s=subagent_timeout,
+            workspace_root=coding_root,
+            filesystem_enabled=filesystem_on,
+            bash_enabled=bash_on,
+            bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),
+            git_enabled=git_on,
+            git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
             cancel_event=cancel_event,
             on_subagent_event=_on_subagent,
         ):

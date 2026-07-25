@@ -6,8 +6,8 @@ Names are listed explicitly to avoid importing scheduler/tools at module load
 
 from __future__ import annotations
 
-# Keep in sync with WEATHER_TOOLS / SCHEDULE_TOOLS / REQUEST_SKILL_TOOL /
-# RUN_SUBAGENT_TOOL.
+# Keep in sync with tool schemas exposed by fae.tools, scheduler tools,
+# REQUEST_SKILL_TOOL, and RUN_SUBAGENT_TOOL.
 _KNOWN_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "get_weather",
@@ -16,6 +16,14 @@ _KNOWN_TOOL_NAMES: frozenset[str] = frozenset(
         "cancel_job",
         "request_skill",
         "run_subagent",
+        "read_file",
+        "search_files",
+        "write_file",
+        "edit_file",
+        "run_bash",
+        "git_status",
+        "git_diff",
+        "git_log",
     }
 )
 

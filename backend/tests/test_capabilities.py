@@ -23,6 +23,9 @@ def test_capabilities_shape() -> None:
     assert body["modes"]["text"] is True
     assert isinstance(body["tools"], list)
     assert "get_weather" in body["tools"]
+    assert "read_file" in body["tools"]
+    assert "git_diff" in body["tools"]
+    assert body["tool_runtime"]["filesystem_enabled"] is False
     assert body["llm"]["server_configured"] is True
     assert body["auth"]["client_token_required"] is False
     assert body["status"]["proactive_llm"] == "ok"

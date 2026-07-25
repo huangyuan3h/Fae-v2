@@ -14,6 +14,9 @@ from fae.llm.client import LLMClient
 from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.tools import SCHEDULE_TOOLS, dispatch_schedule_tool
+from fae.tools.bash import BASH_TOOLS, dispatch_bash_tool
+from fae.tools.filesystem import FILESYSTEM_TOOLS, dispatch_filesystem_tool
+from fae.tools.git import GIT_TOOLS, dispatch_git_tool
 from fae.tools.weather import WEATHER_TOOLS, dispatch_weather_tool
 
 if TYPE_CHECKING:
@@ -28,6 +31,9 @@ _SCHEDULE_TOOL_NAMES = {
 }
 
 _WEATHER_TOOL_NAMES = {"get_weather"}
+_FILESYSTEM_TOOL_NAMES = {"read_file", "search_files", "write_file", "edit_file"}
+_BASH_TOOL_NAMES = {"run_bash"}
+_GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log"}
 
 OnSubagentEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -75,6 +81,9 @@ def _merge_tools(
     *,
     weather_enabled: bool = False,
     attach_subagent: bool = False,
+    filesystem_enabled: bool = False,
+    bash_enabled: bool = False,
+    git_enabled: bool = False,
 ) -> list[dict]:
     tools = list(activation.tools or [])
     if schedule_store is not None:
@@ -83,6 +92,12 @@ def _merge_tools(
         _append_unique_tools(tools, WEATHER_TOOLS)
     if attach_subagent:
         _append_unique_tools(tools, [RUN_SUBAGENT_TOOL])
+    if filesystem_enabled:
+        _append_unique_tools(tools, FILESYSTEM_TOOLS)
+    if bash_enabled:
+        _append_unique_tools(tools, BASH_TOOLS)
+    if git_enabled:
+        _append_unique_tools(tools, GIT_TOOLS)
     return tools
 
 
@@ -110,6 +125,12 @@ async def apply_lazy_skill_tool(
     memory: LettaMemoryService | None = None,
     subagent_enabled: bool = True,
     subagent_timeout_s: float = 60.0,
+    workspace_root: str = "",
+    filesystem_enabled: bool = False,
+    bash_enabled: bool = False,
+    bash_timeout_s: float = 30.0,
+    git_enabled: bool = False,
+    git_timeout_s: float = 20.0,
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
@@ -128,6 +149,9 @@ async def apply_lazy_skill_tool(
         schedule_store,
         weather_enabled=weather_enabled,
         attach_subagent=attach_subagent,
+        filesystem_enabled=filesystem_enabled,
+        bash_enabled=bash_enabled,
+        git_enabled=git_enabled,
     )
     if not tools:
         return request, activation, None
@@ -162,6 +186,41 @@ async def apply_lazy_skill_tool(
                 default_city=default_city,
             )
             logger.info("get_weather result_len=%s", len(result))
+            messages = list(request.messages)
+            messages.append(_tool_result_message(tc.name, result))
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
+        if tc.name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled:
+            result = dispatch_filesystem_tool(
+                tc.name,
+                tc.arguments,
+                root=workspace_root,
+            )
+            messages = list(request.messages)
+            messages.append(_tool_result_message(tc.name, result))
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
+        if tc.name in _BASH_TOOL_NAMES and bash_enabled:
+            result = await dispatch_bash_tool(
+                tc.name,
+                tc.arguments,
+                root=workspace_root,
+                timeout_s=bash_timeout_s,
+            )
+            messages = list(request.messages)
+            messages.append(_tool_result_message(tc.name, result))
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
+        if tc.name in _GIT_TOOL_NAMES and git_enabled:
+            result = await dispatch_git_tool(
+                tc.name,
+                tc.arguments,
+                root=workspace_root,
+                timeout_s=git_timeout_s,
+            )
             messages = list(request.messages)
             messages.append(_tool_result_message(tc.name, result))
             enriched = request.model_copy(update={"messages": messages})
@@ -203,6 +262,12 @@ async def stream_assistant_turn(
     memory: LettaMemoryService | None = None,
     subagent_enabled: bool = True,
     subagent_timeout_s: float = 60.0,
+    workspace_root: str = "",
+    filesystem_enabled: bool = False,
+    bash_enabled: bool = False,
+    bash_timeout_s: float = 30.0,
+    git_enabled: bool = False,
+    git_timeout_s: float = 20.0,
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
@@ -218,6 +283,9 @@ async def stream_assistant_turn(
         schedule_store,
         weather_enabled=weather_enabled,
         attach_subagent=attach_subagent,
+        filesystem_enabled=filesystem_enabled,
+        bash_enabled=bash_enabled,
+        git_enabled=git_enabled,
     )
     if tools:
         act = SkillActivationInfo(
@@ -238,6 +306,12 @@ async def stream_assistant_turn(
             memory=memory,
             subagent_enabled=subagent_enabled,
             subagent_timeout_s=subagent_timeout_s,
+            workspace_root=workspace_root,
+            filesystem_enabled=filesystem_enabled,
+            bash_enabled=bash_enabled,
+            bash_timeout_s=bash_timeout_s,
+            git_enabled=git_enabled,
+            git_timeout_s=git_timeout_s,
             cancel_event=cancel_event,
             on_subagent_event=on_subagent_event,
         )

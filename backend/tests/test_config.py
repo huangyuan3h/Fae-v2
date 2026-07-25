@@ -46,6 +46,10 @@ def test_defaults_when_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert s.vllm_llm_url == "http://localhost:8002"
     assert s.qdrant_url == "http://localhost:6333"
     assert s.redis_url == "redis://localhost:6379"
+    assert s.coding_workspace_root == ""
+    assert s.coding_filesystem_enabled is False
+    assert s.coding_bash_enabled is False
+    assert s.coding_git_enabled is False
     assert s.secret_key == "change-me"
 
 

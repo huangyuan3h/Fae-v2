@@ -629,11 +629,18 @@ def create_app(
                 activation,
                 skills_rt if isinstance(skills_rt, SkillRuntime) else None,
             )
+            coding_root = str(getattr(settings, "coding_workspace_root", "") or "").strip()
+            filesystem_on = bool(coding_root and getattr(settings, "coding_filesystem_enabled", False))
+            bash_on = bool(coding_root and getattr(settings, "coding_bash_enabled", False))
+            git_on = bool(coding_root and getattr(settings, "coding_git_enabled", False))
             tools_needed = bool(
                 (isinstance(skills_rt, SkillRuntime) and activation.tools)
                 or sched
                 or weather_on
                 or subagent_on
+                or filesystem_on
+                or bash_on
+                or git_on
             )
             if tools_needed:
                 prepared, activation, early = await apply_lazy_skill_tool(
@@ -650,6 +657,12 @@ def create_app(
                     subagent_timeout_s=float(
                         getattr(settings, "subagent_timeout_s", 60.0) or 60.0
                     ),
+                    workspace_root=coding_root,
+                    filesystem_enabled=filesystem_on,
+                    bash_enabled=bash_on,
+                    bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),
+                    git_enabled=git_on,
+                    git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)

@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     weather_default_city: str = ""
     weather_default_timezone: str = ""
 
+    # Coding tools — disabled until a workspace root is explicitly configured
+    coding_workspace_root: str = ""
+    coding_filesystem_enabled: bool = False
+    coding_bash_enabled: bool = False
+    coding_git_enabled: bool = False
+    coding_bash_timeout_s: float = Field(default=30.0, ge=1.0, le=120.0)
+    coding_git_timeout_s: float = Field(default=20.0, ge=1.0, le=120.0)
+
     # Proactive scheduler (Phase 4) — tests should set SCHEDULER_ENABLED=false
     scheduler_enabled: bool = False
     heartbeat_seconds: float = Field(default=30.0, ge=5.0)
