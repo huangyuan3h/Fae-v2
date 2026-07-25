@@ -18,21 +18,19 @@ export function ProfilePanel() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     fetchProfile()
       .then((p) => {
         if (cancelled) return;
         setProfile(p);
         setHuman(p.human || "");
         setError(null);
+        setLoading(false);
       })
       .catch((e) => {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e));
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;

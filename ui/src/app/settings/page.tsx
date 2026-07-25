@@ -1,7 +1,7 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ModelsPanel } from "@/components/settings/ModelsPanel";
@@ -16,14 +16,11 @@ const TABS: Tab[] = ["persona", "profile", "models", "voice", "notifications"];
 
 function SettingsInner() {
   const search = useSearchParams();
-  const [tab, setTab] = useState<Tab>("persona");
-
-  useEffect(() => {
-    const q = search.get("tab");
-    if (q && (TABS as string[]).includes(q)) {
-      setTab(q as Tab);
-    }
-  }, [search]);
+  const router = useRouter();
+  const queryTab = search.get("tab");
+  const tab: Tab = (TABS as string[]).includes(queryTab ?? "")
+    ? (queryTab as Tab)
+    : "persona";
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-4 pb-16 pt-10">
@@ -58,7 +55,7 @@ function SettingsInner() {
             <button
               key={item.id}
               type="button"
-              onClick={() => setTab(item.id)}
+              onClick={() => router.replace(`/settings?tab=${item.id}`)}
               className="rounded-full px-3 py-1.5 text-sm transition"
               style={{
                 background: active ? "var(--accent)" : "transparent",

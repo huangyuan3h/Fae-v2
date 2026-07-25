@@ -26,25 +26,26 @@ type CapsLlm = {
 };
 
 export function ModelsPanel() {
-  const [profiles, setProfiles] = useState<ModelProfile[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<ModelProfile[]>(() =>
+    listModelProfiles(),
+  );
+  const [activeId, setActiveId] = useState<string | null>(() =>
+    getActiveModelId(),
+  );
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ModelProfile | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [serverLlm, setServerLlm] = useState<string>("…");
   const [tokenRequired, setTokenRequired] = useState(false);
-  const [clientToken, setClientToken] = useState("");
+  const [clientToken, setClientToken] = useState<string>(() =>
+    clientAccessToken(),
+  );
 
   const refresh = useCallback(() => {
     setProfiles(listModelProfiles());
     setActiveId(getActiveModelId());
   }, []);
-
-  useEffect(() => {
-    refresh();
-    setClientToken(clientAccessToken());
-  }, [refresh]);
 
   useEffect(() => {
     void fetch(`${backendHttpBase()}/api/capabilities`)
@@ -308,6 +309,7 @@ export function ModelsPanel() {
       </div>
 
       <ModelFormModal
+        key={editing?.id ?? "new"}
         open={modalOpen}
         initial={editing}
         onClose={() => {

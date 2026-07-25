@@ -116,6 +116,21 @@ docker compose -f docker-compose.core.yml down
 OpenAPI：`http://127.0.0.1:8000/docs`  
 薄 TS SDK：[`sdk/typescript`](../sdk/typescript)（`@fae/client`）
 
+## 前端构建与验证
+
+UI 使用 Next.js 16 standalone 构建，要求 Node.js 24.4.1+（小于 25）和 pnpm 10.28.2。升级后的核心依赖组合为 Next.js 16.2.11、React 19.2.8、TypeScript 5.9.3 和 ESLint 9.39.5；`eslint-config-next` 与 Next.js 保持同版本。
+
+```bash
+cd ui
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm build
+test -f .next/standalone/ui/server.js
+```
+
+构建成功后可用 `node .next/standalone/ui/server.js` 验证 standalone 服务。升级保留了 `transpilePackages: ["@fae/client"]` 和 monorepo tracing 配置，部署前应确认 SDK 被包含在产物中。
+
 ---
 
 ## 延后（P8+）

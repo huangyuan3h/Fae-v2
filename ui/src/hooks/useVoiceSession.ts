@@ -1,12 +1,11 @@
 "use client";
 
 import type { DailyCall } from "@daily-co/daily-js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { getMemorySessionId } from "@/lib/client-identity";
 import {
   type AgentConfig,
-  DEFAULT_CONFIG,
   loadConfig,
   saveConfig,
   authHeaders,
@@ -61,7 +60,7 @@ export type ChatLine = {
 };
 
 export function useVoiceSession() {
-  const [config, setConfigState] = useState<AgentConfig>(DEFAULT_CONFIG);
+  const [config, setConfigState] = useState<AgentConfig>(() => syncActiveConfig());
   const [orb, setOrb] = useState<OrbState>("idle");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [partial, setPartial] = useState("");
@@ -75,9 +74,14 @@ export function useVoiceSession() {
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>({});
   const [lastVoiceDebug, setLastVoiceDebug] = useState<string | null>(null);
-  const [preferDaily, setPreferDailyState] = useState(false);
+  const [preferDaily, setPreferDailyState] = useState<boolean>(() =>
+    loadPreferDaily(),
+  );
   const [dailyConnected, setDailyConnected] = useState(false);
-  const [support, setSupport] = useState({ stt: false, tts: false });
+  const [support] = useState(() => speechSupported());
+  // Final transcript queued by the STT callback; consumed by an Effect so the
+  // latest `sendText` is always used without mutating a Ref.
+  const [pendingText, setPendingText] = useState<string | null>(null);
 
   const setPreferDaily = useCallback((v: boolean) => {
     setPreferDailyState(v);
@@ -156,9 +160,6 @@ export function useVoiceSession() {
   }, []);
 
   useEffect(() => {
-    setConfigState(syncActiveConfig());
-    setPreferDailyState(loadPreferDaily());
-    setSupport(speechSupported());
     createVoiceSession({
       preferDaily: false,
       memorySessionId: memorySessionRef.current,
@@ -322,7 +323,7 @@ export function useVoiceSession() {
           }
           // Pause STT while assistant runs (avoid TTS feedback into mic).
           sttRef.current.pause();
-          void sendTextRef.current(r.transcript.trim());
+          setPendingText(r.transcript.trim());
         }
       },
       (err) => {
@@ -333,8 +334,6 @@ export function useVoiceSession() {
       { lang: ttsLanguageToSttLang(loadTtsPrefs().language) },
     );
   }, [support.stt]);
-
-  const sendTextRef = useRef<(text: string) => Promise<void>>(async () => {});
 
   const logTurnMetrics = useCallback((m: TurnMetrics) => {
     const sttMs =
@@ -563,9 +562,25 @@ export function useVoiceSession() {
     [appendLine, dailyConnected, mode, runAssistant],
   );
 
+  // Drain final transcripts queued by the STT callback. The STT onResult
+  // callback cannot call sendText directly (it's invoked by the browser
+  // outside any React Effect), so it enqueues a state update instead, and
+  // this Effect invokes the latest sendText via the Effect Event wrapper on
+  // the next microtask. The microtask hop keeps setState out of the
+  // synchronous effect body so the react-hooks/set-state-in-effect rule is
+  // satisfied, and the Effect Event lets us call the latest sendText without
+  // re-firing the effect on every sendText identity change.
+  const dispatchFinalText = useEffectEvent((text: string) => {
+    void sendText(text);
+  });
+
   useEffect(() => {
-    sendTextRef.current = sendText;
-  }, [sendText]);
+    if (!pendingText) return;
+    const text = pendingText;
+    queueMicrotask(() => {
+      dispatchFinalText(text);
+    });
+  }, [pendingText]);
 
   const startBrowserListening = useCallback(() => {
     if (!support.stt) {
@@ -598,7 +613,7 @@ export function useVoiceSession() {
           }
           // Pause STT while assistant runs (avoid TTS feedback into mic).
           sttRef.current.pause();
-          void sendTextRef.current(r.transcript.trim());
+          setPendingText(r.transcript.trim());
         }
       },
       (err) => {

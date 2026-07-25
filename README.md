@@ -70,7 +70,17 @@ npm run dev          # backend :8000 + UI :3000（+ TTS :8880）
 open http://localhost:3000
 ```
 
-### 演示
+### 前端运行时基线
+
+UI 已升级到 Next.js 16，开发、CI 和 Docker 构建统一使用以下版本边界：
+
+- Node.js `24.4.1` 以上且小于 `25`
+- pnpm `10.28.2`
+- Next.js `16.2.11` + React `19.2.8`
+- TypeScript `5.9.3` + ESLint `9.39.5`
+
+在 `ui/` 目录执行 `pnpm install --frozen-lockfile` 可复现依赖安装。`@fae/client` 是 source-only SDK，生产构建会生成 standalone 产物。
+
 
 1. **Settings → 模型**：添加 OpenAI / Ollama 并设为当前使用（Key 在浏览器 localStorage）  
 2. **Settings → 人设**：改语气 → 下一轮对话生效  
@@ -100,7 +110,7 @@ open http://localhost:3000
 
 ```bash
 cd backend && uv run pytest          # 含 evals runners：tests/test_evals_*.py
-cd ui && pnpm lint && pnpm build
+cd ui && pnpm typecheck && pnpm lint && pnpm build
 ```
 
 评测 case 数据在 [`evals/`](./evals/)；由 backend pytest 加载，不依赖 Daily / 真云端 TTS。

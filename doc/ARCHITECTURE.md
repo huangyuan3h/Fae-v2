@@ -357,13 +357,13 @@ class ProactiveLoop:
         self.scheduler.start()
 ```
 
-### 3.7 图形界面：Next.js 15 + shadcn/ui
+### 3.7 图形界面：Next.js 16 + Tailwind CSS
 
 #### 技术栈
 
 | 层 | 选型 | 理由 |
 |---|---|---|
-| 框架 | **Next.js 15**（App Router） | RSC、Streaming、Server Actions |
+| 框架 | **Next.js 16**（App Router） | RSC、Streaming、Server Actions |
 | UI 库 | **shadcn/ui** + Tailwind CSS 4 | 2026 本地 AI 工具主流，可复制粘贴定制 |
 | 状态 | **Zustand** | 轻量、对接 WebRTC 流简单 |
 | 数据请求 | **TanStack Query** | 记忆 / 任务的乐观更新 |

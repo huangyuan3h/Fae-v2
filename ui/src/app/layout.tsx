@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Syne } from "next/font/google";
 
 import { QueryProvider } from "@/providers/QueryProvider";
@@ -20,7 +20,6 @@ export const metadata: Metadata = {
   title: "FAE",
   description: "Fully Autonomous Echo — voice agent",
   manifest: "/manifest.webmanifest",
-  themeColor: "#0f6e56",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -33,6 +32,10 @@ export const metadata: Metadata = {
       { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f6e56",
 };
 
 export default function RootLayout({

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
 import type { ThinkingMode } from "@/lib/config";
 import {
@@ -37,27 +37,19 @@ const EMPTY: ModelFormValues = {
 };
 
 export function ModelFormModal({ open, initial, onClose, onSave }: Props) {
-  const [form, setForm] = useState<ModelFormValues>(EMPTY);
-
-  useEffect(() => {
-    if (!open) return;
-    if (initial) {
-      setForm({
-        name: initial.name,
-        type: initial.type,
-        model: initial.model,
-        baseUrl: initial.baseUrl,
-        apiKey: initial.apiKey,
-        thinking: initial.thinking ?? "disabled",
-        setActive: true,
-      });
-    } else {
-      setForm({
-        ...EMPTY,
-        baseUrl: defaultBaseUrl("openai"),
-      });
-    }
-  }, [open, initial]);
+  const [form, setForm] = useState<ModelFormValues>(() =>
+    initial
+      ? {
+          name: initial.name,
+          type: initial.type,
+          model: initial.model,
+          baseUrl: initial.baseUrl,
+          apiKey: initial.apiKey,
+          thinking: initial.thinking ?? "disabled",
+          setActive: true,
+        }
+      : { ...EMPTY, baseUrl: defaultBaseUrl("openai") },
+  );
 
   if (!open) return null;
 

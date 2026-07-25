@@ -30,19 +30,17 @@ type VoiceStatus = {
 const PREVIEW_TEXT = "你好，这是语音试听。Hello, this is a voice preview.";
 
 export function VoicePanel() {
-  const [preferDaily, setPreferDaily] = useState(false);
+  const [preferDaily, setPreferDaily] = useState<boolean>(() => loadPreferDaily());
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<TtsPrefs>(DEFAULT_TTS_PREFS);
+  const [prefs, setPrefs] = useState<TtsPrefs>(() => loadTtsPrefs());
   const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
   const [languages, setLanguages] = useState<string[]>([]);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    setPreferDaily(loadPreferDaily());
-    setPrefs(loadTtsPrefs());
     void Promise.all([
       fetch(`${backendHttpBase()}/api/voice/status`, {
         headers: authHeaders(),

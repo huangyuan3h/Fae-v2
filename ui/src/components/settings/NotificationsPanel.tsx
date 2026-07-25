@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   ensureNotificationPermission,
@@ -30,22 +30,12 @@ export function NotificationsPanel() {
     retry: false,
   });
   const [status, setStatus] = useState<string | null>(null);
-  const [quietStart, setQuietStart] = useState("");
-  const [quietEnd, setQuietEnd] = useState("");
-
-  useEffect(() => {
-    if (!prefsQ.data) return;
-    setQuietStart(
-      prefsQ.data.quiet_start_hour == null
-        ? ""
-        : String(prefsQ.data.quiet_start_hour),
-    );
-    setQuietEnd(
-      prefsQ.data.quiet_end_hour == null
-        ? ""
-        : String(prefsQ.data.quiet_end_hour),
-    );
-  }, [prefsQ.data]);
+  const [quietDraft, setQuietDraft] = useState<{
+    start: string;
+    end: string;
+    /** Identifier of the server snapshot the draft was seeded from. */
+    seededFrom: number | null;
+  }>({ start: "", end: "", seededFrom: null });
 
   const saveM = useMutation({
     mutationFn: putNotificationPrefs,
@@ -58,9 +48,28 @@ export function NotificationsPanel() {
 
   const prefs = prefsQ.data;
 
+  // Derive the displayed form values during render. Until the user edits the
+  // draft, we show the server snapshot; once they touch either input, the
+  // draft becomes the source of truth. Re-seeding from the server happens
+  // only when a new snapshot identity arrives AND the draft is still in sync
+  // (i.e. the user has no pending edits).
+  const serverStart =
+    prefs?.quiet_start_hour == null ? "" : String(prefs.quiet_start_hour);
+  const serverEnd =
+    prefs?.quiet_end_hour == null ? "" : String(prefs.quiet_end_hour);
+  const updatedAt = prefsQ.dataUpdatedAt;
+  const draftIsUntouched =
+    quietDraft.seededFrom === updatedAt ||
+    (quietDraft.seededFrom === null &&
+      quietDraft.start === "" &&
+      quietDraft.end === "");
+  const quietStart = draftIsUntouched ? serverStart : quietDraft.start;
+  const quietEnd = draftIsUntouched ? serverEnd : quietDraft.end;
+
   const saveQuiet = () => {
     if (quietStart === "" && quietEnd === "") {
       saveM.mutate({ clear_quiet: true });
+      setQuietDraft({ start: "", end: "", seededFrom: updatedAt ?? null });
       return;
     }
     const start = quietStart === "" ? null : Number(quietStart);
@@ -76,6 +85,7 @@ export function NotificationsPanel() {
       quiet_start_hour: start,
       quiet_end_hour: end,
     });
+    setQuietDraft({ start: quietStart, end: quietEnd, seededFrom: updatedAt ?? null });
   };
 
   const loop = loopQ.data;
@@ -177,7 +187,13 @@ export function NotificationsPanel() {
                 className="w-16 rounded border border-black/10 px-2 py-1"
                 value={quietStart}
                 placeholder="起"
-                onChange={(e) => setQuietStart(e.target.value)}
+                onChange={(e) =>
+                  setQuietDraft((d) => ({
+                    ...d,
+                    start: e.target.value,
+                    seededFrom: updatedAt ?? d.seededFrom,
+                  }))
+                }
               />
               <span>—</span>
               <input
@@ -187,7 +203,13 @@ export function NotificationsPanel() {
                 className="w-16 rounded border border-black/10 px-2 py-1"
                 value={quietEnd}
                 placeholder="止"
-                onChange={(e) => setQuietEnd(e.target.value)}
+                onChange={(e) =>
+                  setQuietDraft((d) => ({
+                    ...d,
+                    end: e.target.value,
+                    seededFrom: updatedAt ?? d.seededFrom,
+                  }))
+                }
               />
               <button
                 type="button"
@@ -200,8 +222,11 @@ export function NotificationsPanel() {
                 type="button"
                 className="text-xs text-[var(--accent)] underline"
                 onClick={() => {
-                  setQuietStart("");
-                  setQuietEnd("");
+                  setQuietDraft({
+                    start: "",
+                    end: "",
+                    seededFrom: updatedAt ?? null,
+                  });
                   saveM.mutate({ clear_quiet: true });
                 }}
               >

@@ -1,4 +1,19 @@
-# Changelog
+## 0.5.0 — 2026-07-25 (Next.js 16 alignment)
+
+Frontend runtime and build tooling are aligned on the Next.js 16 stable line.
+
+### Highlights
+
+- **Next.js**: upgraded from 15.5.20 to 16.2.11 with React / React DOM 19.2.8
+- **Tooling**: TypeScript 5.9.3 and ESLint 9.39.5 retained for a conservative migration; `eslint-config-next` is aligned to 16.2.11
+- **Runtime**: Node.js 24.4.1+ and pnpm 10.28.2 are now the supported UI build baseline
+- **Build validation**: added UI typecheck, standalone artifact assertion, native flat ESLint config, and viewport metadata export
+- **Dependencies**: updated TanStack Query to 5.101.4, Recharts to 3.10.0, and Node type definitions to 24.13.3
+
+### Notes
+
+- `@fae/client` remains a source-only package compiled through `transpilePackages`
+- Next.js 16, React, React DOM, and `eslint-config-next` are intentionally kept on matching stable release lines
 
 ## 0.4.0 — 2026-07-19 (P7 Client contract)
 

@@ -38,6 +38,7 @@ Open [http://localhost:3000](http://localhost:3000). Backend expected at `:8000`
 ## Scripts
 
 ```bash
+pnpm typecheck
 pnpm lint
 pnpm build
 ```

@@ -12,14 +12,12 @@ export function PersonaPanel() {
   const [persona, setPersona] = useState("");
   const [defaultPersona, setDefaultPersona] = useState("");
   const [presets, setPresets] = useState<PersonaPreset[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     fetchPersona()
       .then((p) => {
         if (cancelled) return;
@@ -32,9 +30,6 @@ export function PersonaPanel() {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e));
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -78,10 +73,6 @@ export function PersonaPanel() {
   function applyPreset(text: string) {
     setPersona(text);
     setSaved(false);
-  }
-
-  if (loading) {
-    return <p className="text-sm text-[var(--ink-soft)]">加载人设…</p>;
   }
 
   return (

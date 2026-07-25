@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
@@ -14,7 +15,17 @@ import {
 } from "@/lib/models";
 
 export default function HomePage() {
+  return (
+    <Suspense fallback={<main className="p-8 text-sm text-[var(--ink-soft)]">加载中…</main>}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
+  const search = useSearchParams();
   const {
+
     lines,
     partial,
     error,
@@ -35,18 +46,13 @@ export default function HomePage() {
   } = useVoiceSession();
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<ModelProfile | null>(null);
-  const [debug, setDebug] = useState(false);
+  const debug = search.get("debug") === "1";
 
   useEffect(() => {
     const refresh = () => setActive(getActiveProfile());
     refresh();
     window.addEventListener(CONFIG_CHANGED_EVENT, refresh);
     return () => window.removeEventListener(CONFIG_CHANGED_EVENT, refresh);
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setDebug(params.get("debug") === "1");
   }, []);
 
   const skillLabel = useMemo(() => {
