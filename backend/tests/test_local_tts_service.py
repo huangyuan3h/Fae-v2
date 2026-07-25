@@ -44,6 +44,42 @@ async def test_local_tts_service_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_tts_service_strips_emoji_before_synth() -> None:
+    """Daily bot must not ship emoji / kaomoji / singsong punctuation to TTS."""
+    wav = pcm16_mono_to_wav(b"\x00\x00" * 40, sample_rate=24000)
+    mock = AsyncMock(return_value=(wav, "audio/wav"))
+    with patch(
+        "fae.pipecat.services.local_tts_service.LocalTTSClient.synthesize",
+        new=mock,
+    ):
+        tts = LocalTTSService(base_url="http://tts.test/v1")
+        frames = [f async for f in tts.run_tts("好的没问题😄 我们继续吧", "ctx")]
+    assert len(frames) == 1
+    sent = mock.await_args.args[0]
+    assert "😄" not in sent
+    assert "好的没问题" in sent
+    assert "我们继续吧" in sent
+
+
+@pytest.mark.asyncio
+async def test_local_tts_service_can_disable_stripper() -> None:
+    """When a caller really wants the raw text, opt-out flag is honored."""
+    wav = pcm16_mono_to_wav(b"\x00\x00" * 40, sample_rate=24000)
+    mock = AsyncMock(return_value=(wav, "audio/wav"))
+    with patch(
+        "fae.pipecat.services.local_tts_service.LocalTTSClient.synthesize",
+        new=mock,
+    ):
+        tts = LocalTTSService(
+            base_url="http://tts.test/v1", strip_speakable=False
+        )
+        frames = [f async for f in tts.run_tts("好的没问题😄", "ctx")]
+    assert len(frames) == 1
+    sent = mock.await_args.args[0]
+    assert "😄" in sent
+
+
+@pytest.mark.asyncio
 async def test_local_tts_service_error_frame() -> None:
     tts = LocalTTSService(base_url="http://tts.test/v1")
     with patch(

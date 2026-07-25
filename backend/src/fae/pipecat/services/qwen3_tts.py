@@ -10,6 +10,7 @@ import logging
 import struct
 
 from fae.tts.local_client import LocalTTSClient, LocalTTSError
+from fae.tts.speakable import to_speakable_text
 from fae.tts.wav import wav_to_pcm16_mono
 
 logger = logging.getLogger("fae.pipecat.tts")
@@ -28,6 +29,7 @@ class Qwen3TTSService:
         # Deprecated no-op kept so older call sites / tests do not break.
         api_key: str = "",
         language_type: str = "Chinese",
+        strip_speakable: bool = True,
     ) -> None:
         del api_key, language_type
         self._base_url = (base_url or "").strip()
@@ -36,6 +38,11 @@ class Qwen3TTSService:
         self._voice = voice
         self._response_format = response_format
         self._timeout_s = timeout_s
+        # Default-on: drop emoji / markdown / singsong before hitting the
+        # TTS server. The browser path already runs toSpeakableText upstream
+        # — turning it off here keeps raw synthesis parity when callers want
+        # to bypass the stripper (e.g. reading aloud an explicit script).
+        self._strip_speakable = strip_speakable
 
     @property
     def configured(self) -> bool:
@@ -48,6 +55,8 @@ class Qwen3TTSService:
     async def synthesize(
         self, text: str, *, raise_on_error: bool = False
     ) -> bytes:
+        if self._strip_speakable:
+            text = to_speakable_text(text)
         if not text.strip():
             return b""
         if not self._base_url:

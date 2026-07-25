@@ -9,6 +9,7 @@ from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.tts_service import TTSService
 
 from fae.tts.local_client import LocalTTSClient, LocalTTSError
+from fae.tts.speakable import to_speakable_text
 from fae.tts.wav import wav_to_pcm16_mono
 
 logger = logging.getLogger("fae.pipecat.tts")
@@ -26,6 +27,7 @@ class LocalTTSService(TTSService):
         sample_rate: int = 24000,
         response_format: str = "wav",
         timeout_s: float = 60.0,
+        strip_speakable: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(sample_rate=sample_rate, **kwargs)
@@ -35,10 +37,17 @@ class LocalTTSService(TTSService):
         self._fallback_rate = sample_rate
         self._response_format = response_format
         self._timeout_s = timeout_s
+        # Default-on: drop emoji / markdown / singersong before hitting the
+        # TTS server. The browser path already runs toSpeakableText upstream
+        # — turning it off here keeps raw synthesis parity when callers want
+        # to bypass the stripper (e.g. reading aloud an explicit script).
+        self._strip_speakable = strip_speakable
 
     async def run_tts(
         self, text: str, context_id: str
     ) -> AsyncGenerator[Frame | None, None]:
+        if self._strip_speakable:
+            text = to_speakable_text(text)
         if not text.strip():
             return
         rate = self.sample_rate or self._fallback_rate

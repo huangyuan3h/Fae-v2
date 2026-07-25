@@ -49,6 +49,96 @@ def test_clip_for_local_tts_sentence() -> None:
     assert "第一句。" in out or len(out) <= 41
 
 
+# --- Voice hygiene: emoji / laughs / singsong punctuation --------------------
+
+
+def test_to_speakable_strips_emoji_runs() -> None:
+    raw = "好的没问题😄😂🤣，我马上看一下🙂"
+    out = to_speakable_text(raw)
+    assert "好的没问题" in out
+    assert "我马上看一下" in out
+    # No codepoint escapes leaked; no ZWJ or emoji ranges left.
+    for ch in out:
+        assert ord(ch) < 0x2600 or 0x2700 <= ord(ch) < 0x1F300, (
+            f"residual emoji codepoint U+{ord(ch):04X} in {out!r}"
+        )
+
+
+def test_to_speakable_strips_emoji_in_thinking_block() -> None:
+    raw = "做完了😊\n\n下一步可以试试更复杂的方案🚀"
+    out = to_speakable_text(raw)
+    assert "做完了" in out
+    assert "下一步可以试试更复杂的方案" in out
+    assert "😊" not in out
+    assert "🚀" not in out
+
+
+def test_to_speakable_drops_english_laugh_fillers() -> None:
+    raw = "Oh haha haha that's funny lol 😂"
+    out = to_speakable_text(raw)
+    # Drop the runs of emoji + fillers, keep the words around them.
+    assert "haha" not in out.lower()
+    assert "lol" not in out.lower()
+    assert "that's" in out or "funny" in out
+
+
+def test_to_speakable_drops_ascii_kaomoji_and_wavy() -> None:
+    raw = "嗯嗯好的~~~~ :) 我们继续吧"
+    out = to_speakable_text(raw)
+    assert ":)" not in out
+    assert "~" not in out
+    assert "嗯嗯好的" in out
+    assert "我们继续吧" in out
+
+
+def test_to_speakable_drops_parenthesised_kaomoji() -> None:
+    raw = "好开心(*^▽^*) (T_T) 又被感动了"
+    out = to_speakable_text(raw)
+    assert "*^▽^*" not in out
+    assert "(T_T)" not in out
+    assert "好开心" in out
+    assert "又被感动了" in out
+
+
+def test_to_speakable_preserves_bracketed_nouns() -> None:
+    # Plain "(八百米)" / "(function)" should NOT be classified as kaomoji.
+    out1 = to_speakable_text("(八百米)决赛开始了")
+    assert "(八百米)" in out1
+    out2 = to_speakable_text("这段代码 (function) 很奇怪")
+    assert "(function)" in out2
+
+
+def test_to_speakable_collapses_singsong_punctuation() -> None:
+    raw = "真的吗？？？？！！！不敢相信！！！"
+    out = to_speakable_text(raw)
+    # Each duplicate run collapses to a single mark.
+    assert "？？？？" not in out
+    assert "！！！" not in out
+    assert "真的吗？" in out
+
+
+def test_to_speakable_strips_invisible_chars() -> None:
+    raw = "你好\u200d世界\u200b测试"
+    out = to_speakable_text(raw)
+    # ZWJ / ZWSP replaced by space and collapsed; no orphan invisibles.
+    for ch in out:
+        assert ch not in ("\u200d", "\u200b", "\u2060")
+
+
+def test_to_speakable_keeps_chinese_punctuation_unchanged() -> None:
+    raw = "你好。吃饭了吗？我们出发吧！"
+    out = to_speakable_text(raw)
+    # Sentence-ending CJK punctuation survives; we only collapse LATER duplicates.
+    assert "你好。" in out
+    assert "我们出发吧！" in out
+
+
+def test_to_speakable_handles_empty_and_only_noise() -> None:
+    assert to_speakable_text("") == ""
+    assert to_speakable_text("😀🤣") == ""
+    assert to_speakable_text("   \n\n  ") == ""
+
+
 def test_speak_local_unavailable(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("VLLM_TTS_URL", "http://127.0.0.1:59999/v1")
     from fae import config as config_module
