@@ -25,6 +25,15 @@ export type WsServerMessage =
       error?: string | null;
       summary?: string;
     }
+  | {
+      type: "tool";
+      phase: "start" | "result";
+      id: string;
+      name: string;
+      arguments?: string;
+      ok?: boolean;
+      result?: string;
+    }
   | { type: "token"; content: string }
   | { type: "done"; usage: unknown; session_id?: string }
   | {
@@ -53,6 +62,15 @@ export type SubagentHandler = (msg: {
   summary?: string;
 }) => void;
 
+export type ToolHandler = (msg: {
+  phase: "start" | "result";
+  id: string;
+  name: string;
+  arguments?: string;
+  ok?: boolean;
+  result?: string;
+}) => void;
+
 export type StreamHandlers = {
   onToken: (token: string) => void;
   onDone: () => void;
@@ -63,6 +81,7 @@ export type StreamHandlers = {
     lazyCatalog?: string[],
   ) => void;
   onSubagent?: SubagentHandler;
+  onTool?: ToolHandler;
   onNotification?: NotifyHandler;
 };
 

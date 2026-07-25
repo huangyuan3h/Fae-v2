@@ -406,7 +406,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.llm_client = llm_client or LLMClient(
-        provider=OpenAICompatibleProvider()
+        provider=OpenAICompatibleProvider(default_timeout_s=settings.llm_timeout_s)
     )
     app.state.sessions = SessionStore()
     app.state.voice_runtime = VoiceRuntime()

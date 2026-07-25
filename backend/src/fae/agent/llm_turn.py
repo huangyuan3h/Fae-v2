@@ -33,11 +33,18 @@ _SCHEDULE_TOOL_NAMES = {
 }
 
 _WEATHER_TOOL_NAMES = {"get_weather"}
-_FILESYSTEM_TOOL_NAMES = {"read_file", "search_files", "write_file", "edit_file"}
+_FILESYSTEM_TOOL_NAMES = {
+    "read_file",
+    "search_files",
+    "make_directory",
+    "write_file",
+    "edit_file",
+}
 _BASH_TOOL_NAMES = {"run_bash"}
 _GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log"}
 
 OnSubagentEvent = Callable[[dict[str, Any]], Awaitable[None]]
+OnToolEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _strip_tools(request: ChatRequest) -> ChatRequest:
@@ -119,30 +126,65 @@ async def _dispatch_coding_tool(
     tool_name: str,
     arguments: str,
     *,
+    call_id: str = "",
     workspace_root: str,
     filesystem_enabled: bool,
     bash_enabled: bool,
     bash_timeout_s: float,
     git_enabled: bool,
     git_timeout_s: float,
+    on_tool_event: OnToolEvent | None = None,
 ) -> str | None:
-    if tool_name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled:
-        return dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
-    if tool_name in _BASH_TOOL_NAMES and bash_enabled:
-        return await dispatch_bash_tool(
+    enabled = (
+        (tool_name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled)
+        or (tool_name in _BASH_TOOL_NAMES and bash_enabled)
+        or (tool_name in _GIT_TOOL_NAMES and git_enabled)
+    )
+    if not enabled:
+        return None
+    event_id = call_id or f"{tool_name}-{id(arguments)}"
+    if on_tool_event is not None:
+        await on_tool_event(
+            {
+                "type": "tool",
+                "phase": "start",
+                "id": event_id,
+                "name": tool_name,
+                "arguments": arguments[:4000],
+            }
+        )
+    if tool_name in _FILESYSTEM_TOOL_NAMES:
+        result = dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
+    elif tool_name in _BASH_TOOL_NAMES:
+        result = await dispatch_bash_tool(
             tool_name,
             arguments,
             root=workspace_root,
             timeout_s=bash_timeout_s,
         )
-    if tool_name in _GIT_TOOL_NAMES and git_enabled:
-        return await dispatch_git_tool(
+    else:
+        result = await dispatch_git_tool(
             tool_name,
             arguments,
             root=workspace_root,
             timeout_s=git_timeout_s,
         )
-    return None
+    if on_tool_event is not None:
+        try:
+            payload = json.loads(result)
+        except json.JSONDecodeError:
+            payload = {"ok": False, "error": "invalid_tool_result"}
+        await on_tool_event(
+            {
+                "type": "tool",
+                "phase": "result",
+                "id": event_id,
+                "name": tool_name,
+                "ok": bool(payload.get("ok")),
+                "result": result[:20000],
+            }
+        )
+    return result
 
 
 async def apply_lazy_skill_tool(
@@ -166,6 +208,7 @@ async def apply_lazy_skill_tool(
     git_timeout_s: float = 20.0,
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
+    on_tool_event: OnToolEvent | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
@@ -208,12 +251,14 @@ async def apply_lazy_skill_tool(
             result = await _dispatch_coding_tool(
                 tc.name,
                 tc.arguments,
+                call_id=tc.id,
                 workspace_root=workspace_root,
                 filesystem_enabled=filesystem_enabled,
                 bash_enabled=bash_enabled,
                 bash_timeout_s=bash_timeout_s,
                 git_enabled=git_enabled,
                 git_timeout_s=git_timeout_s,
+                on_tool_event=on_tool_event,
             )
             if result is None:
                 continue
@@ -313,6 +358,7 @@ async def stream_assistant_turn(
     git_timeout_s: float = 20.0,
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
+    on_tool_event: OnToolEvent | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
@@ -357,6 +403,7 @@ async def stream_assistant_turn(
             git_timeout_s=git_timeout_s,
             cancel_event=cancel_event,
             on_subagent_event=on_subagent_event,
+            on_tool_event=on_tool_event,
         )
         if early is not None and on_schedule_mutated is not None:
             if "日程工具" in early:

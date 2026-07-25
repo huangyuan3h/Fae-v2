@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # ── Voice / LLM ─────────────────────────────────────────────────────
     # Optional LLM API key (OpenAI-compatible providers, including DashScope chat)
     dashscope_api_key: str = ""
+    llm_timeout_s: float = Field(default=60.0, ge=5.0, le=300.0)
     # Local OpenAI-compatible TTS only (Qwen3-TTS / CosyVoice) — no cloud / browser TTS
     # Optional: mount OpenAI-compatible stub routes on this app (dev wiring only).
     tts_embed_stub: bool = False

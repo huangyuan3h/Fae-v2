@@ -47,6 +47,25 @@ FILESYSTEM_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "make_directory",
+            "description": "Create one or more directories inside the workspace with mkdir -p semantics.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": 20,
+                    }
+                },
+                "required": ["paths"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": (
                 "Create or overwrite a UTF-8 text file inside the workspace. "
@@ -170,6 +189,18 @@ def dispatch_filesystem_tool(
                     "matches": _search(base, start, query, pattern),
                 }
             )
+        if name == "make_directory":
+            paths = args.get("paths")
+            if not isinstance(paths, list) or not paths:
+                return _json({"ok": False, "error": "paths_required"})
+            if len(paths) > 20:
+                return _json({"ok": False, "error": "too_many_paths"})
+            created: list[str] = []
+            for raw in paths:
+                path = safe_resolve(base, str(raw or ""))
+                path.mkdir(parents=True, exist_ok=True)
+                created.append(str(path.relative_to(base)))
+            return _json({"ok": True, "created": created})
         if name == "write_file":
             path = safe_resolve(base, str(args.get("path") or ""))
             if bool(args.get("create_parents")):

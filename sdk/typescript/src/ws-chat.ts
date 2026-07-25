@@ -83,6 +83,15 @@ export class WsChatClient {
             error: msg.error,
             summary: msg.summary,
           });
+        } else if (msg.type === "tool") {
+          handlers.onTool?.({
+            phase: msg.phase,
+            id: msg.id,
+            name: msg.name,
+            arguments: msg.arguments,
+            ok: msg.ok,
+            result: msg.result,
+          });
         } else if (msg.type === "notification") {
           handlers.onNotification?.(
             msg.title,

@@ -12,6 +12,7 @@ export type {
   NotifyHandler,
   StreamHandlers,
   SubagentHandler,
+  ToolHandler,
   ThinkingMode,
   WsServerMessage,
 } from "./types";

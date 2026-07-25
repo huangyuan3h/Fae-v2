@@ -39,6 +39,7 @@ def test_defaults_when_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert s.app_env == "development"
     assert s.log_level == "INFO"
     assert s.dashscope_api_key == ""
+    assert s.llm_timeout_s == 60.0
     assert s.letta_server_url == "http://localhost:8283"
     assert s.letta_mode == "remote"
     assert s.letta_agent_name == "fae-main"

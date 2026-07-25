@@ -59,6 +59,16 @@ export type ChatLine = {
   content: string;
 };
 
+export type ChatStep = {
+  id: string;
+  kind: "skill" | "subagent" | "tool";
+  name: string;
+  role: "primary" | "secondary";
+  status: "available" | "running" | "done" | "error";
+  detail?: string;
+  score?: number;
+};
+
 export function useVoiceSession() {
   const [config, setConfigState] = useState<AgentConfig>(() => syncActiveConfig());
   const [orb, setOrb] = useState<OrbState>("idle");
@@ -73,6 +83,7 @@ export function useVoiceSession() {
   const [ttsMode, setTtsMode] = useState<TtsMode>("local-tts");
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>({});
+  const [steps, setSteps] = useState<ChatStep[]>([]);
   const [lastVoiceDebug, setLastVoiceDebug] = useState<string | null>(null);
   // SSR-safe initial value: localStorage may be `true` on the client but the
   // server always returns `false` here. Reading the persisted flag inside a
@@ -453,30 +464,87 @@ export function useVoiceSession() {
       try {
         setActiveSkills([]);
         setSkillScores({});
+        setSteps([]);
         await wsRef.current.chat(
           userText,
           config,
           {
-            onSkills: (names, scores) => {
+            onSkills: (names, scores, lazyCatalog) => {
               setActiveSkills(names);
               setSkillScores(scores ?? {});
+              const active = names.map((name, index) => ({
+                id: `skill-active-${name}`,
+                kind: "skill" as const,
+                name,
+                role: (index === 0 ? "primary" : "secondary") as
+                  | "primary"
+                  | "secondary",
+                status: "done" as const,
+                score: scores?.[name],
+              }));
+              const lazy = (lazyCatalog ?? [])
+                .filter((name) => !names.includes(name))
+                .map((name) => ({
+                  id: `skill-lazy-${name}`,
+                  kind: "skill" as const,
+                  name,
+                  role: "secondary" as const,
+                  status: "available" as const,
+                  detail: "按需加载",
+                }));
+              setSteps((prev) => [
+                ...active,
+                ...lazy,
+                ...prev.filter((step) => step.kind !== "skill"),
+              ]);
             },
             onSubagent: (ev) => {
-              if (ev.phase === "start") {
-                appendLine(
-                  "system",
-                  `子任务 ${ev.name || "subagent"} 进行中…`,
-                );
-                return;
-              }
-              const ok = ev.ok !== false;
-              const clip = (ev.summary || "").trim().slice(0, 160);
-              appendLine(
-                "system",
-                ok
-                  ? `子任务 ${ev.name || "subagent"} 完成${clip ? `：${clip}` : ""}`
-                  : `子任务 ${ev.name || "subagent"} 失败${clip ? `：${clip}` : ""}`,
-              );
+              const id = `subagent-${ev.name || "subagent"}`;
+              const detail =
+                ev.phase === "start"
+                  ? ev.task
+                  : (ev.summary || ev.error || "").trim().slice(0, 500);
+              setSteps((prev) => {
+                const next: ChatStep = {
+                  id,
+                  kind: "subagent",
+                  name: ev.name || "subagent",
+                  role: "secondary",
+                  status:
+                    ev.phase === "start"
+                      ? "running"
+                      : ev.ok === false
+                        ? "error"
+                        : "done",
+                  detail,
+                };
+                return [...prev.filter((step) => step.id !== id), next];
+              });
+            },
+            onTool: (ev) => {
+              const detail =
+                ev.phase === "start"
+                  ? ev.arguments
+                  : (ev.result || "").slice(0, 2000);
+              setSteps((prev) => {
+                const next: ChatStep = {
+                  id: `tool-${ev.id}`,
+                  kind: "tool",
+                  name: ev.name,
+                  role: "secondary",
+                  status:
+                    ev.phase === "start"
+                      ? "running"
+                      : ev.ok
+                        ? "done"
+                        : "error",
+                  detail,
+                };
+                return [
+                  ...prev.filter((step) => step.id !== next.id),
+                  next,
+                ];
+              });
             },
             onToken: (token) => {
               if (metrics.llmFirstTokenAt == null) {
@@ -531,7 +599,6 @@ export function useVoiceSession() {
       }
     },
     [
-      appendLine,
       config,
       ensureTtsQueue,
       logTurnMetrics,
@@ -694,6 +761,7 @@ export function useVoiceSession() {
     pathLabel,
     activeSkills,
     skillScores,
+    steps,
     lastVoiceDebug,
     preferDaily,
     setPreferDaily,

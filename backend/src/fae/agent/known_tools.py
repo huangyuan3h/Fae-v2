@@ -18,6 +18,7 @@ _KNOWN_TOOL_NAMES: frozenset[str] = frozenset(
         "run_subagent",
         "read_file",
         "search_files",
+        "make_directory",
         "write_file",
         "edit_file",
         "run_bash",

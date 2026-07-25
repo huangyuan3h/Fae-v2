@@ -61,6 +61,43 @@ async def test_bash_allows_exec_without_shell_and_rejects_unknown(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_bash_supports_safe_cwd_and_basic_commands(tmp_path: Path) -> None:
+    project = tmp_path / "test-fae"
+    project.mkdir()
+    (project / "hello.js").write_text('console.log("hello")\n', encoding="utf-8")
+    result = _result(
+        await dispatch_bash_tool(
+            "run_bash",
+            {"command": "node hello.js", "cwd": "test-fae"},
+            root=tmp_path,
+        )
+    )
+    assert result["ok"] is True
+    assert result["stdout"].strip() == "hello"
+    escaped = _result(
+        await dispatch_bash_tool(
+            "run_bash",
+            {"command": "pwd", "cwd": "../"},
+            root=tmp_path,
+        )
+    )
+    assert escaped["error"] == "outside_workspace"
+
+
+def test_make_directory_tool(tmp_path: Path) -> None:
+    result = _result(
+        dispatch_filesystem_tool(
+            "make_directory",
+            {"paths": ["one/two", "three"]},
+            root=tmp_path,
+        )
+    )
+    assert result["ok"] is True
+    assert (tmp_path / "one" / "two").is_dir()
+    assert (tmp_path / "three").is_dir()
+
+
+@pytest.mark.asyncio
 async def test_git_tools_are_read_only(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
@@ -80,6 +117,11 @@ async def test_git_tools_are_read_only(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_coding_tool_loop_writes_then_runs_node(tmp_path: Path) -> None:
+    events: list[dict] = []
+
+    async def on_tool_event(event: dict) -> None:
+        events.append(event)
+
     provider = FakeProvider(
         responses=["", "", "Created and verified Hello World."],
         tool_call_responses=[
@@ -120,6 +162,7 @@ async def test_coding_tool_loop_writes_then_runs_node(tmp_path: Path) -> None:
         workspace_root=str(tmp_path),
         filesystem_enabled=True,
         bash_enabled=True,
+        on_tool_event=on_tool_event,
     )
 
     assert early == "Created and verified Hello World."
@@ -128,6 +171,13 @@ async def test_coding_tool_loop_writes_then_runs_node(tmp_path: Path) -> None:
     results = [m.content for m in prepared.messages if "tool_result" in m.content]
     assert any("write_file" in result for result in results)
     assert any("Hello, World!" in result for result in results)
+    assert [event["phase"] for event in events] == [
+        "start",
+        "result",
+        "start",
+        "result",
+    ]
+    assert all(event["type"] == "tool" for event in events)
 
 
 def test_write_file_schema_guides_directory_creation() -> None:

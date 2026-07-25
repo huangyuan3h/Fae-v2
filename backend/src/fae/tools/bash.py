@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from fae.tools.safepath import WorkspacePathError, workspace_root
+from fae.tools.safepath import WorkspacePathError, safe_resolve, workspace_root
 
 BASH_TOOLS = [
     {
@@ -17,13 +17,18 @@ BASH_TOOLS = [
             "name": "run_bash",
             "description": (
                 "Run one allowlisted command in the workspace without shell expansion. "
-                "Use write_file with create_parents=true instead of mkdir; use this tool "
-                "for builds, tests, and executing code after files have been written."
+                "Use write_file with create_parents=true instead of mkdir when also "
+                "creating a file. Set cwd to run inside a workspace subdirectory; "
+                "do not prefix commands with cd."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional directory inside the workspace to run in. Do not use cd.",
+                    },
                     "timeout_s": {"type": "number", "minimum": 1, "maximum": 120},
                 },
                 "required": ["command"],
@@ -36,6 +41,16 @@ _ALLOWED_COMMANDS = frozenset(
     {
         "ls",
         "pwd",
+        "mkdir",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "file",
+        "stat",
+        "which",
+        "rg",
+        "grep",
         "python",
         "python3",
         "pytest",
@@ -83,7 +98,11 @@ async def dispatch_bash_tool(
     if executable not in _ALLOWED_COMMANDS:
         return json.dumps({"ok": False, "error": "command_not_allowed", "command": executable})
     try:
-        cwd = workspace_root(root)
+        base = workspace_root(root)
+        cwd_arg = str(args.get("cwd") or "").strip()
+        cwd = safe_resolve(base, cwd_arg or ".")
+        if not cwd.is_dir():
+            return json.dumps({"ok": False, "error": "cwd_not_found"})
         requested_timeout = float(args.get("timeout_s") or timeout_s)
         effective_timeout = min(120.0, max(1.0, requested_timeout, 0.0), max(1.0, timeout_s))
         process = await asyncio.create_subprocess_exec(

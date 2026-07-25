@@ -9,6 +9,7 @@ import {
   type NotifyHandler,
   type StreamHandlers,
   type SubagentHandler,
+  type ToolHandler,
   type WsServerMessage,
 } from "@fae/client";
 
@@ -19,6 +20,7 @@ export type {
   NotifyHandler,
   StreamHandlers,
   SubagentHandler,
+  ToolHandler,
   WsServerMessage,
 };
 

@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
+import { AgentSteps } from "@/components/voice/AgentSteps";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
 import { MicButton } from "@/components/voice/MicButton";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
@@ -35,6 +36,7 @@ function HomeContent() {
     ttsMode,
     activeSkills,
     skillScores,
+    steps,
     lastVoiceDebug,
     dailyConnected,
     support,
@@ -81,6 +83,12 @@ function HomeContent() {
     const text = draft;
     setDraft("");
     void sendText(text);
+  };
+
+  const onComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    e.currentTarget.form?.requestSubmit();
   };
 
   return (
@@ -155,18 +163,21 @@ function HomeContent() {
       )}
 
       <div className="flex w-full flex-1 flex-col">
+        <AgentSteps steps={steps} />
         <ChatTranscript lines={lines} partial={partial} />
       </div>
 
       <form
         onSubmit={onSubmit}
-        className="fae-composer sticky bottom-0 z-10 mx-auto mt-auto flex w-full max-w-xl gap-2 border-t border-black/5 bg-[color-mix(in_srgb,var(--bg-0)_88%,transparent)] px-1 pt-3 backdrop-blur-md sm:px-4"
+        className="fae-composer sticky bottom-0 z-10 mx-auto mt-auto flex w-full max-w-xl items-end gap-2 border-t border-black/5 bg-[color-mix(in_srgb,var(--bg-0)_88%,transparent)] px-1 pt-3 backdrop-blur-md sm:px-4"
       >
-        <input
+        <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="文字回退输入…"
-          className="min-w-0 flex-1 rounded-full border border-black/10 bg-white/80 px-4 py-3 text-sm outline-none focus:border-[var(--accent)]"
+          onKeyDown={onComposerKeyDown}
+          rows={3}
+          placeholder="输入消息… Enter 发送，Shift+Enter 换行"
+          className="min-h-24 max-h-56 min-w-0 flex-1 resize-y rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm leading-6 outline-none focus:border-[var(--accent)]"
         />
         <button
           type="submit"

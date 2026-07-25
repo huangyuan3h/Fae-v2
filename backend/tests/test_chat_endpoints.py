@@ -83,10 +83,11 @@ def test_test_connection_empty_api_key_without_server_returns_503(
 
 def test_create_app_binds_llm_client_on_app_state() -> None:
     """Each create_app() owns its own LLMClient on app.state — no globals."""
-    app_a = create_app()
+    app_a = create_app(settings=Settings(llm_timeout_s=75))
     app_b = create_app()
     assert app_a.state.llm_client is not app_b.state.llm_client
     assert isinstance(app_a.state.llm_client._provider, OpenAICompatibleProvider)
+    assert app_a.state.llm_client._provider._default_timeout_s == 75
 
     injected = LLMClient(provider=FakeProvider())
     app_c = create_app(llm_client=injected)

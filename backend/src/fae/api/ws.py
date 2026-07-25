@@ -156,6 +156,9 @@ async def _run_stream(
         async def _on_subagent(ev: dict) -> None:
             await _send(ws, ev)
 
+        async def _on_tool(ev: dict) -> None:
+            await _send(ws, ev)
+
         async for token, activation in stream_assistant_turn(
             client,
             stream_request,
@@ -177,6 +180,7 @@ async def _run_stream(
             git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
             cancel_event=cancel_event,
             on_subagent_event=_on_subagent,
+            on_tool_event=_on_tool,
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)
