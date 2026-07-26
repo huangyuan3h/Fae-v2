@@ -28,8 +28,11 @@ from fae.tool_registry import (
     EffectivePolicy,
     PolicyDecision,
     diff_preview_for,
+    group_for,
+    is_coding_tool,
     iter_openai_schemas,
     resolve_policy,
+    resolve_timeout,
     specs_in_group,
 )
 from fae.tools.bash import dispatch_bash_tool
@@ -183,16 +186,14 @@ def _offloaded_tool_result_message(
     The replacement body is byte-stable for a given offload path so the
     surrounding prefix cache survives across turns.
     """
-    return ChatMessage(
-        role="system",
-        content=(
-            f'<tool_result name="{tool_name}" offloaded="true" '
-            f'path="{offload_path}" full_chars="{full_chars}">\n{body}\n</tool_result>\n'
-            "The full result body was offloaded to disk to keep context small. "
-            "Use the read_file tool on the path above to pull it back when you "
-            "need details beyond the preview. Do not re-invoke the original tool."
-        ),
+    envelope = (
+        f'<tool_result name="{tool_name}" offloaded="true" '
+        f'path="{offload_path}" full_chars="{full_chars}">\n{body}\n</tool_result>\n'
+        "The full result body was offloaded to disk to keep context small. "
+        "Use the read_file tool on the path above to pull it back when you "
+        "need details beyond the preview. Do not re-invoke the original tool."
     )
+    return ChatMessage(role="system", content=envelope)
 
 
 async def _wrap_tool_result(
@@ -221,6 +222,7 @@ async def _dispatch_coding_tool(
     *,
     call_id: str = "",
     workspace_root: str = "",
+    tool_offload_dir: str = "",
     filesystem_enabled: bool = False,
     bash_enabled: bool = False,
     bash_timeout_s: float = 30.0,
@@ -236,9 +238,9 @@ async def _dispatch_coding_tool(
     cancel_event: asyncio.Event | None = None,
 ) -> str | None:
     enabled = (
-        (tool_name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled)
-        or (tool_name in _BASH_TOOL_NAMES and bash_enabled)
-        or (tool_name in _GIT_TOOL_NAMES and git_enabled)
+        (filesystem_enabled and tool_name in _FILESYSTEM_TOOL_NAMES)
+        or (bash_enabled and tool_name in _BASH_TOOL_NAMES)
+        or (git_enabled and tool_name in _GIT_TOOL_NAMES)
     )
     if not enabled:
         return None
@@ -379,21 +381,40 @@ async def _dispatch_coding_tool(
             },
         )
     try:
-        if tool_name in _FILESYSTEM_TOOL_NAMES:
-            result = dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
-        elif tool_name in _BASH_TOOL_NAMES:
+        # Route by registry group; timeout comes from spec default unless
+        # the caller passed an explicit override (settings).
+        tool_group = group_for(tool_name) or ""
+        if tool_group == "filesystem":
+            result = dispatch_filesystem_tool(
+                tool_name,
+                arguments,
+                root=workspace_root,
+                extra_roots=(tool_offload_dir,) if tool_offload_dir else (),
+            )
+        elif tool_group == "bash":
             result = await dispatch_bash_tool(
                 tool_name,
                 arguments,
                 root=workspace_root,
-                timeout_s=bash_timeout_s,
+                timeout_s=resolve_timeout(tool_name, bash_timeout_s),
             )
-        else:
+        elif tool_group == "git":
             result = await dispatch_git_tool(
                 tool_name,
                 arguments,
                 root=workspace_root,
-                timeout_s=git_timeout_s,
+                timeout_s=resolve_timeout(tool_name, git_timeout_s),
+            )
+        else:
+            # Anything still here is a coding-shaped name we don't own.
+            result = json.dumps(
+                {
+                    "ok": False,
+                    "error": "unknown_coding_tool",
+                    "tool_name": tool_name,
+                    "group": tool_group or None,
+                },
+                ensure_ascii=False,
             )
     except Exception as exc:  # noqa: BLE001
         result = json.dumps(
@@ -450,6 +471,7 @@ async def apply_lazy_skill_tool(
     subagent_enabled: bool = True,
     subagent_timeout_s: float = 60.0,
     workspace_root: str = "",
+    tool_offload_dir: str = "",
     filesystem_enabled: bool = False,
     bash_enabled: bool = False,
     bash_timeout_s: float = 30.0,
@@ -494,7 +516,12 @@ async def apply_lazy_skill_tool(
         coding_calls = [
             tc
             for tc in probe.tool_calls
-            if tc.name in _FILESYSTEM_TOOL_NAMES | _BASH_TOOL_NAMES | _GIT_TOOL_NAMES
+            if is_coding_tool(tc.name)
+            and (
+                (filesystem_enabled and tc.name in _FILESYSTEM_TOOL_NAMES)
+                or (bash_enabled and tc.name in _BASH_TOOL_NAMES)
+                or (git_enabled and tc.name in _GIT_TOOL_NAMES)
+            )
         ]
         if not coding_calls:
             break
@@ -506,6 +533,7 @@ async def apply_lazy_skill_tool(
                 tc.arguments,
                 call_id=tc.id,
                 workspace_root=workspace_root,
+                tool_offload_dir=tool_offload_dir,
                 filesystem_enabled=filesystem_enabled,
                 bash_enabled=bash_enabled,
                 bash_timeout_s=bash_timeout_s,
@@ -880,6 +908,7 @@ async def stream_assistant_turn(
     subagent_enabled: bool = True,
     subagent_timeout_s: float = 60.0,
     workspace_root: str = "",
+    tool_offload_dir: str = "",
     filesystem_enabled: bool = False,
     bash_enabled: bool = False,
     bash_timeout_s: float = 30.0,
@@ -932,6 +961,7 @@ async def stream_assistant_turn(
             tool_offloader=tool_offloader,
             subagent_timeout_s=subagent_timeout_s,
             workspace_root=workspace_root,
+            tool_offload_dir=tool_offload_dir,
             filesystem_enabled=filesystem_enabled,
             bash_enabled=bash_enabled,
             bash_timeout_s=bash_timeout_s,

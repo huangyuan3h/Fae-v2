@@ -65,3 +65,45 @@ def test_module_level_app_is_well_formed() -> None:
     _ = api_module.app
     assert api_module.app.title == "FAE-v2 Backend"
     assert api_module.app.version == "0.4.0"
+
+
+def test_lifespan_wires_tool_offloader_and_cleanup_task() -> None:
+    """The lifespan must (a) construct a ``ToolOffloader`` with the
+    configured TTL when offload is enabled, (b) start a periodic cleanup
+    task, and (c) cleanly cancel it on shutdown."""
+    from fae.agent.tool_offload import ToolOffloader
+    from fae.config import Settings
+
+    custom = Settings(
+        app_name="fae-test-offload",
+        log_level="WARNING",
+        tool_offload_enabled=True,
+        tool_offload_dir=".data/test-tool-offload-wiring",
+        tool_offload_ttl_s=120.0,
+        tool_offload_cleanup_interval_s=300.0,
+    )
+    app = create_app(settings=custom)
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        offloader = app.state.tool_offloader
+        cleanup_task = app.state.tool_offload_cleanup_task
+        assert isinstance(offloader, ToolOffloader)
+        assert offloader.ttl_s == 120.0
+        assert cleanup_task is not None
+        assert not cleanup_task.done()
+    # Context exit must cancel the task.
+    assert cleanup_task.cancelled() or cleanup_task.done()
+
+
+def test_lifespan_disables_offload_when_settings_say_so() -> None:
+    from fae.config import Settings
+
+    custom = Settings(
+        app_name="fae-test-offload-off",
+        log_level="WARNING",
+        tool_offload_enabled=False,
+    )
+    app = create_app(settings=custom)
+    with TestClient(app):
+        assert app.state.tool_offloader is None
+        assert app.state.tool_offload_cleanup_task is None

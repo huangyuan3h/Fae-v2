@@ -164,13 +164,7 @@
 
 ### Tool Offload 可恢复性
 
-- **状态**：部分实现
-- **重要等级**：P1
-- **收益程度**：中
-- **预计时间**：3–5 个工作日
-- **改动量**：中
-- **需求**：补齐 prompt preview、文件 GC、稳定路径和 `read_file` 可达性。
-- **验收**：大工具结果 offload 后，Agent 能可靠读取原文；过期文件会自动清理。
+- **状态**：已完成（归档见 `doc/archive/TOOL_RESULT_OFFLOAD.md`）
 
 ### Contextual Retrieval 完整接线
 

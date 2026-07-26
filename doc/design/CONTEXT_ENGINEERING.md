@@ -113,28 +113,35 @@ compactor 保证永不丢历史，summarizer 减负。
 ### R5 · Tool-result offload
 
 **入口**：
-- `fae/agent/tool_offload.py::ToolOffloader.maybe_offload`
+- `fae/agent/tool_offload.py::ToolOffloader.{maybe_offload, cleanup_expired}`
+- `fae/agent/tool_offload.py::tool_offload_cleanup_loop`（周期性 GC）
 - `fae/agent/llm_turn.py::_wrap_tool_result`（覆盖所有 tool result 注入点）
 
 - 触发：`len(result) > settings.tool_offload_chars=8000`。
-- 行为：写到 `settings.tool_offload_dir=.data/tool-offload/<ts>-<tool>-<id>-<sha12>.json`，
+- 行为：写到 `settings.tool_offload_dir=.data/tool-offload/<safe_tool>-<safe_id>-<sha12>.json`，
   在 prompt 中替换为：
   ```text
   <tool_result name="X" offloaded="true" path="..." full_chars="...">
-  [head + tail preview lines]
+  <tool_offload tool="X" path="..." chars="..." preview_chars="..."></tool_offload>
   </tool_result>
   The full result body was offloaded to disk to keep context small.
   Use the read_file tool on the path above to pull it back...
   ```
-- 替换 body 字节稳定（path 含 sha12）→ cache_control 命中不受影响。
+- **路径字节稳定**：仅含 content digest（无 wall-clock ts），同一内容跨进程同路径；多次相同写入幂等覆盖。
+- **替换 body 字节稳定**：`OffloadResult.to_prompt_replacement` 输出被 `test_prompt_envelope_is_byte_stable` 钉住，cache_control 命中不受影响。
+- **`read_file` 触达 offload 指针**：`dispatch_filesystem_tool(read_file, ..., extra_roots=(tool_offload_dir,))`。`safe_resolve` 接受多个 root，让 `read_file` 不必配置 `coding_workspace_root` 也能读回本体；同时仍遵守 `outside_workspace` 沙箱规则。
+- **TTL 自动清理**：
+  - 设置 `tool_offload_ttl_s`（默认 86400=24h）+ `tool_offload_cleanup_interval_s`（默认 300=5min）。
+  - lifespan 启动时跑一次 `cleanup_expired()` 兜底（捕进程停机期间的过期）。
+  - 后台 `tool_offload_cleanup_loop` 周期执行；shutdown 取消。
 - 已接入的 tool 注入点：
   - coding tools（filesystem/bash/git）`llm_turn.py:_dispatch_coding_tool`
   - weather tool
   - subagent run_subagent
   - 未来所有 `_tool_result_message` 站点
-- 已接入的入口：HTTP `/api/chat`、WS `/ws/chat`、Telegram inbound。
+- 已接入的入口：HTTP `/api/chat`、WS `/ws/chat`、Telegram inbound；所有入口都把 `tool_offload_dir` 透传给 `read_file` 沙箱。
 
-**测试**：`backend/tests/test_tool_offload.py`
+**测试**：`backend/tests/test_tool_offload.py`（覆盖：稳定路径、TTL GC、loop / cancel、read_file 往返、envelope 字节钉）+ `tests/test_api.py::test_lifespan_wires_tool_offloader_and_cleanup_task`
 
 ### R6 · Contextual Retrieval
 
@@ -213,7 +220,8 @@ compactor 保证永不丢历史，summarizer 减负。
 | cache 命中率低 | system prompt 每轮变（时间戳 / session id） | `cache_health.status` 上报到 metric；system 前缀禁止放动态数据 |
 | 摘要丢关键事实 | summarizer prompt 太短 / LLM 偷懒 | 后续加 eval 回放（R8 候选）；failure 时回退到 bullet summary |
 | reflection 阻塞主进程 | subagent 调用卡住 | `_run` 已有 `max_runtime_s=30s` timeout；失败 → 启发式 fallback |
-| tool offload 占用盘 | 长会话累积 .json | 后台 task 周期性 GC `tool_offload_dir`（待办） |
+| tool offload 占用盘 | 长会话累积 .json | `tool_offload_ttl_s` + `cleanup_interval_s`；启动 sweep + 后台 loop；`OFFLOAD_TTL_S=0` 可关闭 |
+| offloaded 路径 Agent 读不回来 | sandbox 拒绝 workspace 之外的路径 | `dispatch_filesystem_tool(read_file, ..., extra_roots=(tool_offload_dir,))`；只有显式传入的 extra_roots 才豁免 |
 | Contextual Retrieval 成本 | 没启用 cache_control 时仍每 chunk 调一次 LLM | 默认 off；开启前必须确认走 Anthropic 直连 |
 
 ---
@@ -247,6 +255,8 @@ tool_offload_enabled: bool = True
 tool_offload_chars: int = 8000
 tool_offload_dir: str = ".data/tool-offload"
 tool_offload_keep_lines: int = 20
+tool_offload_ttl_s: float = 86_400      # 24h; 0 disables sweeping
+tool_offload_cleanup_interval_s: float = 300  # 5min background loop
 
 # R6 Contextual Retrieval（默认 off）
 contextual_retrieval_enabled: bool = False

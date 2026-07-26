@@ -302,20 +302,47 @@ async def lifespan(app: FastAPI):
 
     # R5 tool offload (Context Engineering) — singleton wired for the chat
     # + WS layer to swap oversized tool results with on-disk pointers.
-    from fae.agent.tool_offload import ToolOffloader
+    from fae.agent.tool_offload import (
+        ToolOffloader,
+        tool_offload_cleanup_loop,
+    )
 
+    tool_offloader: ToolOffloader | None = None
     if settings.tool_offload_enabled:
         offload_root = (settings.tool_offload_dir or "").strip() or ".data/tool-offload"
         if not Path(offload_root).is_absolute():
             offload_root = str(REPO_ROOT / offload_root)
-        app.state.tool_offloader = ToolOffloader(
+        tool_offloader = ToolOffloader(
             base_dir=offload_root,
             max_chars=settings.tool_offload_chars,
             keep_lines=settings.tool_offload_keep_lines,
+            ttl_s=settings.tool_offload_ttl_s,
             enabled=True,
         )
+    app.state.tool_offloader = tool_offloader
+
+    # Startup sweep — reap files whose TTL lapsed while the process was down.
+    if tool_offloader is not None:
+        try:
+            swept = tool_offloader.cleanup_expired()
+            if swept:
+                logger.info(
+                    "Reaped %d expired offload file(s) on startup",
+                    len(swept),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("tool_offload sweep on startup failed")
+
+        cleanup_task = asyncio.create_task(
+            tool_offload_cleanup_loop(
+                tool_offloader,
+                settings.tool_offload_cleanup_interval_s,
+            ),
+            name="fae-tool-offload-cleanup",
+        )
+        app.state.tool_offload_cleanup_task = cleanup_task
     else:
-        app.state.tool_offloader = None
+        app.state.tool_offload_cleanup_task = None
 
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
@@ -484,6 +511,16 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     app.state.chat_history_cleanup_task = None
+    tool_offload_cleanup_task = getattr(
+        app.state, "tool_offload_cleanup_task", None,
+    )
+    if tool_offload_cleanup_task is not None:
+        tool_offload_cleanup_task.cancel()
+        try:
+            await tool_offload_cleanup_task
+        except asyncio.CancelledError:
+            pass
+    app.state.tool_offload_cleanup_task = None
     history_store.close()
     app.state.chat_history = None
     audit_store = getattr(app.state, "tool_audit", None)
@@ -890,10 +927,9 @@ def create_app(
                     default_city=default_city,
                     memory=memory,
                     subagent_enabled=subagent_on,
-                    subagent_timeout_s=float(
-                        getattr(settings, "subagent_timeout_s", 60.0) or 60.0
-                    ),
+                    subagent_timeout_s=subagent_timeout,
                     workspace_root=coding_root,
+                    tool_offload_dir=str(getattr(settings, "tool_offload_dir", "") or ""),
                     filesystem_enabled=filesystem_on,
                     bash_enabled=bash_on,
                     bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),

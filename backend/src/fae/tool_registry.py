@@ -50,6 +50,16 @@ SideEffect = Literal[
 ]
 
 
+# Group labels — kept as module-level constants so external callers can do
+# ``group in CODING_GROUPS`` instead of repeating the literal set.
+CODING_GROUPS: frozenset[str] = frozenset({"filesystem", "bash", "git"})
+
+# Default timeout (seconds) applied when a spec has no ``default_timeout_s``.
+# Per-tool defaults live on the spec; call sites may also override via
+# ``resolve_timeout(name, override=...)``.
+DEFAULT_TOOL_TIMEOUT_S: float = 30.0
+
+
 def _openai_tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
     """Construct an OpenAI-style tool entry from its components."""
     return {
@@ -84,7 +94,10 @@ class ToolSpec:
     needs_double_confirm: bool = False
     default_ttl_s: float = 60.0
     double_confirm_window_s: float = 5.0
+    default_timeout_s: float | None = None
     channel_allowlist: frozenset[str] | None = None
+    output_kind: Literal["text", "json", "markdown"] | None = None
+    output_description: str = ""
 
     @property
     def description(self) -> str:
@@ -113,7 +126,10 @@ def _spec_from(
     needs_double_confirm: bool = False,
     default_ttl_s: float = 60.0,
     double_confirm_window_s: float = 5.0,
+    default_timeout_s: float | None = None,
     channel_allowlist: frozenset[str] | None = None,
+    output_kind: Literal["text", "json", "markdown"] | None = None,
+    output_description: str = "",
 ) -> ToolSpec:
     """Build a ``ToolSpec`` from an OpenAI-style ``{type:function, function:{...}}``.
 
@@ -138,7 +154,10 @@ def _spec_from(
         needs_double_confirm=needs_double_confirm,
         default_ttl_s=default_ttl_s,
         double_confirm_window_s=double_confirm_window_s,
+        default_timeout_s=default_timeout_s,
         channel_allowlist=channel_allowlist,
+        output_kind=output_kind,
+        output_description=output_description,
     )
 
 
@@ -167,20 +186,39 @@ def _build_static_catalog() -> None:
     from fae.agent.skills_runtime import REQUEST_SKILL_TOOL as _SKILL_SCHEMA
 
     fs_overrides: dict[str, dict[str, Any]] = {
-        "read_file": dict(risk_tier="safe", side_effects=("fs.read",)),
-        "search_files": dict(risk_tier="safe", side_effects=("fs.read",)),
-        "make_directory": dict(risk_tier="caution", side_effects=("fs.mkdir",)),
+        "read_file": dict(
+            risk_tier="safe",
+            side_effects=("fs.read",),
+            output_kind="text",
+            output_description="UTF-8 file contents (truncated to ~2k chars).",
+        ),
+        "search_files": dict(
+            risk_tier="safe",
+            side_effects=("fs.read",),
+            output_kind="text",
+            output_description="Ripgrep-style matches.",
+        ),
+        "make_directory": dict(
+            risk_tier="caution",
+            side_effects=("fs.mkdir",),
+            output_kind="text",
+            output_description="Plain text confirmation of created paths.",
+        ),
         "write_file": dict(
             risk_tier="sensitive",
             side_effects=("fs.write",),
             requires_approval=True,
             needs_diff_preview=True,
+            output_kind="text",
+            output_description="Plain text confirmation of the written file.",
         ),
         "edit_file": dict(
             risk_tier="sensitive",
             side_effects=("fs.write",),
             requires_approval=True,
             needs_diff_preview=True,
+            output_kind="text",
+            output_description="Plain text confirmation of the replacement.",
         ),
     }
     for schema in _FS_SCHEMAS:
@@ -199,11 +237,23 @@ def _build_static_catalog() -> None:
             risk_tier="sensitive",
             side_effects=("proc.exec",),
             requires_approval=True,
+            default_timeout_s=30.0,
+            output_kind="json",
+            output_description=(
+                "{ok, stdout, stderr, returncode, duration_s} JSON object."
+            ),
         )
         _TOOL_SPECS[spec.name] = spec
 
     for schema in _GIT_SCHEMAS:
-        spec = _spec_from(schema, "git", risk_tier="safe")
+        spec = _spec_from(
+            schema,
+            "git",
+            risk_tier="safe",
+            default_timeout_s=20.0,
+            output_kind="text",
+            output_description="Plain text git output.",
+        )
         _TOOL_SPECS[spec.name] = spec
 
     for schema in _WEATHER_SCHEMAS:
@@ -212,6 +262,8 @@ def _build_static_catalog() -> None:
             "weather",
             risk_tier="safe",
             side_effects=("net.out",),
+            output_kind="markdown",
+            output_description="Current weather + today's forecast as markdown.",
         )
         _TOOL_SPECS[spec.name] = spec
 
@@ -219,12 +271,20 @@ def _build_static_catalog() -> None:
         "schedule_create_job": dict(
             risk_tier="caution",
             side_effects=("schedule.write", "state.mutate"),
+            output_kind="text",
+            output_description="Plain text confirmation of the scheduled job.",
         ),
-        "list_jobs": dict(risk_tier="safe"),
+        "list_jobs": dict(
+            risk_tier="safe",
+            output_kind="json",
+            output_description="JSON list of scheduled jobs.",
+        ),
         "cancel_job": dict(
             risk_tier="sensitive",
             side_effects=("state.mutate",),
             requires_approval=True,
+            output_kind="text",
+            output_description="Plain text confirmation of the cancellation.",
         ),
     }
     for schema in _SCHED_SCHEMAS:
@@ -241,10 +301,18 @@ def _build_static_catalog() -> None:
         "subagent",
         risk_tier="caution",
         side_effects=("memory.write",),
+        output_kind="text",
+        output_description="Citable summary from the sub-agent.",
     )
     _TOOL_SPECS[subagent_spec.name] = subagent_spec
 
-    skill_spec = _spec_from(_SKILL_SCHEMA, "skill", risk_tier="safe")
+    skill_spec = _spec_from(
+        _SKILL_SCHEMA,
+        "skill",
+        risk_tier="safe",
+        output_kind="text",
+        output_description="Skill activation confirmation / playbook.",
+    )
     _TOOL_SPECS[skill_spec.name] = skill_spec
 
 
@@ -327,6 +395,30 @@ def openai_schema_for(name: str) -> dict[str, Any] | None:
     """Return the OpenAI-style tool entry for a single name, or None."""
     spec = get_spec(name)
     return spec.to_openai() if spec else None
+
+
+def is_coding_tool(name: str) -> bool:
+    """True iff ``name`` lives in a coding group (filesystem / bash / git)."""
+    spec = get_spec(name)
+    return spec is not None and spec.group in CODING_GROUPS
+
+
+def resolve_timeout(name: str, override: float | None = None) -> float:
+    """Resolve the runtime timeout (seconds) for a tool invocation.
+
+    Precedence: ``override`` (caller-supplied) > spec ``default_timeout_s`` >
+    :data:`DEFAULT_TOOL_TIMEOUT_S`. Returns the fallback for unknown tools
+    so dispatchers never see ``None``.
+    """
+    if override is not None:
+        try:
+            return float(override)
+        except (TypeError, ValueError):
+            pass
+    spec = get_spec(name)
+    if spec is not None and spec.default_timeout_s is not None:
+        return float(spec.default_timeout_s)
+    return DEFAULT_TOOL_TIMEOUT_S
 
 
 # ── Policy ──────────────────────────────────────────────────────────────
@@ -439,6 +531,9 @@ def specs_for_capabilities() -> dict[str, dict[str, Any]]:
             "needs_diff_preview": spec.needs_diff_preview,
             "needs_double_confirm": spec.needs_double_confirm,
             "default_ttl_s": spec.default_ttl_s,
+            "default_timeout_s": spec.default_timeout_s,
+            "output_kind": spec.output_kind,
+            "output_description": spec.output_description,
             "description": spec.description,
             "parameters": spec.parameters,
         }

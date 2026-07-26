@@ -174,6 +174,7 @@ async def handle_inbound_text(
                     getattr(settings, "subagent_timeout_s", 60.0) or 60.0
                 ),
                 workspace_root=coding_root,
+                tool_offload_dir=str(getattr(settings, "tool_offload_dir", "") or ""),
                 filesystem_enabled=filesystem_on,
                 bash_enabled=bash_on,
                 bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),

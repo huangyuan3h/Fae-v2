@@ -239,6 +239,14 @@ class Settings(BaseSettings):
         default=20, ge=1,
         description="How many preview lines of the offloaded result to keep.",
     )
+    tool_offload_ttl_s: float = Field(
+        default=86_400.0, ge=60.0,
+        description="Seconds before an offloaded payload is GC'd on next sweep.",
+    )
+    tool_offload_cleanup_interval_s: float = Field(
+        default=300.0, ge=10.0,
+        description="Background sweep period for the offload directory.",
+    )
 
     # Proactive scheduler (Phase 4) — tests should set SCHEDULER_ENABLED=false
     scheduler_enabled: bool = False

@@ -7,6 +7,8 @@ import json
 import pytest
 
 from fae.tool_registry import (
+    CODING_GROUPS,
+    DEFAULT_TOOL_TIMEOUT_S,
     EffectivePolicy,
     PolicyDecision,
     ToolSpec,
@@ -15,12 +17,14 @@ from fae.tool_registry import (
     get_spec,
     group_for,
     groups,
+    is_coding_tool,
     iter_openai_schemas,
     known_tool_names,
     openai_schema_for,
     register_tool,
     reset_registry,
     resolve_policy,
+    resolve_timeout,
     specs_for_capabilities,
     specs_in_group,
     static_tool_names,
@@ -241,4 +245,86 @@ def test_specs_for_capabilities_includes_group_and_parameters() -> None:
     assert out["write_file"]["group"] == "filesystem"
     assert out["write_file"]["parameters"]["type"] == "object"
     assert out["run_bash"]["group"] == "bash"
+
+
+def test_coding_groups_constant() -> None:
+    assert "filesystem" in CODING_GROUPS
+    assert "bash" in CODING_GROUPS
+    assert "git" in CODING_GROUPS
+    assert "weather" not in CODING_GROUPS
+
+
+def test_is_coding_tool_matches_only_coding_groups() -> None:
+    assert is_coding_tool("read_file") is True
+    assert is_coding_tool("write_file") is True
+    assert is_coding_tool("run_bash") is True
+    assert is_coding_tool("git_diff") is True
+    assert is_coding_tool("get_weather") is False
+    assert is_coding_tool("schedule_create_job") is False
+    assert is_coding_tool("run_subagent") is False
+    assert is_coding_tool("does_not_exist") is False
+
+
+def test_resolve_timeout_precedence() -> None:
+    # Spec default wins when no override
+    assert resolve_timeout("run_bash") == 30.0
+    assert resolve_timeout("git_diff") == 20.0
+
+    # Unknown tool falls back to module default
+    assert resolve_timeout("__missing__") == DEFAULT_TOOL_TIMEOUT_S
+
+    # Caller override beats both
+    assert resolve_timeout("run_bash", override=5.0) == 5.0
+    assert resolve_timeout("git_diff", override=None) == 20.0
+
+
+def test_spec_default_timeout_s_for_proc_and_git() -> None:
+    out = specs_for_capabilities()
+    assert out["run_bash"]["default_timeout_s"] == 30.0
+    assert out["git_status"]["default_timeout_s"] == 20.0
+    assert out["git_diff"]["default_timeout_s"] == 20.0
+    assert out["git_log"]["default_timeout_s"] == 20.0
+    # Filesystem tools don't have a runtime timeout.
+    assert out["read_file"]["default_timeout_s"] is None
+
+
+def test_output_kind_set_for_every_tool() -> None:
+    out = specs_for_capabilities()
+    expected: dict[str, str] = {
+        "read_file": "text",
+        "search_files": "text",
+        "make_directory": "text",
+        "write_file": "text",
+        "edit_file": "text",
+        "run_bash": "json",
+        "git_status": "text",
+        "git_diff": "text",
+        "git_log": "text",
+        "get_weather": "markdown",
+        "schedule_create_job": "text",
+        "list_jobs": "json",
+        "cancel_job": "text",
+        "run_subagent": "text",
+        "request_skill": "text",
+    }
+    for name, kind in expected.items():
+        assert out[name]["output_kind"] == kind, f"{name} -> {kind}"
+
+
+def test_output_kind_is_none_for_custom_dynamic_spec() -> None:
+    register_tool(
+        _make_spec("__nokind__", risk_tier="safe", requires_approval=False)
+    )
+    try:
+        out = specs_for_capabilities()
+        assert out["__nokind__"]["output_kind"] is None
+        assert out["__nokind__"]["output_description"] == ""
+    finally:
+        reset_registry()
+
+
+def test_output_description_present_in_capabilities() -> None:
+    out = specs_for_capabilities()
+    for name in ("read_file", "run_bash", "get_weather", "list_jobs"):
+        assert out[name]["output_description"], f"{name} should have a description"
 

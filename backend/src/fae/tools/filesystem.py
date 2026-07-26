@@ -16,7 +16,11 @@ FILESYSTEM_TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a UTF-8 text file inside the configured workspace.",
+            "description": (
+                "Read a UTF-8 text file inside the configured workspace. "
+                "When the host has emitted a `<tool_result … offloaded=\"true\" "
+                "path=\"…\">` block, the offload pointer is also readable."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -155,21 +159,27 @@ def dispatch_filesystem_tool(
     arguments: str | dict[str, Any],
     *,
     root: str | Path,
+    extra_roots: tuple[str | Path, ...] = (),
 ) -> str:
     args = _payload(arguments)
     try:
-        base = safe_resolve(root, ".")
+        base = safe_resolve(root, ".", extra_roots=extra_roots)
         if name == "read_file":
-            path = safe_resolve(base, str(args.get("path") or ""))
+            path = safe_resolve(base, str(args.get("path") or ""), extra_roots=extra_roots)
             text = _read_text(path)
             lines = text.splitlines()
             offset = max(1, int(args.get("offset") or 1))
             limit = min(2000, max(1, int(args.get("limit") or 500)))
             selected = lines[offset - 1 : offset - 1 + limit]
+            try:
+                rel_path = str(path.relative_to(base))
+            except ValueError:
+                rel_path = str(path)
             return _json(
                 {
                     "ok": True,
-                    "path": str(path.relative_to(base)),
+                    "path": rel_path,
+                    "root": str(base),
                     "offset": offset,
                     "total_lines": len(lines),
                     "content": "\n".join(selected),
@@ -179,7 +189,7 @@ def dispatch_filesystem_tool(
             query = str(args.get("query") or "")
             if not query:
                 return _json({"ok": False, "error": "query_required"})
-            start = safe_resolve(base, str(args.get("path") or "."))
+            start = safe_resolve(base, str(args.get("path") or "."), extra_roots=extra_roots)
             if not start.exists():
                 return _json({"ok": False, "error": "path_not_found"})
             pattern = str(args.get("glob") or "**/*")

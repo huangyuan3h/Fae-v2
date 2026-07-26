@@ -9,11 +9,14 @@ the full text back when it actually needs it.
 Design choices
 --------------
 - The offload directory is *separate* from archival — it stores transient
-  tool artifacts (last 24h, GC'd on startup), not long-term memory.
+  tool artifacts with a TTL-based GC, not long-term memory.
 - The replacement text is byte-stable per (tool, call_id, content_hash) so
   cache_control on the surrounding prefix survives.
-- We deliberately keep this synchronous; tool dispatch is already async,
-  and an offload file is cheap (single fsync + json write).
+- File names encode only the content digest (and tool / call_id for human
+  readability) — no wall-clock timestamp, so the same content always
+  lands at the same path across processes.
+- We deliberately keep writes synchronous (running inside
+  ``asyncio.to_thread``); an offload file is cheap (single fsync + json).
 """
 
 from __future__ import annotations
@@ -23,7 +26,6 @@ import hashlib
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,20 +42,20 @@ class OffloadResult:
     reason: str | None = None
 
     def to_prompt_replacement(self, tool_name: str) -> str:
-        """Replacement body for the in-prompt tool_result block."""
+        """Replacement body for the in-prompt tool_result block.
+
+        The shape is locked for cache_control byte-stability across re-renders
+        and across processes; tests pin the exact string (see
+        ``tests/test_tool_offload.py::test_prompt_envelope_is_byte_stable``).
+        """
         if self.skipped:
             return ""
-        # Preview lines were captured at write time. We re-derive the
-        # head/tail shape here so cache_control bytes stay stable for a
-        # given digest — the caller has the same digest baked into the
-        # file path, so this string is byte-stable across re-renders.
-        head, sep, tail = (
+        body = (
             f'<tool_offload tool="{tool_name}" path="{self.path}" '
-            f'chars="{self.chars_written}" preview_chars="{self.kept_chars}">',
-            "\n",
-            "\n</tool_offload>",
+            f'chars="{self.chars_written}" preview_chars="{self.kept_chars}">\n'
+            f"</tool_offload>\n"
         )
-        return f"{head}{sep}{tail}"
+        return body
 
 
 class ToolOffloader:
@@ -65,11 +67,13 @@ class ToolOffloader:
         *,
         max_chars: int = 8000,
         keep_lines: int = 20,
+        ttl_s: float = 86_400.0,
         enabled: bool = True,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.max_chars = max(0, max_chars)
         self.keep_lines = max(1, keep_lines)
+        self.ttl_s = max(0.0, ttl_s)
         self.enabled = enabled and self.max_chars > 0
         if self.enabled:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +93,7 @@ class ToolOffloader:
                 chars_written=0,
                 kept_chars=len(result or ""),
                 skipped=True,
-                reason="under_budget" if not self.enabled else None,
+                reason="under_budget" if self.enabled else "disabled",
             )
         path = await asyncio.to_thread(
             self._write_payload, tool_name, call_id, result,
@@ -100,6 +104,45 @@ class ToolOffloader:
             kept_chars=len(_preview_lines(result, self.keep_lines)),
         )
 
+    def cleanup_expired(self, *, now: float | None = None) -> list[str]:
+        """Remove offload files older than ``self.ttl_s``.
+
+        Returns the absolute paths of files that were removed. Safe to
+        call repeatedly; never raises — errors are logged and skipped.
+        """
+        if not self.enabled:
+            return []
+        ttl = self.ttl_s
+        if ttl <= 0:
+            return []
+        cutoff = (now if now is not None else _now()) - ttl
+        removed: list[str] = []
+        try:
+            for entry in self.base_dir.iterdir():
+                if not entry.is_file():
+                    continue
+                if entry.suffix != ".json":
+                    continue
+                try:
+                    mtime = entry.stat().st_mtime
+                except OSError:
+                    continue
+                if mtime >= cutoff:
+                    continue
+                try:
+                    entry.unlink()
+                    removed.append(str(entry))
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    logger.warning(
+                        "tool_offload failed to remove %s: %s", entry, exc,
+                    )
+        except FileNotFoundError:
+            # Base dir may not exist yet on first run; nothing to clean.
+            return []
+        return removed
+
     # ── private helpers ──────────────────────────────────────────────────
 
     def _write_payload(
@@ -107,20 +150,19 @@ class ToolOffloader:
     ) -> Path:
         """Sync write — runs inside asyncio.to_thread to keep the loop free."""
         digest = hashlib.sha256(result.encode("utf-8")).hexdigest()[:12]
-        ts = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        safe_tool = _safe_name(tool_name)
+        safe_tool = _safe_name(tool_name) or "tool"
         safe_id = _safe_name(call_id) or digest
-        fname = f"{ts}-{safe_tool}-{safe_id}-{digest}.json"
+        fname = f"{safe_tool}-{safe_id}-{digest}.json"
         path = self.base_dir / fname
         payload = {
             "tool": tool_name,
             "call_id": call_id,
-            "ts": ts,
             "digest": digest,
             "chars": len(result),
             "preview": _preview_lines(result, self.keep_lines),
             "body": result,
         }
+        # Idempotent overwrite: same content always lands on same path.
         tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False)
@@ -130,6 +172,12 @@ class ToolOffloader:
             path.name, len(result), len(_preview_lines(result, self.keep_lines)),
         )
         return path
+
+
+def _now() -> float:
+    import time as _time
+
+    return _time.time()
 
 
 def _safe_name(value: str) -> str:
@@ -179,3 +227,25 @@ async def maybe_offload_result(
     if off.skipped:
         return result, off
     return off.to_prompt_replacement(tool_name), off
+
+
+async def tool_offload_cleanup_loop(
+    offloader: "ToolOffloader",
+    interval_s: float,
+) -> None:
+    """Periodic background sweep. Cancel the surrounding task to stop."""
+    interval = max(10.0, interval_s)
+    while True:
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        try:
+            removed = offloader.cleanup_expired()
+        except Exception:  # noqa: BLE001
+            logger.exception("tool_offload sweep failed")
+            removed = []
+        if removed:
+            logger.info(
+                "tool_offload sweep removed %d file(s)", len(removed),
+            )
