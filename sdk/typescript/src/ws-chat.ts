@@ -103,7 +103,7 @@ export class WsChatClient {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {
           cleanup();
-          handlers.onDone();
+          handlers.onDone?.({ usage: msg.usage ?? null });
           resolve();
         } else if (msg.type === "error") {
           cleanup();

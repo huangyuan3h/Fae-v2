@@ -105,6 +105,33 @@ class Settings(BaseSettings):
     chat_history_retention_days: int = Field(default=7, ge=1, le=3650)
     chat_history_cleanup_interval_s: float = Field(default=3600.0, ge=0.05)
 
+    # Context budgeting — soft caps so the LLM prompt does not silently
+    # exceed the model's window. None disables the corresponding check.
+    context_window_tokens: int | None = Field(
+        default=None,
+        ge=512,
+        description="Default model context window used for prompt budgeting. "
+        "Per-request LLMConfig.context_window overrides this.",
+    )
+    context_reserve_tokens: int = Field(
+        default=2048,
+        ge=64,
+        description="Tokens reserved for the model's completion (headroom).",
+    )
+    memory_recent_limit: int = Field(
+        default=10, ge=0, le=50,
+        description="Number of recent conversation turns injected into the "
+        "system block. 0 disables recent turns.",
+    )
+    memory_events_limit: int = Field(
+        default=8, ge=0, le=50,
+        description="Max episodic events surfaced per prompt.",
+    )
+    memory_facts_top_k: int = Field(
+        default=10, ge=1, le=50,
+        description="Top-k for memory facts search.",
+    )
+
     # CORS — comma-separated origins for the Next.js UI
     # Include 3001: Next.js falls back when 3000 is already taken.
     cors_origins: str = (

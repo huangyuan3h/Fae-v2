@@ -9,6 +9,14 @@ export type LlmConfigInput = {
   thinking?: ThinkingMode;
 };
 
+export type TokenUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cached_tokens?: number;
+  cache_creation_tokens?: number;
+};
+
 export type WsServerMessage =
   | {
       type: "skills";
@@ -35,7 +43,12 @@ export type WsServerMessage =
       result?: string;
     }
   | { type: "token"; content: string }
-  | { type: "done"; usage: unknown; session_id?: string }
+  | {
+      type: "done";
+      usage: TokenUsage | null;
+      session_id?: string;
+      active_skills?: string[];
+    }
   | {
       type: "notification";
       id?: string;
@@ -73,7 +86,7 @@ export type ToolHandler = (msg: {
 
 export type StreamHandlers = {
   onToken: (token: string) => void;
-  onDone: () => void;
+  onDone?: (info?: { usage?: TokenUsage | null }) => void;
   onError: (code: string, message: string) => void;
   onSkills?: (
     active: string[],

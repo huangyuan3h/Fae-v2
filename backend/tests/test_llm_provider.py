@@ -307,11 +307,10 @@ async def test_openai_provider_returns_usage_when_present() -> None:
 
     assert resp.content == "hi back"
     assert resp.model == "qwen3-test"
-    assert resp.usage == {
-        "prompt_tokens": 11,
-        "completion_tokens": 22,
-        "total_tokens": 33,
-    }
+    assert resp.usage is not None
+    assert resp.usage.prompt_tokens == 11
+    assert resp.usage.completion_tokens == 22
+    assert resp.usage.total_tokens == 33
 
 
 # ── FakeProvider.stream() ────────────────────────────────────────────

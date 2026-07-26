@@ -197,6 +197,10 @@ async def _run_stream(
             assistant_parts.append(token)
             await _send(ws, {"type": "token", "content": token})
         assistant_text = "".join(assistant_parts)
+        stream_usage = getattr(client, "last_stream_usage", None)
+        usage_payload: dict[str, int] | None = None
+        if stream_usage is not None:
+            usage_payload = stream_usage.model_dump(exclude_none=True)
         await persist_chat_history_turn(
             ws.app,
             session_id=session_id,
@@ -217,7 +221,7 @@ async def _run_stream(
             ws,
             {
                 "type": "done",
-                "usage": None,
+                "usage": usage_payload,
                 "session_id": session_id,
                 "active_skills": last_active,
             },

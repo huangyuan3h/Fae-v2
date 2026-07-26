@@ -16,6 +16,7 @@ export type {
   NotifyHandler,
   StreamHandlers,
   SubagentHandler,
+  TokenUsage,
   ToolHandler,
   ThinkingMode,
   WsServerMessage,

@@ -53,6 +53,52 @@ def is_identity_tagged(tags: list[str] | None) -> bool:
     return bool(_IDENTITY_FACT_TAGS.intersection(tags))
 
 
+def clip_recent_turns_for_budget(text: str, *, char_budget: int) -> str:
+    """Trim [recent_turns] block from the top when over the char budget.
+
+    The memory block produced by ``recall_for_prompt`` has shape::
+
+        [persona] ...
+        [human] ...
+        [current] ...
+        [recent_turns]
+        user: ...
+        assistant: ...
+        user: ...
+        ...
+
+    ``persona`` / ``human`` / ``current`` must remain stable for prefix
+    cache; only the [recent_turns] tail is trimmed, keeping the
+    newest lines.
+
+    The block is split on the last newline within the recent_turns tail
+    so we never leave a half line at the cut. If the head alone exceeds
+    the budget, the recent_turns block is dropped entirely.
+    """
+    if not text or char_budget <= 0 or len(text) <= char_budget:
+        return text
+    marker = "[recent_turns]"
+    idx = text.find(marker)
+    if idx < 0:
+        return text[-char_budget:]
+    head = text[: idx + len(marker)]
+    tail = text[idx + len(marker) :]
+    available = char_budget - len(head)
+    if available <= 0:
+        # Head alone exceeds budget — drop recent_turns entirely and
+        # truncate the tail of head to fit.
+        head_kept = head[:char_budget]
+        return f"{head_kept}\n... [recent_turns trimmed to fit] ..."
+    if len(tail) <= available:
+        return text
+    keep = tail[-available:]
+    cut = keep.find("\n")
+    if cut > 0 and cut < len(keep) - 1:
+        keep = keep[cut + 1 :]
+    note = f"\n... [trimmed {len(tail) - len(keep)} chars] ..."
+    return f"{head}{note}{keep}"
+
+
 async def core_stats_from_client(client: Any) -> dict[str, Any]:
     """Read persona/human/current and return size stats."""
     labels = ("persona", "human", "current")

@@ -217,6 +217,9 @@ async def lifespan(app: FastAPI):
                     compactor=stack.compactor,
                     episodic=stack.episodic,
                     on_persist=_on_persist,
+                    recent_limit=settings.memory_recent_limit,
+                    events_limit=settings.memory_events_limit,
+                    facts_top_k=settings.memory_facts_top_k,
                 )
                 app.state.memory_client = stack.client
             else:

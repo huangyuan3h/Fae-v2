@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover — only on stripped openai builds
     LengthFinishReasonError = None  # type: ignore[assignment,misc]
 
 from fae.llm.errors import LLMError
-from fae.llm.types import ChatRequest, ChatResponse, ToolCall
+from fae.llm.types import ChatRequest, ChatResponse, TokenUsage, ToolCall
 
 logger = logging.getLogger("fae.llm")
 
@@ -45,6 +45,45 @@ def _thinking_extra_body(thinking: str) -> dict[str, object] | None:
     if thinking == "adaptive":
         return {"thinking": {"type": "adaptive"}}
     return None
+
+
+def _extra_body(cfg) -> dict[str, object] | None:
+    """Combine thinking + prompt_cache_key into a single extra_body dict."""
+    body = _thinking_extra_body(cfg.thinking)
+    if cfg.prompt_cache_key:
+        cache_body = {"prompt_cache_key": cfg.prompt_cache_key}
+        if body is None:
+            return cache_body
+        body.update(cache_body)
+    return body
+
+
+def _extract_usage(resp_usage: object) -> TokenUsage | None:
+    """Build a TokenUsage from the openai SDK response.usage object."""
+    if resp_usage is None:
+        return None
+    prompt = getattr(resp_usage, "prompt_tokens", None)
+    completion = getattr(resp_usage, "completion_tokens", None)
+    total = getattr(resp_usage, "total_tokens", None)
+    if prompt is None and completion is None and total is None:
+        return None
+    cached: int | None = None
+    cache_creation: int | None = None
+    details = getattr(resp_usage, "prompt_tokens_details", None)
+    if details is not None:
+        cached = getattr(details, "cached_tokens", None)
+    cache_creation = getattr(resp_usage, "cache_creation_input_tokens", None)
+    if cached is None:
+        hit = getattr(resp_usage, "prompt_cache_hit_tokens", None)
+        if hit is not None:
+            cached = hit
+    return TokenUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        cached_tokens=cached,
+        cache_creation_tokens=cache_creation,
+    )
 
 
 def _delta_reasoning_text(delta: object) -> str | None:
@@ -190,6 +229,10 @@ class OpenAICompatibleProvider:
 
     def __init__(self, default_timeout_s: float = 10.0) -> None:
         self._default_timeout_s = default_timeout_s
+        # Captured usage from the most recently completed stream. Cleared
+        # at the start of every stream so callers can read it after the
+        # generator finishes.
+        self.last_stream_usage: TokenUsage | None = None
 
     def _client_for(self, request: ChatRequest) -> AsyncOpenAI:
         cfg = request.config
@@ -197,6 +240,7 @@ class OpenAICompatibleProvider:
             base_url=cfg.base_url,
             api_key=cfg.api_key,
             timeout=self._default_timeout_s,
+            default_headers=cfg.headers,
         )
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
@@ -213,7 +257,7 @@ class OpenAICompatibleProvider:
                 kwargs["tools"] = request.tools
                 if request.tool_choice is not None:
                     kwargs["tool_choice"] = request.tool_choice
-            extra = _thinking_extra_body(cfg.thinking)
+            extra = _extra_body(cfg)
             if extra:
                 kwargs["extra_body"] = extra
             try:
@@ -245,13 +289,7 @@ class OpenAICompatibleProvider:
                         arguments=getattr(fn, "arguments", None) or "{}",
                     )
                 )
-            usage: dict[str, int] | None = None
-            if resp.usage is not None:
-                usage = {
-                    "prompt_tokens": resp.usage.prompt_tokens,
-                    "completion_tokens": resp.usage.completion_tokens,
-                    "total_tokens": resp.usage.total_tokens,
-                }
+            usage = _extract_usage(getattr(resp, "usage", None))
             return ChatResponse(
                 content=content,
                 model=resp.model,
@@ -266,10 +304,15 @@ class OpenAICompatibleProvider:
 
         Yields assistant content piece by piece. Cancellation closes both
         the streaming response and the underlying AsyncOpenAI client.
+
+        Token usage is captured when the final chunk arrives (openai SDK
+        streams usage as a separate choice) and stored on the response.
         """
         cfg = request.config
         client = self._client_for(request)
         response: object | None = None
+        stream_usage: TokenUsage | None = None
+        self.last_stream_usage = None
         try:
             create_kwargs: dict = {
                 "model": cfg.model,
@@ -277,8 +320,9 @@ class OpenAICompatibleProvider:
                 "temperature": request.temperature,
                 "max_tokens": request.max_tokens,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
-            extra = _thinking_extra_body(cfg.thinking)
+            extra = _extra_body(cfg)
             if extra:
                 create_kwargs["extra_body"] = extra
             try:
@@ -297,6 +341,10 @@ class OpenAICompatibleProvider:
                 in_reasoning = False
                 async for chunk in response:  # type: ignore[union-attr]
                     if not chunk.choices:
+                        # Final usage chunk (when stream_options.include_usage).
+                        chunk_usage = getattr(chunk, "usage", None)
+                        if chunk_usage is not None:
+                            stream_usage = _extract_usage(chunk_usage)
                         continue
                     delta = chunk.choices[0].delta
                     reasoning = _delta_reasoning_text(delta)
@@ -332,6 +380,7 @@ class OpenAICompatibleProvider:
             if response is not None:
                 await _aclose(response)
             await _aclose(client)
+            self.last_stream_usage = stream_usage
 
 
 class FakeProvider:

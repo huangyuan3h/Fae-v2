@@ -200,7 +200,7 @@ class EpisodicStore:
                     """
                     SELECT id, session_id, kind, summary, raw_text, created_at
                     FROM events WHERE session_id = ?
-                    ORDER BY created_at DESC LIMIT ?
+                    ORDER BY created_at DESC, id DESC LIMIT ?
                     """,
                     (sid, lim * 3 if q else lim),
                 ).fetchall()
@@ -209,7 +209,7 @@ class EpisodicStore:
                     """
                     SELECT id, session_id, kind, summary, raw_text, created_at
                     FROM events
-                    ORDER BY created_at DESC LIMIT ?
+                    ORDER BY created_at DESC, id DESC LIMIT ?
                     """,
                     (lim * 3 if q else lim,),
                 ).fetchall()

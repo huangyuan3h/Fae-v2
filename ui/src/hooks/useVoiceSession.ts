@@ -59,6 +59,7 @@ import {
   updateChatSessionTitle,
   WsChatClient,
   type ChatSessionSummary,
+  type TokenUsage,
 } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";

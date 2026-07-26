@@ -11,7 +11,10 @@ from fae.memory.episodic import (
     detect_life_events,
     format_events_for_prompt,
 )
-from fae.memory.core_budget import is_identity_tagged
+from fae.memory.core_budget import (
+    clip_recent_turns_for_budget,
+    is_identity_tagged,
+)
 from fae.memory.fact_extract import facts_from_turn
 from fae.memory.protocol import MemoryClient
 from fae.memory.schemas import FactIn, FactOut
@@ -38,12 +41,18 @@ class LettaMemoryService:
         compactor: MemoryCompactor | None = None,
         episodic: EpisodicStore | None = None,
         on_persist: Callable[[str], None] | None = None,
+        recent_limit: int = 10,
+        events_limit: int = 8,
+        facts_top_k: int = 10,
     ) -> None:
         self._client = client
         self._archival = archival
         self._compactor = compactor
         self._episodic = episodic
         self._on_persist = on_persist
+        self._recent_limit = max(0, int(recent_limit))
+        self._events_limit = max(0, int(events_limit))
+        self._facts_top_k = max(1, int(facts_top_k))
 
     @property
     def enabled(self) -> bool:
@@ -65,27 +74,45 @@ class LettaMemoryService:
     def episodic(self) -> EpisodicStore | None:
         return self._episodic
 
+    @property
+    def recent_limit(self) -> int:
+        return self._recent_limit
+
+    @property
+    def events_limit(self) -> int:
+        return self._events_limit
+
+    @property
+    def facts_top_k(self) -> int:
+        return self._facts_top_k
+
     async def recall_context(
         self,
         query: str,
         *,
         session_id: str | None = None,
-        top_k: int = 10,
+        top_k: int | None = None,
+        char_budget: int | None = None,
     ) -> str:
         if self._client is None:
             return ""
+        k = self._facts_top_k if top_k is None else max(1, int(top_k))
         try:
             base = await self._client.recall_for_prompt(
                 query,
                 session_id=session_id,
-                top_k=top_k,
-                recent_limit=10,
+                top_k=k,
+                recent_limit=self._recent_limit,
             )
         except Exception:  # noqa: BLE001
             logger.exception("recall_context failed")
             return ""
+        if char_budget is not None and char_budget > 0:
+            base = clip_recent_turns_for_budget(
+                base, char_budget=char_budget,
+            )
         with_archival = await self._merge_archival(
-            base, query, session_id=session_id, top_k=top_k
+            base, query, session_id=session_id, top_k=k
         )
         return self._merge_events(with_archival, query, session_id=session_id)
 
@@ -142,16 +169,18 @@ class LettaMemoryService:
         *,
         session_id: str | None,
     ) -> str:
-        if self._episodic is None:
+        if self._episodic is None or self._events_limit <= 0:
             return base
         try:
             events = self._episodic.list_events(
                 session_id=session_id,
-                limit=8,
+                limit=self._events_limit,
                 query=query or None,
             )
             if not events and session_id:
-                events = self._episodic.list_events(session_id=session_id, limit=5)
+                events = self._episodic.list_events(
+                    session_id=session_id, limit=max(1, self._events_limit - 3),
+                )
         except Exception:  # noqa: BLE001
             logger.exception("episodic list failed")
             return base
@@ -202,9 +231,12 @@ class LettaMemoryService:
         request: ChatRequest,
         *,
         session_id: str | None = None,
+        char_budget: int | None = None,
     ) -> ChatRequest:
         user_text = _last_user_text(request)
-        memory = await self.recall_context(user_text, session_id=session_id)
+        memory = await self.recall_context(
+            user_text, session_id=session_id, char_budget=char_budget,
+        )
         return self.inject_into_request(request, memory)
 
     async def persist_turn(

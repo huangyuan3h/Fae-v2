@@ -161,7 +161,7 @@ async def memory_put_profile(body: ProfileUpdate, request: Request) -> ProfileOu
 
 @router.get("/stats")
 async def memory_stats(request: Request) -> dict:
-    """Core block sizes, hot recall count, and archival health."""
+    """Core block sizes, hot recall count, archival health, and LLM usage."""
     memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
     client = memory.client if memory else None
     recall = getattr(request.app.state, "recall_store", None)
@@ -177,6 +177,12 @@ async def memory_stats(request: Request) -> dict:
     vector_mode = "stub"
     if archival is not None:
         vector_mode = getattr(archival, "vector_mode", "stub") or "stub"
+    llm_client = getattr(request.app.state, "llm_client", None)
+    usage = llm_client.usage_snapshot() if llm_client is not None else {}
+    cache_hit_ratio: float | None = None
+    if usage.get("prompt_tokens"):
+        cached = usage.get("cached_tokens", 0)
+        cache_hit_ratio = round(cached / usage["prompt_tokens"], 4)
     return {
         "recall_turns": recall.total_hot() if recall is not None else 0,
         "core": core,
@@ -188,6 +194,8 @@ async def memory_stats(request: Request) -> dict:
             if getattr(request.app.state, "sleeptime", None) is not None
             else "off"
         ),
+        "llm_usage": usage,
+        "cache_hit_ratio": cache_hit_ratio,
     }
 
 

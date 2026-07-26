@@ -32,6 +32,23 @@ class LLMConfig(BaseModel):
         default="auto",
         description="Provider thinking/reasoning mode (MiniMax-compatible).",
     )
+    headers: dict[str, str] | None = Field(
+        default=None,
+        description="Extra HTTP headers sent on every request "
+        "(e.g. anthropic-beta, X-Request-ID, trace headers).",
+    )
+    context_window: int | None = Field(
+        default=None,
+        ge=128,
+        description="Provider context window size in tokens. "
+        "Used for client-side prompt budgeting. None disables budgeting.",
+    )
+    prompt_cache_key: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Provider-specific prompt cache key (OpenAI/Azure). "
+        "Bind to session_id to keep prefix-cache locality.",
+    )
 
 
 class ChatMessage(BaseModel):
@@ -66,10 +83,26 @@ class ChatRequest(BaseModel):
     tool_choice: str | dict | None = None
 
 
+class TokenUsage(BaseModel):
+    """Normalised token usage across providers.
+
+    Provider-agnostic fields:
+    - prompt_tokens / completion_tokens / total_tokens
+    - cached_tokens: tokens served from prefix / prompt cache (if reported)
+    - cache_creation_tokens: tokens written into a 1h cache (Anthropic)
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+
+
 class ChatResponse(BaseModel):
     """Assistant turn returned to the caller."""
 
     content: str
     model: str
-    usage: dict[str, int] | None = None
+    usage: TokenUsage | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
