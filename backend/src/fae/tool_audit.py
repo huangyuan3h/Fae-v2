@@ -290,6 +290,21 @@ class ToolAuditStore:
             rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_event(row) for row in rows]
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cursor = self._conn.execute(
+                    "DELETE FROM tool_audit_events"
+                )
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM tool_audit_events WHERE session_id = ?",
+                    (sid,),
+                )
+            self._conn.commit()
+            return cursor.rowcount
+
     def _row_to_event(self, row: sqlite3.Row) -> ToolAuditEvent:
         ok = row["ok"]
         return ToolAuditEvent(

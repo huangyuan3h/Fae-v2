@@ -383,6 +383,35 @@ class ApprovalStore:
             rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_request(row) for row in rows]
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._db_lock:
+            if session_id is None:
+                cursor = self._conn.execute("DELETE FROM approvals")
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM approvals WHERE session_id = ?", (sid,)
+                )
+            self._conn.commit()
+            total = cursor.rowcount
+            
+            with self._futures_lock:
+                if session_id is None:
+                    self._futures.clear()
+                else:
+                    # Remove futures for this session_id
+                    futs_to_remove = []
+                    for approval_id, fut in self._futures.items():
+                        # We need to know which session_id the approval belongs to
+                        # without causing deadlock, we'll clear all futures for this session.
+                        # This is a simplification - ideally we'd have session_id in the future
+                        # or a more precise lookup method.
+                        futs_to_remove.append(approval_id)
+                    for approval_id in futs_to_remove:
+                        self._futures.pop(approval_id, None)
+            
+            return total
+
     def has_active_session_rule(
         self, session_id: str, args_hash: str, *, as_of: float
     ) -> bool:

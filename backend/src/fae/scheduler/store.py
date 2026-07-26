@@ -557,3 +557,57 @@ class ScheduleStore:
             updated_at=now,
         )
         return self.upsert_job(job)
+
+    def clear_user(
+        self,
+        *,
+        session_id: str | None = None,
+    ) -> int:
+        """Clear user data while keeping builtin jobs and global prefs.
+
+        Session-scoped: clear inbox, activity, outreach for one session.
+        Global: clear all non-builtin jobs, inbox, activity, outreach.
+        """
+        with self._lock:
+            total = 0
+            if session_id is None:
+                # Global: remove all non-builtin jobs
+                cur = self._conn.execute(
+                    "DELETE FROM jobs WHERE builtin = 0"
+                )
+                total += cur.rowcount
+                # Clear inbox, activity, outreach
+                self._conn.execute("DELETE FROM notification_inbox")
+                self._conn.execute("DELETE FROM activity_last_at")
+                self._conn.execute("DELETE FROM outreach_state")
+            else:
+                sid = (session_id or "").strip() or "default"
+                # Remove session-scoped data
+                self._conn.execute(
+                    "DELETE FROM notification_inbox WHERE session_id = ?",
+                    (sid,),
+                )
+                self._conn.execute(
+                    "DELETE FROM activity_last_at WHERE session_id = ?",
+                    (sid,),
+                )
+                self._conn.execute(
+                    "DELETE FROM outreach_state WHERE session_id = ?",
+                    (sid,),
+                )
+                # Remove non-builtin jobs that reference this session in meta
+                rows = self._conn.execute(
+                    "SELECT id, meta_json FROM jobs WHERE builtin = 0"
+                ).fetchall()
+                for row in rows:
+                    try:
+                        meta = json.loads(row["meta_json"] or "{}")
+                    except json.JSONDecodeError:
+                        meta = {}
+                    if meta.get("session_id") == sid:
+                        self._conn.execute(
+                            "DELETE FROM jobs WHERE id = ?", (row["id"],)
+                        )
+                        total += 1
+            self._conn.commit()
+            return total

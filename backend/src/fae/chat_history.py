@@ -319,6 +319,26 @@ class ChatHistoryStore:
             ).fetchone()
         return int(row["n"] if row else 0)
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cursor = self._conn.execute(
+                    "DELETE FROM chat_history_turns"
+                )
+                self._conn.execute("DELETE FROM chat_history_sessions")
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM chat_history_turns WHERE session_id = ?",
+                    (sid,),
+                )
+                self._conn.execute(
+                    "DELETE FROM chat_history_sessions WHERE session_id = ?",
+                    (sid,),
+                )
+            self._conn.commit()
+            return cursor.rowcount
+
     def close(self) -> None:
         with self._lock:
             if self._closed:

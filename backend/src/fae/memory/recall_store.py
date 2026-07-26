@@ -160,6 +160,18 @@ class RecallStore:
             self._conn.close()
         logger.debug("RecallStore closed path=%s", self.db_path)
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cursor = self._conn.execute("DELETE FROM recall_turns")
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM recall_turns WHERE session_id = ?", (sid,)
+                )
+            self._conn.commit()
+            return cursor.rowcount
+
 
 def _row_to_turn(row: sqlite3.Row) -> RecallTurn:
     return RecallTurn(

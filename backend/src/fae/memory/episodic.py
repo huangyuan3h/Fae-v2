@@ -238,6 +238,25 @@ class EpisodicStore:
             self._conn.close()
         logger.debug("EpisodicStore closed path=%s", self.db_path)
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cur_links = self._conn.execute("DELETE FROM event_links")
+                cur_events = self._conn.execute("DELETE FROM events")
+                self._conn.commit()
+                return cur_links.rowcount + cur_events.rowcount
+            else:
+                sid = (session_id or "").strip() or "default"
+                cur_links = self._conn.execute(
+                    "DELETE FROM event_links WHERE event_id IN (SELECT id FROM events WHERE session_id = ?)",
+                    (sid,),
+                )
+                cur_events = self._conn.execute(
+                    "DELETE FROM events WHERE session_id = ?", (sid,)
+                )
+                self._conn.commit()
+                return cur_links.rowcount + cur_events.rowcount
+
 
 def _row_to_event(row: sqlite3.Row) -> EpisodeEvent:
     return EpisodeEvent(

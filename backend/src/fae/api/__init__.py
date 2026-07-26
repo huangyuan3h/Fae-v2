@@ -37,6 +37,7 @@ from fae.api.chat_history import (
 )
 from fae.api.deps import get_llm_client
 from fae.api.approvals import router as approvals_router, session_policies_router
+from fae.api.data_forget import router as data_forget_router
 from fae.api.memory import router as memory_router
 from fae.api.notifications import router as notifications_router
 from fae.api.pipeline import router as pipeline_router
@@ -1035,6 +1036,7 @@ def create_app(
 
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
+    app.include_router(data_forget_router)
     app.include_router(chat_history_router)
     app.include_router(tool_audit_router)
     app.include_router(agent_trace_router)

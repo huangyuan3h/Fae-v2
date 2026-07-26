@@ -117,6 +117,8 @@ class ArchivalBackend(Protocol):
 
     async def close(self) -> None: ...
 
+    async def clear(self, *, session_id: str | None = None) -> int: ...
+
 
 # id, text, session_id, vector, created_at, last_accessed, tags
 _StubItem = tuple[str, str, str, list[float], str, str, list[str]]
@@ -231,6 +233,18 @@ class StubArchival:
 
     async def close(self) -> None:
         return None
+
+    async def clear(self, *, session_id: str | None = None) -> int:
+        """Clear items. If session_id is provided, only remove items for that session.
+        If session_id is None, clear the entire store."""
+        before = len(self._items)
+        if session_id is None:
+            self._items.clear()
+        else:
+            sid = (session_id or "").strip() or "default"
+            self._items = [i for i in self._items if i[2] != sid]
+        after = len(self._items)
+        return before - after
 
 
 class QdrantArchival:
@@ -418,6 +432,27 @@ class QdrantArchival:
 
     async def close(self) -> None:
         await self._http.aclose()
+
+    async def clear(self, *, session_id: str | None = None) -> int:
+        """Clear points. If session_id is provided, only remove points for that session.
+        If session_id is None, delete the entire collection."""
+        await self.ensure_ready()
+        if session_id is None:
+            resp = await self._http.delete(f"/collections/{self.collection}")
+            resp.raise_for_status()
+            return 0  # Qdrant doesn't provide count for collection delete
+        else:
+            sid = (session_id or "").strip() or "default"
+            resp = await self._http.post(
+                f"/collections/{self.collection}/points/delete",
+                json={
+                    "filter": {
+                        "must": [{"key": "session_id", "match": {"value": sid}}]
+                    }
+                }
+            )
+            resp.raise_for_status()
+            return 0  # Qdrant doesn't provide count for filter delete
 
 
 async def create_archival(

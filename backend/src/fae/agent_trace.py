@@ -289,6 +289,21 @@ class AgentTraceStore:
             rows = self._conn.execute(query, params).fetchall()
         return [_row_to_event(row) for row in rows]
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cursor = self._conn.execute(
+                    "DELETE FROM agent_trace_events"
+                )
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM agent_trace_events WHERE session_id = ?",
+                    (sid,),
+                )
+            self._conn.commit()
+            return cursor.rowcount
+
     def close(self) -> None:
         if self._closed:
             return

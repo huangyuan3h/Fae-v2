@@ -143,6 +143,31 @@ class ToolOffloader:
             return []
         return removed
 
+    def clear(self, session_id: str | None = None) -> int:
+        """Clear offload files. Session_id is ignored — offload files
+        are transient and don't carry session metadata."""
+        if not self.enabled or self.max_chars <= 0:
+            return 0
+        removed: list[Path] = []
+        try:
+            for entry in self.base_dir.iterdir():
+                if not entry.is_file() or entry.suffix != ".json":
+                    continue
+                try:
+                    entry.unlink()
+                    removed.append(entry)
+                except (FileNotFoundError, OSError) as e:
+                    logger.debug(
+                        "tool_offload clear failed to remove %s: %s", entry, e,
+                    )
+            return len(removed)
+        except FileNotFoundError:
+            return 0
+
+    def clear_session(self, session_id: str) -> int:
+        """Remove all offload files (no session filtering — offload files don't track sessions)."""
+        return self.clear()
+
     # ── private helpers ──────────────────────────────────────────────────
 
     def _write_payload(

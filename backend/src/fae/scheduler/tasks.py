@@ -674,6 +674,18 @@ class TaskStore:
                 self._conn.close()
                 self._closed = True
 
+    def clear(self, session_id: str | None = None) -> int:
+        with self._lock:
+            if session_id is None:
+                cursor = self._conn.execute("DELETE FROM tasks")
+            else:
+                sid = (session_id or "").strip() or "default"
+                cursor = self._conn.execute(
+                    "DELETE FROM tasks WHERE session_id = ?", (sid,)
+                )
+            self._conn.commit()
+            return cursor.rowcount
+
 
 def _row_to_task(row: sqlite3.Row) -> Task:
     return Task(

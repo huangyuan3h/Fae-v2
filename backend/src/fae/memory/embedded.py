@@ -261,6 +261,26 @@ class EmbeddedMemoryClient:
             self._conn.commit()
             return cur.rowcount > 0
 
+    async def delete_all_facts(self) -> int:
+        agent_id = self._require_agent()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM facts WHERE agent_id = ?", (agent_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    async def delete_session_facts(self, session_id: str) -> int:
+        agent_id = self._require_agent()
+        sid = (session_id or "").strip() or "default"
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM facts WHERE agent_id = ? AND session_id = ?",
+                (agent_id, sid),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     async def update_user(self, profile: UserProfile) -> UserProfile:
         from fae.memory.profile_block import merge_human_profile
 

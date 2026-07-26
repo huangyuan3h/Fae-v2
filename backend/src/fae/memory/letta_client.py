@@ -266,6 +266,74 @@ class LettaMemoryClient:
                 return False
         return False
 
+    async def delete_all_facts(self) -> int:
+        agent_id = self._require_agent()
+        total = 0
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory",
+            f"/v1/agents/{agent_id}/passages",
+        ):
+            try:
+                resp = await self._http.get(path)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code >= 400:
+                continue
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("passages") or data.get("results") or data.get("items") or []
+            for item in items:
+                fid = str(item.get("id") or item.get("fact_id") or "")
+                if not fid:
+                    continue
+                for del_path in (
+                    f"/v1/agents/{agent_id}/archival-memory/{fid}",
+                    f"/v1/agents/{agent_id}/passages/{fid}",
+                ):
+                    try:
+                        dresp = await self._http.delete(del_path)
+                    except httpx.HTTPError:
+                        continue
+                    if dresp.status_code < 400:
+                        total += 1
+                        break
+        return total
+
+    async def delete_session_facts(self, session_id: str) -> int:
+        agent_id = self._require_agent()
+        sid = (session_id or "").strip() or "default"
+        total = 0
+        for path in (
+            f"/v1/agents/{agent_id}/archival-memory",
+            f"/v1/agents/{agent_id}/passages",
+        ):
+            try:
+                resp = await self._http.get(path)
+            except httpx.HTTPError:
+                continue
+            if resp.status_code >= 400:
+                continue
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("passages") or data.get("results") or data.get("items") or []
+            for item in items:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                if metadata.get("session_id") != sid:
+                    continue
+                fid = str(item.get("id") or item.get("fact_id") or "")
+                if not fid:
+                    continue
+                for del_path in (
+                    f"/v1/agents/{agent_id}/archival-memory/{fid}",
+                    f"/v1/agents/{agent_id}/passages/{fid}",
+                ):
+                    try:
+                        dresp = await self._http.delete(del_path)
+                    except httpx.HTTPError:
+                        continue
+                    if dresp.status_code < 400:
+                        total += 1
+                        break
+        return total
+
     async def search(self, query: str, *, top_k: int = 10) -> list[FactOut]:
         agent_id = self._require_agent()
         params = {"query": query, "top_k": top_k}
