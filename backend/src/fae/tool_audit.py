@@ -216,6 +216,9 @@ class ToolAuditStore:
                         ),
                     )
                 else:
+                    # Preserve existing turn_id from the start row unless the
+                    # terminal event explicitly carries a new one.
+                    merged_turn_id = turn_id_clean or row["turn_id"]
                     self._conn.execute(
                         """
                         UPDATE tool_audit_events
@@ -231,7 +234,7 @@ class ToolAuditStore:
                             error_code,
                             approval_status,
                             approval_id,
-                            turn_id_clean,
+                            merged_turn_id,
                             finished_at,
                             duration_ms,
                             event_id,

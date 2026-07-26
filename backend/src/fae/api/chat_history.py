@@ -168,13 +168,13 @@ async def persist_chat_history_turn(
     user_text: str,
     assistant_text: str,
     trace_turn_id: str | None = None,
-) -> None:
+) -> ChatHistoryTurn | None:
     state = getattr(app, "state", None)
     store = getattr(state, "chat_history", None)
     if not isinstance(store, ChatHistoryStore) or store.closed or not user_text:
-        return
+        return None
     try:
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             store.append,
             session_id,
             user_text,
@@ -183,3 +183,4 @@ async def persist_chat_history_turn(
         )
     except Exception:
         logger.exception("Failed to persist chat history turn")
+        return None
