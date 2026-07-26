@@ -91,6 +91,7 @@ async def handle_inbound_text(
     schedule_store: ScheduleStore | None = None,
     activity: ActivityTracker | None = None,
     chat_history_store: ChatHistoryStore | None = None,
+    tool_offloader: Any | None = None,
     session_id: str = DEFAULT_SESSION_ID,
     on_schedule_mutated: Any | None = None,
 ) -> str:
@@ -172,6 +173,7 @@ async def handle_inbound_text(
                 bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),
                 git_enabled=git_on,
                 git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
+                tool_offloader=tool_offloader,
             )
             if early and "日程工具" in early and callable(on_schedule_mutated):
                 on_schedule_mutated()

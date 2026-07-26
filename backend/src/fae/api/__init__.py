@@ -115,6 +115,31 @@ def _build_sleeptime(
         or stack.recall is None
     ):
         return None
+    reflection_runner = None
+    if settings.reflection_enabled:
+        try:
+            from fae.channels.bridge import resolve_server_llm_config
+            from fae.llm.client import LLMClient
+            from fae.llm.provider import OpenAICompatibleProvider
+            from fae.memory.reflection import SubagentReflectionRunner
+
+            cfg = resolve_server_llm_config(settings)
+            if cfg is not None:
+                reflection_runner = SubagentReflectionRunner(
+                    llm=LLMClient(
+                        OpenAICompatibleProvider(
+                            default_timeout_s=settings.llm_timeout_s,
+                        )
+                    ),
+                    config=cfg,
+                    max_task_chars=settings.reflection_max_task_chars,
+                    timeout_s=settings.reflection_timeout_s,
+                    current_char_limit=settings.core_current_char_limit,
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "reflection runner disabled — falling back to heuristic"
+            )
     consolidator = MemoryConsolidator(
         stack.client,
         stack.recall,
@@ -122,6 +147,7 @@ def _build_sleeptime(
         compactor=stack.compactor,
         current_char_limit=settings.core_current_char_limit,
         max_runtime_s=settings.sleeptime_max_runtime_s,
+        reflection_runner=reflection_runner,
     )
     return SleeptimeScheduler(
         consolidator,
@@ -193,6 +219,23 @@ async def lifespan(app: FastAPI):
     )
     app.state.delivery = delivery
 
+    # R5 tool offload (Context Engineering) — singleton wired for the chat
+    # + WS layer to swap oversized tool results with on-disk pointers.
+    from fae.agent.tool_offload import ToolOffloader
+
+    if settings.tool_offload_enabled:
+        offload_root = (settings.tool_offload_dir or "").strip() or ".data/tool-offload"
+        if not Path(offload_root).is_absolute():
+            offload_root = str(REPO_ROOT / offload_root)
+        app.state.tool_offloader = ToolOffloader(
+            base_dir=offload_root,
+            max_chars=settings.tool_offload_chars,
+            keep_lines=settings.tool_offload_keep_lines,
+            enabled=True,
+        )
+    else:
+        app.state.tool_offloader = None
+
     # Allow tests to pre-set app.state.memory before lifespan runs.
     if getattr(app.state, "memory", None) is None:
         stack: MemoryStack | None = None
@@ -216,6 +259,7 @@ async def lifespan(app: FastAPI):
                     archival=stack.archival,
                     compactor=stack.compactor,
                     episodic=stack.episodic,
+                    summarizer=stack.summarizer,
                     on_persist=_on_persist,
                     recent_limit=settings.memory_recent_limit,
                     events_limit=settings.memory_events_limit,
@@ -310,6 +354,7 @@ async def lifespan(app: FastAPI):
                 chat_history_store=chat_history_store
                 if isinstance(chat_history_store, ChatHistoryStore)
                 else None,
+                tool_offloader=getattr(app.state, "tool_offloader", None),
                 session_id="default",
                 on_schedule_mutated=_resync,
             )
@@ -712,6 +757,7 @@ def create_app(
                     bash_timeout_s=float(getattr(settings, "coding_bash_timeout_s", 30.0)),
                     git_enabled=git_on,
                     git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
+                    tool_offloader=getattr(request.app.state, "tool_offloader", None),
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)

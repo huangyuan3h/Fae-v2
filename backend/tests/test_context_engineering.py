@@ -251,3 +251,149 @@ async def test_llm_client_records_usage(tmp_path: Path) -> None:
     assert snap["prompt_tokens"] == 10
     assert snap["cached_tokens"] == 4
     assert snap["calls"] == 1
+
+
+# ── R1: cache_control (Anthropic prompt cache) ────────────────────────
+
+
+def test_cache_control_marker_resolves_modes() -> None:
+    from fae.llm.provider import _cache_control_marker
+
+    assert _cache_control_marker(None) == {"type": "ephemeral"}
+    assert _cache_control_marker("auto") == {"type": "ephemeral"}
+    assert _cache_control_marker("off") is None
+    assert _cache_control_marker("ephemeral-5m") == {
+        "type": "ephemeral", "ttl": "5m",
+    }
+    assert _cache_control_marker("ephemeral-1h") == {
+        "type": "ephemeral", "ttl": "1h",
+    }
+
+
+def test_cache_control_detects_anthropic_endpoint() -> None:
+    from fae.llm.provider import _is_anthropic_endpoint
+
+    assert _is_anthropic_endpoint(
+        LLMConfig(base_url="https://api.anthropic.com/v1")
+    )
+    assert _is_anthropic_endpoint(
+        LLMConfig(
+            base_url="https://dashscope.aliyuncs.com/anthropic-compatible/v1"
+        )
+    )
+    assert _is_anthropic_endpoint(
+        LLMConfig(
+            base_url="https://gateway.example.com/v1",
+            headers={"anthropic-version": "2023-06-01"},
+        )
+    )
+    assert not _is_anthropic_endpoint(
+        LLMConfig(base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
+    )
+    assert not _is_anthropic_endpoint(
+        LLMConfig(base_url="https://api.openai.com/v1")
+    )
+
+
+def test_extra_body_merges_cache_control_marker() -> None:
+    from fae.llm.provider import _extra_body
+
+    cfg = LLMConfig(
+        base_url="https://api.anthropic.com/v1",
+        thinking="adaptive",
+        prompt_cache_key="s-1",
+        cache_control="ephemeral-1h",
+    )
+    body = _extra_body(cfg)
+    assert body is not None
+    assert body.get("cache_control") == {"type": "ephemeral", "ttl": "1h"}
+    assert body.get("thinking") == {"type": "adaptive"}
+    assert body.get("prompt_cache_key") == "s-1"
+
+
+def test_apply_cache_control_injects_system_marker_and_tool_marker() -> None:
+    from fae.llm.provider import _apply_cache_control_to_kwargs
+
+    cfg = LLMConfig(
+        base_url="https://api.anthropic.com/v1",
+        cache_control="ephemeral-1h",
+        prompt_cache_key="default",
+    )
+    kwargs: dict = {
+        "messages": [
+            {"role": "system", "content": "you are FAE"},
+            {"role": "user", "content": "hi"},
+        ],
+        "tools": [
+            {"type": "function", "function": {"name": "memory_search"}},
+            {"type": "function", "function": {"name": "schedule_create"}},
+        ],
+    }
+    _apply_cache_control_to_kwargs(
+        cfg, kwargs, messages=kwargs["messages"], tools=kwargs["tools"],
+    )
+    # Last tool gets the marker; first is left alone so the API can
+    # hash the array as a single cache segment.
+    assert kwargs["tools"][0].get("cache_control") is None
+    assert kwargs["tools"][-1]["cache_control"] == {
+        "type": "ephemeral", "ttl": "1h",
+    }
+    # System pulled out as Anthropic array; last block carries the marker.
+    sys_block = kwargs["system"]
+    assert isinstance(sys_block, list)
+    assert sys_block[-1]["cache_control"] == {
+        "type": "ephemeral", "ttl": "1h",
+    }
+    # User message survived in messages list.
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+    # extra_body also carries the marker for off-spec gateways.
+    assert kwargs["extra_body"]["cache_control"] == {
+        "type": "ephemeral", "ttl": "1h",
+    }
+
+
+def test_cache_control_off_skips_marker() -> None:
+    from fae.llm.provider import _apply_cache_control_to_kwargs
+
+    cfg = LLMConfig(
+        base_url="https://api.anthropic.com/v1",
+        cache_control="off",
+    )
+    kwargs: dict = {
+        "messages": [
+            {"role": "system", "content": "you are FAE"},
+            {"role": "user", "content": "hi"},
+        ],
+        "tools": [
+            {"type": "function", "function": {"name": "memory_search"}},
+        ],
+    }
+    _apply_cache_control_to_kwargs(
+        cfg, kwargs, messages=kwargs["messages"], tools=kwargs["tools"],
+    )
+    assert "system" not in kwargs
+    assert kwargs["tools"][0].get("cache_control") is None
+    assert "cache_control" not in kwargs.get("extra_body", {})
+
+
+def test_cache_control_skipped_on_non_anthropic_endpoint() -> None:
+    from fae.llm.provider import _apply_cache_control_to_kwargs
+
+    cfg = LLMConfig(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        cache_control="ephemeral-1h",
+    )
+    kwargs: dict = {
+        "messages": [
+            {"role": "system", "content": "you are FAE"},
+            {"role": "user", "content": "hi"},
+        ],
+        "tools": [
+            {"type": "function", "function": {"name": "memory_search"}},
+        ],
+    }
+    _apply_cache_control_to_kwargs(
+        cfg, kwargs, messages=kwargs["messages"], tools=kwargs["tools"],
+    )
+    assert "system" not in kwargs
+    assert kwargs["tools"][0].get("cache_control") is None

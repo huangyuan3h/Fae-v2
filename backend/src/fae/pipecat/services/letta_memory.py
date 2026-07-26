@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from fae.memory.archival import ArchivalBackend
     from fae.memory.compaction import MemoryCompactor
     from fae.memory.episodic import EpisodicStore
+    from fae.memory.summarizer import RollingSummarizer
 
 logger = logging.getLogger("fae.memory.service")
 
@@ -40,6 +41,7 @@ class LettaMemoryService:
         archival: ArchivalBackend | None = None,
         compactor: MemoryCompactor | None = None,
         episodic: EpisodicStore | None = None,
+        summarizer: "RollingSummarizer | None" = None,
         on_persist: Callable[[str], None] | None = None,
         recent_limit: int = 10,
         events_limit: int = 8,
@@ -49,6 +51,7 @@ class LettaMemoryService:
         self._archival = archival
         self._compactor = compactor
         self._episodic = episodic
+        self._summarizer = summarizer
         self._on_persist = on_persist
         self._recent_limit = max(0, int(recent_limit))
         self._events_limit = max(0, int(events_limit))
@@ -69,6 +72,10 @@ class LettaMemoryService:
     @property
     def compactor(self) -> MemoryCompactor | None:
         return self._compactor
+
+    @property
+    def summarizer(self) -> "RollingSummarizer | None":
+        return self._summarizer
 
     @property
     def episodic(self) -> EpisodicStore | None:
@@ -284,6 +291,11 @@ class LettaMemoryService:
             await self._persist_episodes(session_id, user_text, saved_facts)
             if self._compactor is not None:
                 await self._compactor.maybe_compact(session_id)
+            if self._summarizer is not None:
+                try:
+                    await self._summarizer.maybe_summarize(session_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("rolling summary failed session=%s", session_id)
             if self._on_persist is not None:
                 self._on_persist(session_id)
         except Exception:  # noqa: BLE001

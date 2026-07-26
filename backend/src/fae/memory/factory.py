@@ -30,6 +30,7 @@ class MemoryStack:
     compactor: MemoryCompactor | None = None
     episodic: EpisodicStore | None = None
     embedder: object | None = None
+    summarizer: object | None = None
 
     async def close(self) -> None:
         client, self.client = self.client, None
@@ -38,6 +39,7 @@ class MemoryStack:
         episodic, self.episodic = self.episodic, None
         embedder, self.embedder = self.embedder, None
         self.compactor = None
+        self.summarizer = None
         if client is not None:
             closer = getattr(client, "_raw_close", client.close)
             try:
@@ -121,6 +123,39 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
             vector_mode=vector_mode,
         )
 
+        # Contextual Retrieval wrapper (Anthropic §6.3) — opt-in via
+        # CONTEXTUAL_RETRIEVAL_ENABLED. Falls back to the raw backend
+        # when no server-side LLM is configured.
+        if getattr(settings, "contextual_retrieval_enabled", False):
+            try:
+                from fae.channels.bridge import resolve_server_llm_config
+                from fae.llm.client import LLMClient
+                from fae.llm.provider import OpenAICompatibleProvider
+                from fae.memory.contextual import (
+                    ContextualizingArchival,
+                    ContextualRetriever,
+                )
+
+                cfg = resolve_server_llm_config(settings)
+                if cfg is not None:
+                    wrapper_llm = LLMClient(
+                        OpenAICompatibleProvider(
+                            default_timeout_s=settings.llm_timeout_s,
+                        )
+                    )
+                    retriever = ContextualRetriever(
+                        llm=wrapper_llm,
+                        config=cfg,
+                        max_context_chars=getattr(
+                            settings, "contextual_retrieval_chars", 160
+                        ),
+                    )
+                    archival = ContextualizingArchival(archival, retriever)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "contextual retrieval disabled — wrapper init failed"
+                )
+
         if mode == "embedded":
             db_path = _resolve_path(settings.letta_embedded_path)
             client = EmbeddedMemoryClient(
@@ -176,6 +211,37 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
             client=client,
             current_char_limit=char_limit,
         )
+        summarizer = None
+        if settings.rolling_summary_enabled:
+            try:
+                from fae.channels.bridge import resolve_server_llm_config
+                from fae.llm.client import LLMClient
+                from fae.llm.provider import OpenAICompatibleProvider
+
+                cfg = resolve_server_llm_config(settings)
+                if cfg is not None:
+                    provider = OpenAICompatibleProvider(
+                        default_timeout_s=settings.llm_timeout_s,
+                    )
+                    summarizer_llm = LLMClient(provider)
+                    from fae.memory.summarizer import RollingSummarizer
+
+                    summarizer = RollingSummarizer(
+                        llm=summarizer_llm,
+                        config=cfg,
+                        recall=recall,
+                        client=client,
+                        archival=archival,
+                        max_turns=settings.rolling_summary_max_turns,
+                        max_chars=settings.rolling_summary_max_chars,
+                        recent_keep=settings.rolling_summary_recent_keep,
+                        current_char_limit=char_limit,
+                        timeout_s=settings.rolling_summary_timeout_s,
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "rolling summary disabled — failed to build summarizer"
+                )
         return MemoryStack(
             client=client,
             recall=recall,
@@ -183,6 +249,7 @@ async def create_memory_stack(settings: Settings) -> MemoryStack:
             compactor=compactor,
             episodic=episodic,
             embedder=stack_embedder,
+            summarizer=summarizer,
         )
     except Exception:
         partial = MemoryStack(

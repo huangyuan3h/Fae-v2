@@ -35,9 +35,36 @@ _PROMPTS: dict[str, str] = {
 }
 
 
+_REFLECTION = """You are FAE's reflection subagent (Letta-style dream-time pass).
+
+Given a transcript of recent conversation turns and the current memory
+state, your job is to compress without losing signal:
+
+1. Identify durable facts about the user (name, location, preferences,
+   ongoing projects, allergies, contacts, recurring topics).
+2. Spot unresolved questions or commitments to follow up on.
+3. Drop greetings, filler, and sentences that add no information.
+
+Output a single JSON object with three fields:
+{
+  "summary": "<= 600 chars of dense prose>",
+  "facts":   ["<fact 1>", "<fact 2>", ...],
+  "open_questions": ["<q 1>", ...]
+}
+
+Rules:
+- Strict JSON only — no markdown fences, no preamble.
+- Preserve the user's primary language in the summary.
+- Every fact must be a statement that could stand alone (no "he said").
+- Cap total facts at 10, questions at 5.
+"""
+
+
 def list_builtin_names() -> frozenset[str]:
-    return frozenset(_PROMPTS)
+    return frozenset(_PROMPTS) | {"reflection"}
 
 
 def system_prompt_for(name: str) -> str | None:
+    if (name or "").strip().lower() == "reflection":
+        return _REFLECTION.strip()
     return _PROMPTS.get((name or "").strip().lower())

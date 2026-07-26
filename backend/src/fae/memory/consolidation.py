@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from fae.memory.reflection import ReflectionOutcome
 from fae.memory.schemas import FactIn
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from fae.memory.compaction import MemoryCompactor
     from fae.memory.protocol import MemoryClient
     from fae.memory.recall_store import RecallStore
+    from fae.memory.reflection import ReflectionRunner
 
 logger = logging.getLogger("fae.memory.consolidation")
 
@@ -37,6 +39,14 @@ _CURRENT_SUMMARY_TURNS = 8
 _CURRENT_LINE_MAX = 160
 
 
+if TYPE_CHECKING:
+    from fae.memory.archival import ArchivalBackend
+    from fae.memory.compaction import MemoryCompactor
+    from fae.memory.protocol import MemoryClient
+    from fae.memory.recall_store import RecallStore
+    from fae.memory.reflection import ReflectionRunner
+
+
 @dataclass
 class ConsolidateResult:
     session_id: str
@@ -46,6 +56,7 @@ class ConsolidateResult:
     compacted: int = 0
     skipped: str | None = None
     elapsed_s: float = 0.0
+    delegated: bool = False
 
 
 class MemoryConsolidator:
@@ -61,6 +72,7 @@ class MemoryConsolidator:
         current_char_limit: int = 2000,
         max_runtime_s: float = 30.0,
         recent_keep: int = 6,
+        reflection_runner: "ReflectionRunner | None" = None,
     ) -> None:
         self.client = client
         self.recall = recall
@@ -69,6 +81,7 @@ class MemoryConsolidator:
         self.current_char_limit = current_char_limit
         self.max_runtime_s = max(1.0, max_runtime_s)
         self.recent_keep = max(1, recent_keep)
+        self.reflection_runner = reflection_runner
 
     async def consolidate(self, session_id: str) -> ConsolidateResult:
         sid = (session_id or "").strip() or "default"
@@ -91,6 +104,40 @@ class MemoryConsolidator:
         if not turns:
             result.skipped = "empty"
             return
+
+        # R4: When a reflection subagent is wired, let it produce the
+        # summary + facts (Letta "dream-time" pass). Falls back to the
+        # deterministic bullet summary on any failure so the scheduler
+        # is non-blocking.
+        reflection_outcome: ReflectionOutcome | None = None
+        if self.reflection_runner is not None:
+            reflection_outcome = await self.reflection_runner(
+                sid, turns, self,
+            )
+            if reflection_outcome is not None:
+                result.delegated = True
+                if reflection_outcome.summary_text:
+                    # Reflection produced something usable — use it and
+                    # skip the deterministic bullet path entirely.
+                    result.summarized_turns = len(turns)
+                    result.facts_saved = reflection_outcome.facts_saved
+                    result.current_updated = reflection_outcome.current_updated
+                    if self.archival is not None and len(turns) > self.recent_keep:
+                        result.facts_saved += await self._archive_bullets(
+                            sid, turns,
+                        )
+                    if self.compactor is not None:
+                        result.compacted = await self.compactor.maybe_compact(sid)
+                    return
+                # Subagent failed soft — record the skip and fall through
+                # to the deterministic path so memory still gets a current
+                # block. result.skipped stays None so the scheduler treats
+                # the pass as successful.
+                logger.info(
+                    "reflection produced no usable output session=%s reason=%s — "
+                    "falling back to heuristic",
+                    sid, reflection_outcome.skipped,
+                )
 
         # Replace current with a short deduped bullet summary (not an append log).
         recent = turns[-_CURRENT_SUMMARY_TURNS:]
@@ -132,6 +179,25 @@ class MemoryConsolidator:
 
         if self.compactor is not None:
             result.compacted = await self.compactor.maybe_compact(sid)
+
+    async def _archive_bullets(
+        self, sid: str, turns: list[Any]
+    ) -> int:
+        if self.archival is None:
+            return 0
+        text = (
+            f"[sleeptime session={sid}]\n"
+            + "\n".join(
+                f"User: {t.user_text} | Assistant: {t.assistant_text}"
+                for t in turns[:10]
+            )
+        )
+        try:
+            await self.archival.upsert(text=text, session_id=sid)
+            return 1
+        except Exception:  # noqa: BLE001
+            logger.exception("sleeptime archival upsert failed session=%s", sid)
+            return 0
 
     async def _promote_facts(self, sid: str, turns: list[Any]) -> int:
         from fae.memory.fact_extract import facts_from_turn

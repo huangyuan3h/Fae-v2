@@ -18,6 +18,7 @@ from fae.pipecat.memory_processor import (
     seed_daily_memory,
 )
 from fae.pipecat.services.letta_memory import LettaMemoryService
+from fae.pipecat.summarizer_bridge import build_assistant_aggregator_params
 
 logger = logging.getLogger("fae.pipecat.daily_bot")
 
@@ -48,6 +49,7 @@ async def run_daily_bot(
     from pipecat.pipeline.task import PipelineParams, PipelineTask
     from pipecat.processors.aggregators.llm_context import LLMContext
     from pipecat.processors.aggregators.llm_response_universal import (
+        LLMAssistantAggregatorParams,
         LLMContextAggregatorPair,
         LLMUserAggregatorParams,
     )
@@ -117,11 +119,34 @@ async def run_daily_bot(
     )
 
     # Silero VAD + default UserTurnStrategies (stop uses LocalSmartTurnAnalyzerV3).
+    # Optional R3 LLMContextSummarizer — Daily path only, off by default.
+    assistant_params = build_assistant_aggregator_params(
+        enabled=getattr(settings, "daily_context_summary_enabled", False),
+        max_context_tokens=getattr(settings, "daily_context_max_tokens", 8000),
+        max_unsummarized_messages=None,
+        target_context_tokens=getattr(settings, "daily_context_target_tokens", 4000),
+        min_messages_after_summary=getattr(
+            settings, "daily_context_recent_messages", 4
+        ),
+    )
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
             user_turn_strategies=UserTurnStrategies(),
+        ),
+        assistant_params=(
+            LLMAssistantAggregatorParams(
+                enable_auto_context_summarization=assistant_params is not None
+                and assistant_params.enable_auto_context_summarization,
+                auto_context_summarization_config=(
+                    assistant_params.auto_context_summarization_config
+                    if assistant_params is not None
+                    else None
+                ),
+            )
+            if assistant_params is not None
+            else LLMAssistantAggregatorParams()
         ),
     )
 

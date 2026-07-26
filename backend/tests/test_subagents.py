@@ -30,7 +30,9 @@ def test_known_tools_includes_run_subagent() -> None:
 
 
 def test_builtin_names() -> None:
-    assert list_builtin_names() == frozenset({"researcher", "coder", "reviewer"})
+    assert list_builtin_names() == frozenset(
+        {"researcher", "coder", "reviewer", "reflection"}
+    )
 
 
 @pytest.mark.asyncio

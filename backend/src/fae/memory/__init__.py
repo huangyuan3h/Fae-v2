@@ -11,6 +11,11 @@ from fae.memory.schemas import (
     RecallTurn,
     UserProfile,
 )
+from fae.memory.summarizer import (
+    RollingSummarizer,
+    SummaryResult,
+    build_default_summarizer,
+)
 
 __all__ = [
     "ConsolidateResult",
@@ -22,8 +27,11 @@ __all__ = [
     "MemoryConsolidator",
     "MemoryStack",
     "RecallTurn",
+    "RollingSummarizer",
     "SleeptimeScheduler",
+    "SummaryResult",
     "UserProfile",
+    "build_default_summarizer",
     "create_memory_client",
     "create_memory_stack",
     "detect_life_events",

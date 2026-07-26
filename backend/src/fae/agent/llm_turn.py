@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
 from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL, dispatch_run_subagent
+from fae.agent.tool_offload import ToolOffloader, maybe_offload_result
 from fae.llm.client import LLMClient
 from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
 from fae.pipecat.services.letta_memory import LettaMemoryService
@@ -122,6 +123,49 @@ def _tool_result_message(tool_name: str, result: str) -> ChatMessage:
     )
 
 
+def _offloaded_tool_result_message(
+    tool_name: str,
+    body: str,
+    offload_path: str,
+    full_chars: int,
+) -> ChatMessage:
+    """Wrap an offloaded tool result so the agent knows where to find it.
+
+    The replacement body is byte-stable for a given offload path so the
+    surrounding prefix cache survives across turns.
+    """
+    return ChatMessage(
+        role="system",
+        content=(
+            f'<tool_result name="{tool_name}" offloaded="true" '
+            f'path="{offload_path}" full_chars="{full_chars}">\n{body}\n</tool_result>\n'
+            "The full result body was offloaded to disk to keep context small. "
+            "Use the read_file tool on the path above to pull it back when you "
+            "need details beyond the preview. Do not re-invoke the original tool."
+        ),
+    )
+
+
+async def _wrap_tool_result(
+    offloader: ToolOffloader | None,
+    tool_name: str,
+    call_id: str,
+    result: str,
+) -> ChatMessage:
+    """Build the prompt-side tool_result message; offload when oversized."""
+    body, off = await maybe_offload_result(
+        offloader,
+        tool_name=tool_name,
+        call_id=call_id,
+        result=result,
+    )
+    if off is not None and not off.skipped and off.path:
+        return _offloaded_tool_result_message(
+            tool_name, body, off.path, off.chars_written,
+        )
+    return _tool_result_message(tool_name, result)
+
+
 async def _dispatch_coding_tool(
     tool_name: str,
     arguments: str,
@@ -209,6 +253,7 @@ async def apply_lazy_skill_tool(
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
     on_tool_event: OnToolEvent | None = None,
+    tool_offloader: ToolOffloader | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
@@ -262,7 +307,9 @@ async def apply_lazy_skill_tool(
             )
             if result is None:
                 continue
-            messages.append(_tool_result_message(tc.name, result))
+            messages.append(
+                await _wrap_tool_result(tool_offloader, tc.name, tc.id, result)
+            )
             executed = True
         if not executed:
             break
@@ -310,7 +357,9 @@ async def apply_lazy_skill_tool(
             )
             logger.info("get_weather result_len=%s", len(result))
             messages = list(request.messages)
-            messages.append(_tool_result_message(tc.name, result))
+            messages.append(
+                await _wrap_tool_result(tool_offloader, tc.name, tc.id, result)
+            )
             enriched = request.model_copy(update={"messages": messages})
             return _strip_tools(enriched), activation, None
 
@@ -327,7 +376,9 @@ async def apply_lazy_skill_tool(
             )
             logger.info("run_subagent result_len=%s", len(result))
             messages = list(request.messages)
-            messages.append(_tool_result_message(tc.name, result))
+            messages.append(
+                await _wrap_tool_result(tool_offloader, tc.name, tc.id, result)
+            )
             enriched = request.model_copy(update={"messages": messages})
             return _strip_tools(enriched), activation, None
 
@@ -359,6 +410,7 @@ async def stream_assistant_turn(
     cancel_event: asyncio.Event | None = None,
     on_subagent_event: OnSubagentEvent | None = None,
     on_tool_event: OnToolEvent | None = None,
+    tool_offloader: ToolOffloader | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
@@ -394,6 +446,7 @@ async def stream_assistant_turn(
             default_city=default_city,
             memory=memory,
             subagent_enabled=subagent_enabled,
+            tool_offloader=tool_offloader,
             subagent_timeout_s=subagent_timeout_s,
             workspace_root=workspace_root,
             filesystem_enabled=filesystem_enabled,

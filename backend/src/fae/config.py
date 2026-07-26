@@ -91,6 +91,33 @@ class Settings(BaseSettings):
     # Local hour (0-23) for daily pass; None disables the daily trigger
     sleeptime_daily_hour: int | None = 3
 
+    # R4: Letta-style reflection subagent for sleeptime consolidation.
+    reflection_enabled: bool = True
+    reflection_max_task_chars: int = Field(
+        default=6000, ge=500,
+        description="Max chars of recent turns fed to the reflection subagent.",
+    )
+    reflection_timeout_s: float = Field(default=20.0, ge=1.0)
+
+    # R2 rolling summary (Context Engineering §8)
+    rolling_summary_enabled: bool = True
+    rolling_summary_max_turns: int = Field(
+        default=30, ge=4,
+        description="Hot recall turn count that triggers a rolling summary pass.",
+    )
+    rolling_summary_max_chars: int = Field(
+        default=9000, ge=500,
+        description="Estimated char total that triggers a rolling summary pass.",
+    )
+    rolling_summary_recent_keep: int = Field(
+        default=6, ge=1,
+        description="Verbatim turns kept at the tail after a summary pass.",
+    )
+    rolling_summary_timeout_s: float = Field(
+        default=20.0, ge=1.0,
+        description="Hard cap on the summary LLM call.",
+    )
+
     # vLLM self-hosted (optional)
     vllm_asr_url: str = "http://localhost:8001"
     vllm_llm_url: str = "http://localhost:8002"
@@ -142,6 +169,21 @@ class Settings(BaseSettings):
     # Optional Daily API key for future WebRTC / Pipecat transport
     daily_api_key: str = ""
 
+    # R3 Pipecat LLMContextSummarizer (Daily voice path only).
+    daily_context_summary_enabled: bool = False
+    daily_context_max_tokens: int = Field(
+        default=8000, ge=512,
+        description="Daily path token threshold that triggers summarization.",
+    )
+    daily_context_target_tokens: int = Field(
+        default=4000, ge=256,
+        description="Daily path summarization target token count.",
+    )
+    daily_context_recent_messages: int = Field(
+        default=4, ge=1,
+        description="Daily path: messages kept verbatim after summary.",
+    )
+
     # Skills (Phase 3) — markdown playbooks under backend/src/skills
     skills_enabled: bool = True
     skills_dir: str = ""  # empty → default next to package src/skills
@@ -160,6 +202,33 @@ class Settings(BaseSettings):
     coding_git_enabled: bool = False
     coding_bash_timeout_s: float = Field(default=30.0, ge=1.0, le=120.0)
     coding_git_timeout_s: float = Field(default=20.0, ge=1.0, le=120.0)
+
+    # Contextual Retrieval (Anthropic §6.3). When enabled, an LLM pass
+    # prefixes each archival chunk with a 50–100-token context line so
+    # embeddings land closer to the user's actual question. The
+    # reference document (e.g. recent recall summary) is sent with
+    # cache_control so chunk-contextualization is essentially free.
+    contextual_retrieval_enabled: bool = False
+    contextual_retrieval_chars: int = Field(
+        default=160, ge=40, le=400,
+        description="Max chars of contextual prefix added to each chunk.",
+    )
+
+# R5 tool-result offload — deep-agents FilesystemMiddleware port
+    # (doc/CONTEXT_ENGINEERING.md §2). When a tool result exceeds
+    # ``tool_offload_chars`` it is dumped to disk under
+    # ``tool_offload_dir`` and replaced with a path pointer + first N
+    # lines in the prompt. Set to 0 to disable.
+    tool_offload_enabled: bool = True
+    tool_offload_chars: int = Field(
+        default=8000, ge=0,
+        description="Char threshold for offloading a tool result to disk.",
+    )
+    tool_offload_dir: str = ".data/tool-offload"
+    tool_offload_keep_lines: int = Field(
+        default=20, ge=1,
+        description="How many preview lines of the offloaded result to keep.",
+    )
 
     # Proactive scheduler (Phase 4) — tests should set SCHEDULER_ENABLED=false
     scheduler_enabled: bool = False

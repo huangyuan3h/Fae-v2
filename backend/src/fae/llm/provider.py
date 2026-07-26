@@ -38,6 +38,117 @@ from fae.llm.types import ChatRequest, ChatResponse, TokenUsage, ToolCall
 logger = logging.getLogger("fae.llm")
 
 
+# ── Provider capability detection ─────────────────────────────────────────
+
+
+_ANTHROPIC_HINTS = ("anthropic.com", "anthropic.", "/anthropic")
+_ANTHROPIC_HEADER = "anthropic-version"
+
+
+def _is_anthropic_endpoint(cfg) -> bool:
+    """True when the request targets an Anthropic-style endpoint.
+
+    Detection covers:
+    - Anthropic native (api.anthropic.com)
+    - DashScope Anthropic-compatible mode (base_url contains /anthropic)
+    - Custom gateways that pass anthropic-version header
+    """
+    base_url = (getattr(cfg, "base_url", "") or "").lower()
+    if any(hint in base_url for hint in _ANTHROPIC_HINTS):
+        return True
+    headers = getattr(cfg, "headers", None) or {}
+    return any(_ANTHROPIC_HEADER in k.lower() for k in headers)
+
+
+def _cache_control_marker(mode: str | None) -> dict[str, str] | None:
+    """Resolve cache_control mode → Anthropic-style marker dict."""
+    if not mode or mode == "auto":
+        return {"type": "ephemeral"}
+    if mode == "off":
+        return None
+    ttl = "1h" if mode == "ephemeral-1h" else "5m"
+    return {"type": "ephemeral", "ttl": ttl}
+
+
+def _should_apply_cache_control(cfg, *, has_tools: bool) -> bool:
+    """Resolve cache_control config → boolean."""
+    mode = getattr(cfg, "cache_control", None)
+    if mode == "off":
+        return False
+    if not _is_anthropic_endpoint(cfg):
+        return False
+    if mode and mode != "auto":
+        return True
+    # Auto: only when we actually have a stable prefix worth caching
+    # (system prompt or tool schema) — never on bare user-only messages.
+    return has_tools or getattr(cfg, "prompt_cache_key", None) is not None
+
+
+def _split_system_messages(
+    messages: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Pull system messages out of an OpenAI-format message list."""
+    rest: list[dict] = []
+    system_texts: list[str] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system" and isinstance(content, str):
+            system_texts.append(content)
+        else:
+            rest.append(msg)
+    return rest, system_texts
+
+
+def _apply_cache_control_to_kwargs(
+    cfg,
+    kwargs: dict,
+    *,
+    messages: list[dict],
+    tools: list[dict] | None,
+) -> None:
+    """Mutate ``kwargs`` in place to inject Anthropic cache_control markers.
+
+    - System messages → array form; last block carries the marker
+      (so the stable prefix becomes one cache segment). Even with one
+      system message we emit the array form — that's the only way to
+      attach a cache_control marker.
+    - Tools → last tool gets the marker (covers tool-schema cache).
+    - extra_body["cache_control"] = {"type": "ephemeral", "ttl": ...} on
+      off-spec gateways that read the field via extra_body.
+    """
+    marker = _cache_control_marker(getattr(cfg, "cache_control", None) or "auto")
+    if marker is None:
+        return
+    if not _should_apply_cache_control(cfg, has_tools=bool(tools)):
+        return
+
+    rest, system_texts = _split_system_messages(messages)
+    if system_texts:
+        system_blocks: list[dict] = []
+        for idx, text in enumerate(system_texts):
+            block: dict = {"type": "text", "text": text}
+            if idx == len(system_texts) - 1:
+                block["cache_control"] = marker
+            system_blocks.append(block)
+        kwargs["system"] = system_blocks
+        kwargs["messages"] = rest
+
+    if tools:
+        last = tools[-1]
+        if isinstance(last, dict):
+            last.setdefault("cache_control", marker)
+
+    existing_extra = kwargs.get("extra_body")
+    if isinstance(existing_extra, dict):
+        existing_extra.setdefault("cache_control", marker)
+    else:
+        kwargs["extra_body"] = {"cache_control": marker}
+
+
+# ── extra_body composition ────────────────────────────────────────────────
+
+
 def _thinking_extra_body(thinking: str) -> dict[str, object] | None:
     """Map LLMConfig.thinking → provider extra_body (MiniMax-compatible)."""
     if thinking == "disabled":
@@ -48,13 +159,19 @@ def _thinking_extra_body(thinking: str) -> dict[str, object] | None:
 
 
 def _extra_body(cfg) -> dict[str, object] | None:
-    """Combine thinking + prompt_cache_key into a single extra_body dict."""
+    """Combine thinking + prompt_cache_key + cache_control into one body dict."""
     body = _thinking_extra_body(cfg.thinking)
     if cfg.prompt_cache_key:
         cache_body = {"prompt_cache_key": cfg.prompt_cache_key}
         if body is None:
-            return cache_body
-        body.update(cache_body)
+            body = cache_body
+        else:
+            body.update(cache_body)
+    marker = _cache_control_marker(getattr(cfg, "cache_control", None))
+    if marker is not None and _is_anthropic_endpoint(cfg):
+        if body is None:
+            body = {}
+        body.setdefault("cache_control", marker)
     return body
 
 
@@ -254,12 +371,18 @@ class OpenAICompatibleProvider:
                 "max_tokens": request.max_tokens,
             }
             if request.tools:
-                kwargs["tools"] = request.tools
+                kwargs["tools"] = [dict(t) for t in request.tools]
                 if request.tool_choice is not None:
                     kwargs["tool_choice"] = request.tool_choice
             extra = _extra_body(cfg)
             if extra:
                 kwargs["extra_body"] = extra
+            _apply_cache_control_to_kwargs(
+                cfg,
+                kwargs,
+                messages=kwargs["messages"],
+                tools=kwargs.get("tools"),
+            )
             try:
                 resp = await client.chat.completions.create(**kwargs)
             except Exception as e:  # noqa: BLE001 — normalised below
@@ -322,9 +445,18 @@ class OpenAICompatibleProvider:
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
+            tools = [dict(t) for t in request.tools] if request.tools else None
+            if tools:
+                create_kwargs["tools"] = tools
             extra = _extra_body(cfg)
             if extra:
                 create_kwargs["extra_body"] = extra
+            _apply_cache_control_to_kwargs(
+                cfg,
+                create_kwargs,
+                messages=create_kwargs["messages"],
+                tools=create_kwargs.get("tools"),
+            )
             try:
                 response = await client.chat.completions.create(**create_kwargs)
             except Exception as e:  # noqa: BLE001 — normalised below

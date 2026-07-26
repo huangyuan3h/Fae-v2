@@ -182,6 +182,7 @@ async def _run_stream(
             cancel_event=cancel_event,
             on_subagent_event=_on_subagent,
             on_tool_event=_on_tool,
+            tool_offloader=getattr(ws.app.state, "tool_offloader", None),
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)

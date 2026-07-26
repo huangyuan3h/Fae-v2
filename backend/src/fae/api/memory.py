@@ -161,7 +161,8 @@ async def memory_put_profile(body: ProfileUpdate, request: Request) -> ProfileOu
 
 @router.get("/stats")
 async def memory_stats(request: Request) -> dict:
-    """Core block sizes, hot recall count, archival health, and LLM usage."""
+    """Core block sizes, hot recall count, archival health, LLM usage,
+    and Context Engineering feature flags + cache hit diagnostics."""
     memory: LettaMemoryService | None = getattr(request.app.state, "memory", None)
     client = memory.client if memory else None
     recall = getattr(request.app.state, "recall_store", None)
@@ -183,6 +184,8 @@ async def memory_stats(request: Request) -> dict:
     if usage.get("prompt_tokens"):
         cached = usage.get("cached_tokens", 0)
         cache_hit_ratio = round(cached / usage["prompt_tokens"], 4)
+    settings = getattr(request.app.state, "settings", None)
+    cache_health = _cache_health(cache_hit_ratio, usage)
     return {
         "recall_turns": recall.total_hot() if recall is not None else 0,
         "core": core,
@@ -196,6 +199,88 @@ async def memory_stats(request: Request) -> dict:
         ),
         "llm_usage": usage,
         "cache_hit_ratio": cache_hit_ratio,
+        "cache_health": cache_health,
+        "context_engineering": {
+            "rolling_summary": _feat_flag(
+                settings, "rolling_summary_enabled",
+            ),
+            "tool_offload": _feat_flag(settings, "tool_offload_enabled"),
+            "reflection": _feat_flag(settings, "reflection_enabled"),
+            "contextual_retrieval": _feat_flag(
+                settings, "contextual_retrieval_enabled",
+            ),
+            "daily_summarizer": _feat_flag(
+                settings, "daily_context_summary_enabled",
+            ),
+            "cache_control": _cache_control_state(settings),
+        },
+    }
+
+
+def _feat_flag(settings, name: str) -> str:
+    if settings is None:
+        return "unknown"
+    return "on" if bool(getattr(settings, name, False)) else "off"
+
+
+def _cache_control_state(settings) -> str:
+    """Best-effort inference of cache_control state for the API."""
+    if settings is None:
+        return "unknown"
+    # FAE-v2 uses OpenAI-compat (auto cache); explicit cache_control
+    # is wired in provider.py and applies to Anthropic-style endpoints.
+    return "auto_or_anthropic"
+
+
+def _cache_health(
+    cache_hit_ratio: float | None,
+    usage: dict[str, int],
+) -> dict:
+    """Compute cache-hit health flags for ops dashboards.
+
+    Returns:
+        status: ok | warn | unknown — health bucket
+        ratio:  rounded cache-hit ratio (0.0–1.0)
+        prompt_tokens:  total prompt tokens seen
+        cached_tokens:  tokens served from cache
+        cache_creation_tokens: tokens written to cache
+        signal: short human-readable hint
+    """
+    if cache_hit_ratio is None:
+        return {
+            "status": "unknown",
+            "ratio": None,
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "cached_tokens": usage.get("cached_tokens", 0),
+            "cache_creation_tokens": usage.get(
+                "cache_creation_tokens", 0
+            ),
+            "signal": "no usage yet — health unknown",
+        }
+    if cache_hit_ratio >= 0.5:
+        status = "ok"
+        signal = "cache_control paying off"
+    elif cache_hit_ratio >= 0.2:
+        status = "warn"
+        signal = (
+            "moderate cache hits — check that stable prefix doesn't "
+            "include session id / timestamps"
+        )
+    else:
+        status = "warn"
+        signal = (
+            "low cache hits — system prefix may be churning; verify "
+            "cache_control markers"
+        )
+    return {
+        "status": status,
+        "ratio": cache_hit_ratio,
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "cached_tokens": usage.get("cached_tokens", 0),
+        "cache_creation_tokens": usage.get(
+            "cache_creation_tokens", 0
+        ),
+        "signal": signal,
     }
 
 

@@ -49,6 +49,14 @@ class LLMConfig(BaseModel):
         description="Provider-specific prompt cache key (OpenAI/Azure). "
         "Bind to session_id to keep prefix-cache locality.",
     )
+    # Anthropic prompt-cache hint. None = auto-detect from base_url / headers
+    # (Anthropic native or DashScope's Anthropic-compatible mode). "off"
+    # forces no cache_control marker even when the endpoint would accept one.
+    cache_control: Literal["auto", "off", "ephemeral-5m", "ephemeral-1h"] | None = Field(
+        default=None,
+        description="Anthropic-style prompt cache marker. None = auto; "
+        "'off' = never inject even on Anthropic endpoints.",
+    )
 
 
 class ChatMessage(BaseModel):
