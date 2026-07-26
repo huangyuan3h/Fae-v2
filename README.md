@@ -1,6 +1,6 @@
 # FAE-v2
 
-> **F**ully **A**utonomous **E**cho · v2 · **stable 0.4.0**  
+> **F**ully **A**utonomous **E**cho · v2 · **stable 0.6.0**  
 > 有长期记忆、能主动 loop、可本地部署的语音 Agent。  
 > 变更摘要见 [CHANGELOG.md](./CHANGELOG.md)。
 
@@ -17,7 +17,7 @@
 - [evals/README.md](./evals/README.md) — 最小评测集
 - [CHANGELOG.md](./CHANGELOG.md) — 版本摘要
 
-## 质量状态（stable 0.4.0）
+## 质量状态（stable 0.6.0）
 
 | 里程碑 | 状态 |
 |---|---|

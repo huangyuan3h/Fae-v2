@@ -457,7 +457,9 @@ LiveKit：未实现
 FAE-v2/
 ├── README.md
 ├── ARCHITECTURE.md                  # → points to doc/architect/ARCHITECTURE.md
+├── CHANGELOG.md
 ├── docker-compose.yml
+├── docker-compose.core.yml
 ├── .env.example
 ├── doc/
 │   ├── TODO.md                      # 唯一未完成功能清单
@@ -470,82 +472,129 @@ FAE-v2/
 │   ├── pyproject.toml
 │   ├── src/
 │   │   ├── fae/
-│   │   │   ├── config.py
+│   │   │   ├── __init__.py          # __version__
+│   │   │   ├── config.py            # Settings (pydantic-settings)
+│   │   │   ├── sessions.py          # SessionStore (in-memory)
+│   │   │   ├── approvals.py         # ApprovalStore (SQLite)
+│   │   │   ├── chat_history.py      # ChatHistoryStore (SQLite)
+│   │   │   ├── tool_audit.py        # ToolAuditStore (SQLite)
+│   │   │   ├── tool_registry.py     # ToolSpec / EffectivePolicy
+│   │   │   ├── agent_trace.py       # AgentTraceStore (SQLite)
+│   │   │   ├── sanitize.py          # safe_json / safe_text
+│   │   │   ├── voice_runtime.py     # Daily bot + barge-in
 │   │   │   ├── api/                 # FastAPI package
 │   │   │   │   ├── __init__.py      # create_app + lifespan
-│   │   │   │   ├── ws.py / chat paths
+│   │   │   │   ├── ws.py            # /ws/chat (streaming)
+│   │   │   │   ├── chat_history.py  # /api/chat/history
 │   │   │   │   ├── memory.py        # /api/memory/*
 │   │   │   │   ├── skills.py        # /api/skills/*
+│   │   │   │   ├── approvals.py     # /api/approvals/*
+│   │   │   │   ├── tool_audit.py    # /api/tool-audit
+│   │   │   │   ├── agent_trace.py   # /api/agent-trace
+│   │   │   │   ├── tasks.py         # /api/tasks/*
+│   │   │   │   ├── schedules.py     # /api/schedules/*
+│   │   │   │   ├── notifications.py # /api/notifications/*
+│   │   │   │   ├── capabilities.py  # /api/capabilities
 │   │   │   │   ├── tts.py / voice.py / pipeline.py
-│   │   │   │   └── (schedules.py — Phase 4)
+│   │   │   │   ├── auth.py / deps.py
+│   │   │   │   └── sessions.py      # /api/sessions
 │   │   │   ├── agent/               # Skills + turn prep
 │   │   │   │   ├── skills_schema.py / skills_loader.py
 │   │   │   │   ├── skills_matcher.py / skills_runtime.py
+│   │   │   │   ├── skills_state.py
 │   │   │   │   ├── prepare.py / llm_turn.py
+│   │   │   │   ├── known_tools.py
+│   │   │   │   └── tool_offload.py  # ToolOffloader (R5)
 │   │   │   ├── memory/              # Letta + recall/archival/episodic
-│   │   │   │   └── consolidation.py # SleeptimeScheduler (≠ proactive)
+│   │   │   │   ├── factory.py / letta_client.py
+│   │   │   │   ├── embedded.py / recall_store.py
+│   │   │   │   ├── archival.py / embeddings.py / episodic.py
+│   │   │   │   ├── compaction.py / consolidation.py
+│   │   │   │   ├── fact_extract.py / profile_block.py
+│   │   │   │   ├── contextual.py    # R6 Contextual Retrieval
+│   │   │   │   ├── reflection.py    # R4 reflection subagent
+│   │   │   │   └── summarizer.py    # R2 rolling summary
 │   │   │   ├── scheduler/           # Phase 4 proactive loop
 │   │   │   │   ├── activity.py / heartbeat.py
 │   │   │   │   ├── proactive.py / jobs.py
-│   │   │   ├── tts/                  # local OpenAI-compatible client + stub
-│   │   │   ├── llm/ / pipecat/
-│   │   └── skills/                  # Markdown skills (6 built-ins)
+│   │   │   │   ├── loop.py / store.py
+│   │   │   │   ├── delivery.py / hub.py
+│   │   │   │   ├── parse_nl.py / tools.py
+│   │   │   │   └── tasks.py         # TaskStore (persistent state machine)
+│   │   │   ├── channels/            # Telegram + bridge
+│   │   │   │   ├── bridge.py / telegram.py
+│   │   │   ├── llm/                 # LLM client + provider
+│   │   │   │   ├── client.py / provider.py
+│   │   │   │   ├── types.py / errors.py
+│   │   │   ├── tools/               # Tool implementations
+│   │   │   │   ├── weather.py / context.py
+│   │   │   │   ├── filesystem.py / bash.py / git.py
+│   │   │   │   └── safepath.py
+│   │   │   ├── tts/                 # local OpenAI-compatible client + stub
+│   │   │   │   ├── local_client.py / stub_server.py
+│   │   │   │   ├── wav.py / speakable.py
+│   │   │   ├── pipecat/             # Daily bot + VAD + summarizer bridge
+│   │   │   │   ├── bot.py / daily_bot.py / vad.py
+│   │   │   │   ├── transport.py
+│   │   │   │   └── services/        # TTS / ASR / memory bridges
+│   │   │   └── notifications/       # webpush + desktop
+│   │   └── skills/                  # Markdown skills (built-ins)
 │   └── tests/
 │
 ├── ui/
 │   ├── package.json
 │   ├── src/
-│   │   ├── app/                     # /  /settings  /memory  /skills  (/schedules Phase 4)
+│   │   ├── app/                     # /  /settings  /memory  /skills  /schedules
 │   │   ├── components/
 │   │   │   ├── AppNav.tsx            # shared primary nav
 │   │   │   ├── voice/
 │   │   │   │   ├── VoiceOrb.tsx
 │   │   │   │   ├── MicButton.tsx
-│   │   │   │   └── AudioVisualizer.tsx
-│   │   │   ├── chat/
-│   │   │   │   ├── ChatPanel.tsx
-│   │   │   │   ├── MessageBubble.tsx
-│   │   │   │   └── ToolCallCard.tsx
+│   │   │   │   ├── ChatTranscript.tsx
+│   │   │   │   ├── ChatHistorySidebar.tsx
+│   │   │   │   └── ExecutionView.tsx
 │   │   │   ├── memory/
 │   │   │   │   ├── MemoryTimeline.tsx
-│   │   │   │   └── MemorySearch.tsx
-│   │   │   └── layout/
-│   │   │       ├── Sidebar.tsx
-│   │   │       └── TopBar.tsx
+│   │   │   │   ├── MemorySearch.tsx
+│   │   │   │   └── MemoryNav.tsx
+│   │   │   └── settings/
+│   │   │       ├── ModelsPanel.tsx / ModelFormModal.tsx
+│   │   │       ├── VoicePanel.tsx / PersonaPanel.tsx
+│   │   │       ├── ProfilePanel.tsx / NotificationsPanel.tsx
 │   │   ├── lib/
-│   │   │   ├── pipecat-client.ts
-│   │   │   ├── api.ts
-│   │   │   └── store.ts
-│   │   └── hooks/
-│   │       ├── useVoiceSession.ts
-│   │       └── useMemory.ts
+│   │   │   ├── config.ts / models.ts / speech.ts
+│   │   │   ├── ws-chat.ts           # re-exports SDK + fetchAgentTrace/fetchToolAudit
+│   │   │   ├── pipecat-client.ts / daily-session.ts
+│   │   │   ├── memory-api.ts / skills-api.ts / schedules-api.ts
+│   │   │   ├── notifications-api.ts
+│   │   │   └── (client-identity / markdown-display / sentence-agg / ...)
+│   │   ├── hooks/
+│   │   │   └── useVoiceSession.ts   # per-turn execution state + approval
+│   │   └── providers/
+│   │       └── QueryProvider.tsx
 │   └── public/
 │
-├── deploy/                          # 部署相关
+├── sdk/
+│   └── typescript/                  # @fae/client (source-only)
+│       ├── package.json
+│       └── src/
+│           ├── index.ts / client.ts
+│           ├── types.ts / ws-chat.ts
+│
+├── deploy/
 │   ├── docker/
-│   │   ├── backend.Dockerfile
-│   │   ├── ui.Dockerfile
-│   │   ├── vllm-asr.Dockerfile
-│   │   └── letta.Dockerfile
-│   ├── scripts/
-│   │   ├── setup.sh                 # 首次安装
-│   │   ├── start.sh                 # 一键启动
-│   │   └── update.sh
-│   └── systemd/                     # Linux 自启
-│       └── fae-v2.service
+│   │   ├── backend.Dockerfile / ui.Dockerfile
+│   │   ├── vllm-asr.Dockerfile / letta.Dockerfile
+│   │   ├── asr-stub/ / letta-stub/
+│   │   └── ui-placeholder/
+│   └── scripts/
+│       ├── setup.sh / start.sh / start-core.sh
 │
-├── docs/
-│   ├── ARCHITECTURE.md              # ← 本文档
-│   ├── design/
-│   │   ├── memory-design.md
-│   │   ├── skills-format.md
-│   │   └── ui-mockups.md
-│   └── api/
-│       └── api-reference.md
+├── evals/                          # 最小评测集
+│   └── agent/ / e2e/
 │
-└── examples/
-    ├── conversations.jsonl          # 示例对话（用于评测）
-    └── skills/                      # 用户自定义 skill 示例
+└── scripts/
+    └── tts/                        # 本机 TTS 安装脚本
 ```
 
 ---

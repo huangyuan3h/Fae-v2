@@ -650,7 +650,7 @@ def create_app(
     settings = settings or get_settings()
     app = FastAPI(
         title="FAE-v2 Backend",
-        version="0.4.0",
+        version="0.6.0",
         lifespan=lifespan,
     )
     app.state.settings = settings
