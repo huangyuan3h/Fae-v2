@@ -1,5 +1,7 @@
 # FAE-v2 开发计划 Checklist
 
+> 这是历史快照；其中未勾选项仅表示当时延期，不再在本文件维护。当前未完成功能统一见 [`../TODO.md`](../TODO.md)。
+>
 > 本文档是 `ARCHITECTURE.md` 的**执行映射**，把架构设计拆解为可勾选的任务清单。  
 > 用法：完成一项就打 `[x]`，每条任务标明阶段、依赖、产出、验收。  
 > 维护原则：阶段边界 = 一次可演示的成果（Demo-Ready），不要跨阶段合并。  
@@ -362,5 +364,5 @@ MCP（Model Context Protocol）曾是「接外部工具」的通用协议。对�
 ---
 
 **最后更新**：2026-07-19（Phase 5.2 首版；其后按需）  
-**关联文档**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`LOCAL_TTS.md`](./LOCAL_TTS.md)  
+**关联文档**：[`ARCHITECTURE.md`](../architect/ARCHITECTURE.md) · [`LOCAL_TTS.md`](../operations/LOCAL_TTS.md)
 **反馈**：GitHub Issues / PR

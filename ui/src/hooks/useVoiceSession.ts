@@ -655,7 +655,7 @@ export function useVoiceSession() {
           const msg = ttsErr.message;
           setError(
             msg.includes("Cannot reach") || msg.includes("upstream")
-              ? `${msg} — 请确认 :8880 TTS 服务已启动（doc/LOCAL_TTS.md）`
+              ? `${msg} — 请确认 :8880 TTS 服务已启动（doc/operations/LOCAL_TTS.md）`
               : msg,
           );
         },

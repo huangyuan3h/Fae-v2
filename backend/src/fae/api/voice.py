@@ -68,7 +68,7 @@ async def voice_status(request: Request) -> dict[str, bool | str]:
             f"Local TTS ready ({local_url})"
             if local_ok
             else (
-                f"Start local TTS at {client.speech_url} — doc/LOCAL_TTS.md"
+                f"Start local TTS at {client.speech_url} — doc/operations/LOCAL_TTS.md"
             )
         ),
     }

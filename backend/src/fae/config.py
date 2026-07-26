@@ -215,7 +215,7 @@ class Settings(BaseSettings):
     )
 
 # R5 tool-result offload — deep-agents FilesystemMiddleware port
-    # (doc/CONTEXT_ENGINEERING.md §2). When a tool result exceeds
+    # (doc/design/CONTEXT_ENGINEERING.md §2). When a tool result exceeds
     # ``tool_offload_chars`` it is dumped to disk under
     # ``tool_offload_dir`` and replaced with a path pointer + first N
     # lines in the prompt. Set to 0 to disable.

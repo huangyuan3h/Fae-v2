@@ -2,7 +2,7 @@
 
 Next.js app for FAE-v2 (voice chat, memory, skills, schedules, settings).
 
-**Canonical docs**: [../README.md](../README.md) · [../doc/ARCHITECTURE.md](../doc/ARCHITECTURE.md)
+**Canonical docs**: [../README.md](../README.md) · [../doc/architect/ARCHITECTURE.md](../doc/architect/ARCHITECTURE.md)
 
 ## Current surfaces
 

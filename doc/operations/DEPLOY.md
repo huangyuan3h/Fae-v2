@@ -114,7 +114,7 @@ docker compose -f docker-compose.core.yml down
 ```
 
 OpenAPI：`http://127.0.0.1:8000/docs`  
-薄 TS SDK：[`sdk/typescript`](../sdk/typescript)（`@fae/client`）
+薄 TS SDK：[`sdk/typescript`](../../sdk/typescript)（`@fae/client`）
 
 ## 前端构建与验证
 
@@ -133,6 +133,6 @@ test -f .next/standalone/ui/server.js
 
 ---
 
-## 延后（P8+）
+## 后续功能
 
-OAuth、`/v1` 前缀、完整 SDK REST 面、GPU TTS 进 core compose、LiveKit。
+OAuth、完整 SDK REST 面、GPU TTS 和 LiveKit 等未完成功能统一维护在 [`../TODO.md`](../TODO.md)。

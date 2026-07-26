@@ -36,7 +36,7 @@ function SettingsInner() {
           Reference Client：密钥可选；常驻 Core 用服务端{" "}
           <code className="text-[11px]">DASHSCOPE</code> /{" "}
           <code className="text-[11px]">PROACTIVE_LLM_*</code>。见{" "}
-          <code className="text-[11px]">doc/DEPLOY.md</code>。
+          <code className="text-[11px]">doc/operations/DEPLOY.md</code>。
         </p>
       </header>
 

@@ -28,7 +28,7 @@ FAE-v2 是一个**可自托管的个人助理 Agent Core**：
 - 🛠️ **有真本事**：可扩展工具（目标：日历、文件、脚本、第三方 API…）
 - 📱 **Client 可替换**：Web / Telegram / 未来任意壳，只连同一 Core
 
-> 产品叙事见 [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)（P6 起）。Web UI 是**参考壳**，不是产品本体。
+> 产品待办见 [`TODO.md`](../TODO.md)。Web UI 是**参考壳**，不是产品本体。
 
 ### 1.2 与同类产品的差异
 
@@ -47,8 +47,8 @@ FAE-v2 是一个**可自托管的个人助理 Agent Core**：
 
 > **现行默认路径**：浏览器 Web Speech STT → `/ws/chat`（LLM + memory + skills）→ 本机 TTS（`VLLM_TTS_URL`）。  
 > **可选**：Daily + Pipecat 全双工（需 `DAILY_API_KEY`）；Telegram long-polling channel（`TELEGRAM_*`，共享 `session_id=default`）。  
-> **未实现**：LiveKit / Slack。MCP 不作唯一扩展面（见 DEVELOPMENT_PLAN P8）。  
-> **下一主线**：P6 Core 常驻 & 快速部署（配置外置、compose/Release、远程 channel）。
+> **未实现**：LiveKit / Slack。MCP 不作唯一扩展面；统一跟踪于 [`TODO.md`](../TODO.md)。  
+> **当前焦点**：以 [`TODO.md`](../TODO.md) 为唯一未完成功能清单。
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
@@ -456,13 +456,15 @@ LiveKit：未实现
 ```text
 FAE-v2/
 ├── README.md
-├── ARCHITECTURE.md                  # → points to doc/ARCHITECTURE.md
+├── ARCHITECTURE.md                  # → points to doc/architect/ARCHITECTURE.md
 ├── docker-compose.yml
 ├── .env.example
 ├── doc/
-│   ├── ARCHITECTURE.md              # 本文档（权威）
-│   ├── DEVELOPMENT_PLAN.md          # 阶段 checklist
-│   └── LOCAL_TTS.md
+│   ├── TODO.md                      # 唯一未完成功能清单
+│   ├── architect/                   # 当前架构与模块索引
+│   ├── design/                      # 设计方案
+│   ├── operations/                  # 部署与本地运行手册
+│   └── archive/                     # 已完成阶段与历史研究
 │
 ├── backend/
 │   ├── pyproject.toml
@@ -666,7 +668,7 @@ evals/
     └── ws_voice_round_no_daily.json   # 无 Daily：WS chat + TTS stub
 ```
 
-Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说明见 [`evals/README.md`](../evals/README.md)。
+Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说明见 [`evals/README.md`](../../evals/README.md)。
 
 ### 9.2 评测维度（目标）
 
@@ -679,105 +681,15 @@ Runners（进 CI）：`backend/tests/test_evals_*.py`（`uv run pytest`）。说
 
 ---
 
-## 10. 路线图（Roadmap）
+## 10. 路线图
 
-### Phase 1: MVP（第 1-2 周）
-
-- [ ] Pipecat + Qwen3-ASR + Qwen3-TTS 跑通对话
-- [ ] Letta 集成 + 基础记忆
-- [ ] Next.js UI：VoiceOrb + ChatPanel
-- [ ] Docker Compose 一键启动
-
-### Phase 2: 记忆深化（第 3-4 周）
-
-- [x] 三层记忆架构（core/recall/archival）
-- [x] Episodic memory 事件日志
-- [x] 记忆浏览器 UI
-- [x] sleeptime 整理任务
-
-### Phase 3: Skills 体系（第 5-6 周）
-
-- [x] Markdown skill 格式规范
-- [x] Skill 自动触发 + 优先级调度
-- [x] 5+ 内置 skills
-- [x] Skill 编辑器（UI）
-
-### Phase 4: 主动 Loop（第 7-8 周）
-
-- [x] APScheduler + Heartbeat（`fae/scheduler/loop.py`）
-- [x] 定时任务 UI（`/schedules`）
-- [x] Proactive outreach（主动发起话题）
-- [x] 通知通道（Web Push / 桌面通知 / WS）
-
-### Phase Q: 质量硬化 — ✅ 首版（见 DEVELOPMENT_PLAN）
-
-- [x] Q.0 人设 · Q.1 语音 · Q.2 Skills · Q.3 记忆 · Q.4 Loop · Q.5 横切
-
-### Phase 5: 上限扩展（按优先级）
-
-- [x] **5.1** 多端 & Telegram（首版：PWA 壳 + long polling；共享 `session_id=default`）
-- [x] **5.2** Subagents（`run_subagent` 工具；builtins researcher/coder/reviewer；摘要 → archival）
-- [ ] 多用户 / 本地 ASR / Daily 加深 / Slack（按需）
-- [ ] **MCP 暂缓**（默认不做）
-- [ ] LiveKit：仅在明确需要时再评估（当前未实现）
-
-**Telegram（可选）**：`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` 启用 `fae/channels/` long-polling；inbound 经 `bridge.handle_inbound_text`（与 `/api/chat` 同 core）；outbound 挂在 `NotificationDelivery.notify`。无 Token 时零影响。默认路径仍是浏览器。
-
-**Subagents**：与 `request_skill` / weather 同属工具环（`fae/agent/subagents/`）。仅当**已激活 skill** 声明 `requires_tools: [run_subagent]` 时挂上工具（避免每轮额外 probe）。子 turn **不**再挂 `run_subagent`。WS 推送 `type: subagent` 供 UI 系统行展示。不是多智能体产品叙事。
+未完成功能统一维护在 [`TODO.md`](../TODO.md)；已完成阶段见 [`archive/`](../archive/)。
 
 ---
 
-## 11. 给 Coding Agent 的执行清单
+## 11. 开发执行入口
 
-> 当本仓库的 coding agent 接到任务时，按以下顺序执行：
-
-### 第一波：基础设施
-
-1. 创建 `backend/pyproject.toml` + `ui/package.json` 基础结构
-2. 写 `docker-compose.yml`，先把 5 个服务跑起来
-3. 写 FastAPI 入口 + 健康检查
-
-### 第二波：语音管道
-
-4. 实现 `backend/src/fae/pipecat/services/qwen3_asr.py`
-5. 实现 `backend/src/fae/pipecat/services/qwen3_tts.py`
-6. 实现 `backend/src/fae/pipecat/bot.py`（最小 pipeline）
-7. 集成 Silero VAD + SmartTurn
-8. **冒烟测试**：浏览器能听到自己的声音回放
-
-### 第三波：记忆系统
-
-9. 起 Letta server，配置 SQLite 持久化
-10. 实现 `letta_client.py` + 三个基础工具
-11. 把 memory service 插入 Pipecat pipeline
-12. **冒烟测试**：说"我叫 X"，下一轮问"我叫什么"
-
-### 第四波：Skills
-
-13. 设计 skill markdown 加载器
-14. 写 3 个内置 skill（daily_check_in / tech_debug / reading）
-15. Skill 自动触发逻辑
-16. **冒烟测试**：贴 stack trace → 自动加载 tech_debug skill
-
-### 第五波：主动 Loop
-
-17. 实现 Heartbeat + APScheduler
-18. Proactive outreach 触发条件
-19. 定时任务 UI
-20. **冒烟测试**：创建"明早 8 点提醒" → 准点收到
-
-### 第六波：UI 完善
-
-21. shadcn/ui 安装 + 主题
-22. VoiceOrb 动效
-23. 记忆浏览器
-24. Skills / Schedules 管理页
-
-### 第七波：评测 & 文档
-
-25. 写 5+ evals 跑通
-26. README + 截图
-27. 录 demo 视频
+当前功能执行顺序和验收条件统一维护在 [`TODO.md`](../TODO.md)。
 
 ---
 

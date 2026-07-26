@@ -71,7 +71,7 @@ echo ""
 echo "Core:    http://127.0.0.1:8000"
 echo "Ready:   http://127.0.0.1:8000/ready"
 echo "Docs:    http://127.0.0.1:8000/docs"
-echo "Deploy:  doc/DEPLOY.md"
+echo "Deploy:  doc/operations/DEPLOY.md"
 echo ""
 echo "Telegram/Loop use server DASHSCOPE_API_KEY or PROACTIVE_LLM_* (no browser Key)."
 

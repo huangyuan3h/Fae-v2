@@ -1,6 +1,6 @@
 """Builder helpers for Pipecat LLMAssistantAggregatorParams.
 
-R3 of doc/CONTEXT_ENGINEERING.md: enable ``LLMContextSummarizer`` on the
+R3 of doc/design/CONTEXT_ENGINEERING.md: enable ``LLMContextSummarizer`` on the
 Daily voice path so long phone calls don't blow past the model window.
 
 We keep the summarizer *off* by default — it adds a second LLM call per

@@ -81,7 +81,7 @@ async def tts_status(settings: Annotated[Settings, Depends(_live_settings)]) -> 
             if reachable
             else (
                 f"No TTS server at {client.speech_url}. "
-                "Start Qwen3-TTS / CosyVoice on that port — doc/LOCAL_TTS.md"
+                "Start Qwen3-TTS / CosyVoice on that port — doc/operations/LOCAL_TTS.md"
             )
         ),
     }

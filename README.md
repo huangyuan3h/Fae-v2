@@ -6,12 +6,14 @@
 
 ## 文档
 
-- [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) — 架构真相源
-- [doc/DEPLOY.md](./doc/DEPLOY.md) — **常驻 Core 部署**（compose slim / Tailscale / `/ready`）
-- [doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md) — **Personal Assistant 计划（P8 起下一主线）**
+- [doc/TODO.md](./doc/TODO.md) — **唯一未完成功能清单（当前焦点）**
+- [doc/architect/ARCHITECTURE.md](./doc/architect/ARCHITECTURE.md) — 架构文档
+- [doc/architect/MODULES.md](./doc/architect/MODULES.md) — 模块索引
+- [doc/design/CONTEXT_ENGINEERING.md](./doc/design/CONTEXT_ENGINEERING.md) — Context Engineering 设计与现状
+- [doc/operations/DEPLOY.md](./doc/operations/DEPLOY.md) — **常驻 Core 部署**（compose slim / Tailscale / `/ready`）
+- [doc/operations/LOCAL_TTS.md](./doc/operations/LOCAL_TTS.md) — 本机 TTS
+- [doc/archive/](./doc/archive/) — 已完成计划与历史研究
 - [sdk/typescript](./sdk/typescript) — 薄 Client SDK（`@fae/client`）
-- [doc/archive/DEVELOPMENT_PLAN_through_v0.2.md](./doc/archive/DEVELOPMENT_PLAN_through_v0.2.md) — 已完成至 v0.2.0 的旧清单归档
-- [doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md) — 本机 TTS
 - [evals/README.md](./evals/README.md) — 最小评测集
 - [CHANGELOG.md](./CHANGELOG.md) — 版本摘要
 
@@ -26,7 +28,7 @@
 | P7 Client 契约 & 壳化 | ✅ M7 |
 | **下一主线** | **P8 · Tool Runtime & 连接器** |
 
-MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
+MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 [`doc/TODO.md`](./doc/TODO.md)。
 
 ## 能力一览
 
@@ -45,7 +47,7 @@ MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 DEVELOPMENT_PLAN。
 
 ## 快速开始
 
-**常驻 Agent Core（推荐生产 / Telegram）** — 见 [doc/DEPLOY.md](./doc/DEPLOY.md)：
+**常驻 Agent Core（推荐生产 / Telegram）** — 见 [doc/operations/DEPLOY.md](./doc/operations/DEPLOY.md)：
 
 ```bash
 cp .env.example .env   # 填 Always-on Core 块（含可选 FAE_CLIENT_TOKEN）

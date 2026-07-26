@@ -2,12 +2,12 @@
 
 Canonical architecture documentation lives in:
 
-**[doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md)**
+**[doc/architect/ARCHITECTURE.md](./doc/architect/ARCHITECTURE.md)**
 
-Execution checklist / phase status:
+Current feature TODO:
 
-**[doc/DEVELOPMENT_PLAN.md](./doc/DEVELOPMENT_PLAN.md)**
+**[doc/TODO.md](./doc/TODO.md)**
 
 Local TTS setup:
 
-**[doc/LOCAL_TTS.md](./doc/LOCAL_TTS.md)**
+**[doc/operations/LOCAL_TTS.md](./doc/operations/LOCAL_TTS.md)**

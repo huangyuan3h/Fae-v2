@@ -1,8 +1,8 @@
 # FAE 模块手册（开发者向 · 代码现状索引）
 
-> 本文档是 **代码现状** 的"模块索引"，目标是让新加入的开发者 10 分钟内掌握仓库结构、关键调用链、每个模块用到的包与逻辑，并与 `doc/ARCHITECTURE.md` / `doc/LOCAL_TTS.md` 的表述差异做校正。
+> 本文档是 **代码现状** 的"模块索引"，目标是让新加入的开发者 10 分钟内掌握仓库结构、关键调用链、每个模块用到的包与逻辑，并与 `doc/architect/ARCHITECTURE.md` / `doc/operations/LOCAL_TTS.md` 的表述差异做校正。
 >
-> 设计动机、roadmap 与历史归档归 [`doc/ARCHITECTURE.md`](ARCHITECTURE.md)；部署步骤归 [`doc/DEPLOY.md`](DEPLOY.md)；本机 TTS 详细配置归 [`doc/LOCAL_TTS.md`](LOCAL_TTS.md)。
+> 架构文档见 [`doc/architect/ARCHITECTURE.md`](ARCHITECTURE.md)；部署步骤见 [`doc/operations/DEPLOY.md`](../operations/DEPLOY.md)；本机 TTS 配置见 [`doc/operations/LOCAL_TTS.md`](../operations/LOCAL_TTS.md)；未完成功能统一见 [`doc/TODO.md`](../TODO.md)。
 
 ---
 
@@ -10,15 +10,15 @@
 
 仓库是 monorepo，分 5 个产品块：
 
-- `backend/` — Python 后端；FastAPI 入口在 [`backend/src/fae/__init__.py`](../backend/src/fae/__init__.py)；所有代码在 `backend/src/fae/`。
+- `backend/` — Python 后端；FastAPI 入口在 [`backend/src/fae/__init__.py`](../../backend/src/fae/__init__.py)；所有代码在 `backend/src/fae/`。
 - `ui/` — Next.js 16 App Router；代码在 `ui/src/`；启动 `pnpm dev`。
 - `sdk/typescript/` — 浏览器/Node 客户端（`@fae/client`），被 UI 通过 `file:../sdk/typescript` 直接 link。
 - `scripts/tts/` — 本机 Qwen3-TTS 拉取、安装、启动脚本（`.deps/qwen3-tts/` 是运行期下载目录，不入库）。
 - `deploy/` — Docker Compose（`docker-compose.yml` 全栈 / `docker-compose.core.yml` slim Core）。
 
-辅助目录：`doc/`、`evals/`（离线回归，README 在 [`evals/README.md`](../evals/README.md)）、`.github/`。
+辅助目录：`doc/`、`evals/`（离线回归，README 在 [`evals/README.md`](../../evals/README.md)）、`.github/`。
 
-根 [`package.json`](../package.json) `npm run dev` 用 `concurrently` 同时启 `backend` / `ui` / `tts`；`npm run setup` 跑 `uv sync --group dev`、`pnpm install`。
+根 [`package.json`](../../package.json) `npm run dev` 用 `concurrently` 同时启 `backend` / `ui` / `tts`；`npm run setup` 跑 `uv sync --group dev`、`pnpm install`。
 
 ---
 
@@ -28,7 +28,7 @@
 
 ### 2.1 `api/` — HTTP / WebSocket 入口（实现）
 
-- [`backend/src/fae/api/__init__.py`](../backend/src/fae/api/__init__.py) FastAPI 工厂 `create_app()`、`lifespan` 启动 memory / skills / scheduler / telegram；CORS + 客户端 token 中间件。
+- [`backend/src/fae/api/__init__.py`](../../backend/src/fae/api/__init__.py) FastAPI 工厂 `create_app()`、`lifespan` 启动 memory / skills / scheduler / telegram；CORS + 客户端 token 中间件。
 - 注册路由（按文件）：
   - `ws.py` — `WS /ws/chat`（流式 chat、cancel、skills/subagent/notification 中继）。
   - `chat`（在 `__init__.py`）— `POST /api/chat` 单轮文本。
@@ -41,16 +41,16 @@
   - `schedules.py` — `/api/schedules` CRUD + `/parse` + `/{id}/trigger`；`/api/scheduler/status`（由 `status_router` 提供）。
   - `notifications.py` — `/api/notifications`、`/read`、`/prefs`、`/vapid-public-key`、`/subscribe`。
   - `/health`、`/ready`、`/api/test-connection`。
-- 鉴权 [`backend/src/fae/api/auth.py`](../backend/src/fae/api/auth.py) — `client_token_required` / `require_client_token_http` / `ensure_ws_client_token`；白名单 `public_paths`。
-- 依赖注入 [`backend/src/fae/api/deps.py`](../backend/src/fae/api/deps.py) — `get_llm_client`、`get_memory_service`。
+- 鉴权 [`backend/src/fae/api/auth.py`](../../backend/src/fae/api/auth.py) — `client_token_required` / `require_client_token_http` / `ensure_ws_client_token`；白名单 `public_paths`。
+- 依赖注入 [`backend/src/fae/api/deps.py`](../../backend/src/fae/api/deps.py) — `get_llm_client`、`get_memory_service`。
 - 用到的关键包：`fastapi`（HTTP/WS 框架）、`uvicorn[standard]`（ASGI 入口）、`httpx`（少数内部调用）、`pydantic`（DTO 校验）。
 - 验证：默认 client token 在 `Settings.client_token` 空时全部放行；只需在 `Settings.client_token` 非空时强制校验。
 
 ### 2.2 `agent/` — 单轮聊天 + Skills + Subagents（实现）
 
-- [`backend/src/fae/agent/prepare.py`](../backend/src/fae/agent/prepare.py) `prepare_chat_request()`：将 Core blocks、recall 上下文与激活技能注入到 `system` 消息。
-- [`backend/src/fae/agent/llm_turn.py`](../backend/src/fae/agent/llm_turn.py) `stream_assistant_turn()` + `apply_lazy_skill_tool()`：单回合主循环，含工具分发、token 流推送、cancel。
-- 已注册工具（[`backend/src/fae/agent/known_tools.py`](../backend/src/fae/agent/known_tools.py)）：`get_weather`、`schedule_create_job` / `list_jobs` / `cancel_job`、`request_skill`、`run_subagent`。
+- [`backend/src/fae/agent/prepare.py`](../../backend/src/fae/agent/prepare.py) `prepare_chat_request()`：将 Core blocks、recall 上下文与激活技能注入到 `system` 消息。
+- [`backend/src/fae/agent/llm_turn.py`](../../backend/src/fae/agent/llm_turn.py) `stream_assistant_turn()` + `apply_lazy_skill_tool()`：单回合主循环，含工具分发、token 流推送、cancel。
+- 已注册工具（[`backend/src/fae/agent/known_tools.py`](../../backend/src/fae/agent/known_tools.py)）：`get_weather`、`schedule_create_job` / `list_jobs` / `cancel_job`、`request_skill`、`run_subagent`。
 - Skills 子系统：
   - `skills_schema.py` — `LoadStrategy`（`ALWAYS_ON` / `TRIGGER_BASED` / `LAZY` / `MANUAL`）+ `Skill` / `SkillMetadata`。
   - `skills_loader.py` — Markdown + YAML frontmatter；默认目录 `backend/src/skills/`。
@@ -65,87 +65,87 @@
 
 ### 2.3 `llm/` — 大模型抽象（实现）
 
-- [`backend/src/fae/llm/provider.py`](../backend/src/fae/llm/provider.py) — `OpenAICompatibleProvider`（基于 `openai.AsyncOpenAI`，与 DashScope `compatible-mode` / Qwen3 / DeepSeek / vLLM 互通）+ `FakeProvider`（测试桩）。
-- [`backend/src/fae/llm/client.py`](../backend/src/fae/llm/client.py) — `LLMClient` 薄壳，统一日志与错误。
-- [`backend/src/fae/llm/types.py`](../backend/src/fae/llm/types.py) — `LLMConfig` / `ChatMessage` / `ChatRequest` / `ChatResponse` / `ToolCall`。
+- [`backend/src/fae/llm/provider.py`](../../backend/src/fae/llm/provider.py) — `OpenAICompatibleProvider`（基于 `openai.AsyncOpenAI`，与 DashScope `compatible-mode` / Qwen3 / DeepSeek / vLLM 互通）+ `FakeProvider`（测试桩）。
+- [`backend/src/fae/llm/client.py`](../../backend/src/fae/llm/client.py) — `LLMClient` 薄壳，统一日志与错误。
+- [`backend/src/fae/llm/types.py`](../../backend/src/fae/llm/types.py) — `LLMConfig` / `ChatMessage` / `ChatRequest` / `ChatResponse` / `ToolCall`。
 - 默认 `model=qwen3-max`、`base_url=https://dashscope.aliyuncs.com/compatible-mode/v1`，由 `Settings` 与 `channels/bridge.merge_llm_config` 提供回退。
 - 用包：`openai`（Qwen3 / DeepSeek 通用 OpenAI 兼容客户端）、`pydantic`（DTO）。
 
 ### 2.4 `memory/` — 记忆栈（实现，部分 stub）
 
-- [`backend/src/fae/memory/factory.py`](../backend/src/fae/memory/factory.py) `create_memory_stack()` / `build_memory_stack()`：依 `Settings.letta_mode`（`off` / `embedded` / `remote`）组装六件套：`(client, recall, archival, compactor, episodic, embedder)`。
-- Letta 远程：[`backend/src/fae/memory/letta_client.py`](../backend/src/fae/memory/letta_client.py) `LettaMemoryClient`（HTTP，agent core blocks / facts / profile / archival）。
-- 内嵌离线：[`backend/src/fae/memory/embedded.py`](../backend/src/fae/memory/embedded.py) `EmbeddedMemoryClient`（SQLite 等价实现）。
-- 热窗口 [`backend/src/fae/memory/recall_store.py`](../backend/src/fae/memory/recall_store.py) `RecallStore`：每会话 SQLite 暂存最近 N 轮。
-- Archival [`backend/src/fae/memory/archival.py`](../backend/src/fae/memory/archival.py) `QdrantArchival`（实现，可选） / `StubArchival`（内存，tests 默认）；可配 OpenAI 兼容 embedder [`backend/src/fae/memory/embeddings.py`](../backend/src/fae/memory/embeddings.py)。
-- 事件 [`backend/src/fae/memory/episodic.py`](../backend/src/fae/memory/episodic.py) `EpisodicStore`：生活事件 SQLite + 启发式检测。
-- 事实抽取 [`backend/src/fae/memory/fact_extract.py`](../backend/src/fae/memory/fact_extract.py)（正则启发式：姓名 / 城市 / 时区 / 饮食） + [`backend/src/fae/memory/profile_block.py`](../backend/src/fae/memory/profile_block.py) 解析 `[human]` 块。
-- 压缩 [`backend/src/fae/memory/compaction.py`](../backend/src/fae/memory/compaction.py) `MemoryCompactor`（recall → archival） + [`backend/src/fae/memory/consolidation.py`](../backend/src/fae/memory/consolidation.py) `MemoryConsolidator` / `SleeptimeScheduler`（汇总成 `current` block）。
+- [`backend/src/fae/memory/factory.py`](../../backend/src/fae/memory/factory.py) `create_memory_stack()` / `build_memory_stack()`：依 `Settings.letta_mode`（`off` / `embedded` / `remote`）组装六件套：`(client, recall, archival, compactor, episodic, embedder)`。
+- Letta 远程：[`backend/src/fae/memory/letta_client.py`](../../backend/src/fae/memory/letta_client.py) `LettaMemoryClient`（HTTP，agent core blocks / facts / profile / archival）。
+- 内嵌离线：[`backend/src/fae/memory/embedded.py`](../../backend/src/fae/memory/embedded.py) `EmbeddedMemoryClient`（SQLite 等价实现）。
+- 热窗口 [`backend/src/fae/memory/recall_store.py`](../../backend/src/fae/memory/recall_store.py) `RecallStore`：每会话 SQLite 暂存最近 N 轮。
+- Archival [`backend/src/fae/memory/archival.py`](../../backend/src/fae/memory/archival.py) `QdrantArchival`（实现，可选） / `StubArchival`（内存，tests 默认）；可配 OpenAI 兼容 embedder [`backend/src/fae/memory/embeddings.py`](../../backend/src/fae/memory/embeddings.py)。
+- 事件 [`backend/src/fae/memory/episodic.py`](../../backend/src/fae/memory/episodic.py) `EpisodicStore`：生活事件 SQLite + 启发式检测。
+- 事实抽取 [`backend/src/fae/memory/fact_extract.py`](../../backend/src/fae/memory/fact_extract.py)（正则启发式：姓名 / 城市 / 时区 / 饮食） + [`backend/src/fae/memory/profile_block.py`](../../backend/src/fae/memory/profile_block.py) 解析 `[human]` 块。
+- 压缩 [`backend/src/fae/memory/compaction.py`](../../backend/src/fae/memory/compaction.py) `MemoryCompactor`（recall → archival） + [`backend/src/fae/memory/consolidation.py`](../../backend/src/fae/memory/consolidation.py) `MemoryConsolidator` / `SleeptimeScheduler`（汇总成 `current` block）。
 - 用包：标准库 `sqlite3`、`httpx`（Letta HTTP / Qdrant REST / Telegram / Open-Meteo）、`pydantic`。
 - 状态：`LettaMemoryClient` 完整实现但需远程 Letta；`EmbeddedMemoryClient` 实现完整；`QdrantArchival` 实现，默认未启用（`archival_prefer_stub=True` 在 tests）；`memory_tool_stubs / MEMORY_TOOLS` 仅占位、`tests/test_voice_runtime.py` 仅作存在性断言。
 
 ### 2.5 `tts/` — 本机 TTS（实现 + stub）
 
-- [`backend/src/fae/tts/local_client.py`](../backend/src/fae/tts/local_client.py) `LocalTTSClient`：通过 `httpx(trust_env=False)` 打 `POST {VLLM_TTS_URL}/v1/audio/speech`（OpenAI 兼容）；支持 PCM→WAV 包装；内置兜底 voice 列表（Vivian / Ryan / Serena / Dylan / Eric / Aiden / Uncle_Fu / Ono_Anna / Sohee）。
-- [`backend/src/fae/tts/stub_server.py`](../backend/src/fae/tts/stub_server.py) — FastAPI 桩服务（生成 440 Hz 蜂鸣音 WAV），`Settings.tts_embed_stub=True` 时挂到主应用；独立启动 `python -m fae.tts.stub_server`（:8003）。
-- [`backend/src/fae/tts/wav.py`](../backend/src/fae/tts/wav.py) — PCM16 mono ↔ WAV 头。
-- [`backend/src/fae/tts/speakable.py`](../backend/src/fae/tts/speakable.py) — 剥离 markdown / emoji / 围栏，给 TTS 干净文本。
+- [`backend/src/fae/tts/local_client.py`](../../backend/src/fae/tts/local_client.py) `LocalTTSClient`：通过 `httpx(trust_env=False)` 打 `POST {VLLM_TTS_URL}/v1/audio/speech`（OpenAI 兼容）；支持 PCM→WAV 包装；内置兜底 voice 列表（Vivian / Ryan / Serena / Dylan / Eric / Aiden / Uncle_Fu / Ono_Anna / Sohee）。
+- [`backend/src/fae/tts/stub_server.py`](../../backend/src/fae/tts/stub_server.py) — FastAPI 桩服务（生成 440 Hz 蜂鸣音 WAV），`Settings.tts_embed_stub=True` 时挂到主应用；独立启动 `python -m fae.tts.stub_server`（:8003）。
+- [`backend/src/fae/tts/wav.py`](../../backend/src/fae/tts/wav.py) — PCM16 mono ↔ WAV 头。
+- [`backend/src/fae/tts/speakable.py`](../../backend/src/fae/tts/speakable.py) — 剥离 markdown / emoji / 围栏，给 TTS 干净文本。
 - 用包：`httpx`（TTS HTTP）、`fastapi` / `uvicorn`（stub server）、`pydantic`。
 
 ### 2.6 `pipecat/` — 实时语音管线（部分实现 / 部分适配器占位）
 
-- [`backend/src/fae/pipecat/daily_bot.py`](../backend/src/fae/pipecat/daily_bot.py) `run_daily_bot()` — 完整 Daily WebRTC pipeline：OpenAI-STT（`VLLM_ASR_URL`，model `whisper-1`）→ OpenAI-LLM（DashScope compatible-mode）→ 本地 TTS（`LocalTTSService`）→ Daily → BargeIn。
-- [`backend/src/fae/pipecat/bot.py`](../backend/src/fae/pipecat/bot.py) `TextPipelineBot` — 文本路径（`/api/pipeline/text` smoke）。
-- [`backend/src/fae/pipecat/services/`](../backend/src/fae/pipecat/services/)：
+- [`backend/src/fae/pipecat/daily_bot.py`](../../backend/src/fae/pipecat/daily_bot.py) `run_daily_bot()` — 完整 Daily WebRTC pipeline：OpenAI-STT（`VLLM_ASR_URL`，model `whisper-1`）→ OpenAI-LLM（DashScope compatible-mode）→ 本地 TTS（`LocalTTSService`）→ Daily → BargeIn。
+- [`backend/src/fae/pipecat/bot.py`](../../backend/src/fae/pipecat/bot.py) `TextPipelineBot` — 文本路径（`/api/pipeline/text` smoke）。
+- [`backend/src/fae/pipecat/services/`](../../backend/src/fae/pipecat/services/)：
   - `qwen3_llm.py` — Pipecat 适配层（实际调 `fae.llm.LLMClient`）。
   - `qwen3_tts.py` / `local_tts_service.py` — Pipecat TTSService 包装 `LocalTTSClient`；无 `base_url` 时返回静音 PCM。
   - `qwen3_asr.py` — `Qwen3ASRService`（仅 HTTP 适配器，**未被默认 Daily pipeline 使用**）。
   - `letta_memory.py` — `LettaMemoryService` 把记忆栈挂到 Pipecat frame 流程。
-- [`backend/src/fae/pipecat/vad.py`](../backend/src/fae/pipecat/vad.py) — `EnergyVAD`（实现）+ `SileroVADAnalyzer`（按需 import）。
-- [`backend/src/fae/pipecat/transport.py`](../backend/src/fae/pipecat/transport.py) — `LocalTransport`（实现）+ `DailyTransportConfig`（仅占位）。
+- [`backend/src/fae/pipecat/vad.py`](../../backend/src/fae/pipecat/vad.py) — `EnergyVAD`（实现）+ `SileroVADAnalyzer`（按需 import）。
+- [`backend/src/fae/pipecat/transport.py`](../../backend/src/fae/pipecat/transport.py) — `LocalTransport`（实现）+ `DailyTransportConfig`（仅占位）。
 - 用包：`pipecat-ai[daily,silero,soundfile]`（必需）、`httpx`、`soundfile`、可选 `torch`（VAD）。
 
 ### 2.7 `scheduler/` — 心跳 / 调度 / 主动触达（实现）
 
-- [`backend/src/fae/scheduler/loop.py`](../backend/src/fae/scheduler/loop.py) `ProactiveLoop` — `APScheduler` 编排 heartbeat、内置 job（`daily_checkin` / `weekly_recap`）、自定义 job；与 `ActivityTracker`、`NotificationDelivery`、`SkillRuntime`、`MemoryService` 集成。
-- [`backend/src/fae/scheduler/store.py`](../backend/src/fae/scheduler/store.py) `ScheduleStore` — SQLite 持久化 jobs / prefs / inbox / push 订阅 / 活动时间戳 / 外呼状态。
-- [`backend/src/fae/scheduler/heartbeat.py`](../backend/src/fae/scheduler/heartbeat.py) `HeartbeatLoop` — 周期评估每个 session 是否触达。
-- [`backend/src/fae/scheduler/proactive.py`](../backend/src/fae/scheduler/proactive.py) `OutreachPolicy` / `should_outreach`（节流）。
-- [`backend/src/fae/scheduler/delivery.py`](../backend/src/fae/scheduler/delivery.py) `NotificationDelivery` — 五通道：inbox / WS / Web Push / Desktop / Telegram。
-- [`backend/src/fae/scheduler/hub.py`](../backend/src/fae/scheduler/hub.py) `ConnectionHub` — `WebSocket` 广播；被 `/ws/chat` 注册。
-- [`backend/src/fae/scheduler/parse_nl.py`](../backend/src/fae/scheduler/parse_nl.py) — 自然语言 → cron / run_at（中文 + 英文）。
-- [`backend/src/fae/scheduler/tools.py`](../backend/src/fae/scheduler/tools.py) — `schedule_*` 工具 schema + dispatch（被 `agent.llm_turn` 复用）。
-- [`backend/src/fae/scheduler/activity.py`](../backend/src/fae/scheduler/activity.py) `ActivityTracker` — 共享 idle 时钟。
+- [`backend/src/fae/scheduler/loop.py`](../../backend/src/fae/scheduler/loop.py) `ProactiveLoop` — `APScheduler` 编排 heartbeat、内置 job（`daily_checkin` / `weekly_recap`）、自定义 job；与 `ActivityTracker`、`NotificationDelivery`、`SkillRuntime`、`MemoryService` 集成。
+- [`backend/src/fae/scheduler/store.py`](../../backend/src/fae/scheduler/store.py) `ScheduleStore` — SQLite 持久化 jobs / prefs / inbox / push 订阅 / 活动时间戳 / 外呼状态。
+- [`backend/src/fae/scheduler/heartbeat.py`](../../backend/src/fae/scheduler/heartbeat.py) `HeartbeatLoop` — 周期评估每个 session 是否触达。
+- [`backend/src/fae/scheduler/proactive.py`](../../backend/src/fae/scheduler/proactive.py) `OutreachPolicy` / `should_outreach`（节流）。
+- [`backend/src/fae/scheduler/delivery.py`](../../backend/src/fae/scheduler/delivery.py) `NotificationDelivery` — 五通道：inbox / WS / Web Push / Desktop / Telegram。
+- [`backend/src/fae/scheduler/hub.py`](../../backend/src/fae/scheduler/hub.py) `ConnectionHub` — `WebSocket` 广播；被 `/ws/chat` 注册。
+- [`backend/src/fae/scheduler/parse_nl.py`](../../backend/src/fae/scheduler/parse_nl.py) — 自然语言 → cron / run_at（中文 + 英文）。
+- [`backend/src/fae/scheduler/tools.py`](../../backend/src/fae/scheduler/tools.py) — `schedule_*` 工具 schema + dispatch（被 `agent.llm_turn` 复用）。
+- [`backend/src/fae/scheduler/activity.py`](../../backend/src/fae/scheduler/activity.py) `ActivityTracker` — 共享 idle 时钟。
 - 用包：`apscheduler`（cron / interval / date）、`httpx`（Telegram Bot API）、`sqlite3`、可选 `pywebpush`。
 
 ### 2.8 `channels/` — 外部文本入口（实现）
 
-- [`backend/src/fae/channels/bridge.py`](../backend/src/fae/channels/bridge.py) — 合并客户端 LLM 配置与服务端 `PROACTIVE_LLM_*` / `DASHSCOPE_API_KEY`；把外部文本并入 `prepare_chat_request()` + `apply_lazy_skill_tool()`。
-- [`backend/src/fae/channels/telegram.py`](../backend/src/fae/channels/telegram.py) — `TelegramClient`（`getUpdates` 长轮询 / `sendMessage`）；`telegram_poll_loop()` 由 `api/__init__.py::lifespan` 在 token + chat_id 齐备时启动。
+- [`backend/src/fae/channels/bridge.py`](../../backend/src/fae/channels/bridge.py) — 合并客户端 LLM 配置与服务端 `PROACTIVE_LLM_*` / `DASHSCOPE_API_KEY`；把外部文本并入 `prepare_chat_request()` + `apply_lazy_skill_tool()`。
+- [`backend/src/fae/channels/telegram.py`](../../backend/src/fae/channels/telegram.py) — `TelegramClient`（`getUpdates` 长轮询 / `sendMessage`）；`telegram_poll_loop()` 由 `api/__init__.py::lifespan` 在 token + chat_id 齐备时启动。
 - 用包：`httpx`。
 
 ### 2.9 `notifications/` — Web Push / Desktop（实现，best-effort）
 
-- [`backend/src/fae/notifications/webpush.py`](../backend/src/fae/notifications/webpush.py) `send_web_push()`（`pywebpush`，可缺）。
-- [`backend/src/fae/notifications/desktop.py`](../backend/src/fae/notifications/desktop.py) `send_desktop_notification()`（`osascript` / `notify-send`）。
+- [`backend/src/fae/notifications/webpush.py`](../../backend/src/fae/notifications/webpush.py) `send_web_push()`（`pywebpush`，可缺）。
+- [`backend/src/fae/notifications/desktop.py`](../../backend/src/fae/notifications/desktop.py) `send_desktop_notification()`（`osascript` / `notify-send`）。
 - 被 `scheduler.delivery.NotificationDelivery` 调用。
 
 ### 2.10 `tools/` — 工具实现（实现）
 
-- [`backend/src/fae/tools/weather.py`](../backend/src/fae/tools/weather.py) `get_weather()`：Open-Meteo 地理编码 + 当前天气 + 高低温 + 降雨概率。
-- [`backend/src/fae/tools/context.py`](../backend/src/fae/tools/context.py) `build_runtime_context()`：在系统提示注入本地时间、家乡城市 / 时区。
+- [`backend/src/fae/tools/weather.py`](../../backend/src/fae/tools/weather.py) `get_weather()`：Open-Meteo 地理编码 + 当前天气 + 高低温 + 降雨概率。
+- [`backend/src/fae/tools/context.py`](../../backend/src/fae/tools/context.py) `build_runtime_context()`：在系统提示注入本地时间、家乡城市 / 时区。
 
 ### 2.11 顶层 — `config.py` / `sessions.py` / `voice_runtime.py`
 
-- [`backend/src/fae/config.py`](../backend/src/fae/config.py) `Settings`（Pydantic-Settings，读取根 `.env`）+ `get_settings()`（`lru_cache`）。
-- [`backend/src/fae/sessions.py`](../backend/src/fae/sessions.py) `SessionStore` — 进程内 session 注册（不含 turn 持久化，那是 `RecallStore`）。
-- [`backend/src/fae/voice_runtime.py`](../backend/src/fae/voice_runtime.py) `VoiceRuntime` — voice session 注册中心 + Daily 任务托管 + `interrupt_pipeline()` 回调。
+- [`backend/src/fae/config.py`](../../backend/src/fae/config.py) `Settings`（Pydantic-Settings，读取根 `.env`）+ `get_settings()`（`lru_cache`）。
+- [`backend/src/fae/sessions.py`](../../backend/src/fae/sessions.py) `SessionStore` — 进程内 session 注册（不含 turn 持久化，那是 `RecallStore`）。
+- [`backend/src/fae/voice_runtime.py`](../../backend/src/fae/voice_runtime.py) `VoiceRuntime` — voice session 注册中心 + Daily 任务托管 + `interrupt_pipeline()` 回调。
 
 ---
 
 ## 3. 前端 — `ui/src/`
 
-### 3.1 路由与页面（[`ui/src/app/`](../ui/src/app/)）
+### 3.1 路由与页面（[`ui/src/app/`](../../ui/src/app/)）
 
 | 路由 | 文件 | 行为 |
 |---|---|---|
@@ -157,9 +157,9 @@
 | `/schedules` | `schedules/page.tsx` | 自然语言解析 → 确认草稿 → 创建；`JobRow` 子组件支持启用/禁用/触发/删除 |
 | `/settings` | `settings/page.tsx` | 5 个 tab 用 `?tab=persona\|profile\|models\|voice\|notifications` 切换 |
 
-布局 [`ui/src/app/layout.tsx`](../ui/src/app/layout.tsx) — `QueryProvider` + Syne/DM Sans 字体；`<html lang="zh-CN">`。
+布局 [`ui/src/app/layout.tsx`](../../ui/src/app/layout.tsx) — `QueryProvider` + Syne/DM Sans 字体；`<html lang="zh-CN">`。
 
-### 3.2 共享组件（[`ui/src/components/`](../ui/src/components/)）
+### 3.2 共享组件（[`ui/src/components/`](../../ui/src/components/)）
 
 - `AppNav.tsx` — 顶部 5 链接；轮询 `["scheduler-status"]`（30s）拿 `unread_inbox`，未读红点指向 `?tab=notifications`。
 - `voice/VoiceOrb.tsx` — `framer-motion` 圆环，按 `idle/listening/thinking/speaking` 切关键帧。
@@ -167,14 +167,14 @@
 - `memory/{MemoryNav,MemoryTimeline,MemorySearch}.tsx` — 导航 + 时间线 + 搜索。
 - `settings/{PersonaPanel,ProfilePanel,ModelsPanel,VoicePanel,NotificationsPanel}.tsx` — 5 个 tab 的面板实现；`VoicePanel` 含 TTS 试听 + 高级折叠区里的"Daily WebRTC（可选）"开关。
 
-### 3.3 lib / hooks（[`ui/src/lib/`](../ui/src/lib/)）
+### 3.3 lib / hooks（[`ui/src/lib/`](../../ui/src/lib/)）
 
 - `config.ts` — `AgentConfig`（`baseUrl`、`model`、`apiKey`、`thinking`）+ `loadConfig` / `saveConfig` + `backendHttpBase/WsBase` + `clientAccessToken()`。
 - `models.ts` — `ModelProfile[]`（持久化在 `fae.modelProfiles`）+ `setActiveModel`；通过 `fae:config-changed` 事件通知其它组件。
 - `speech.ts` — `BrowserSTT`（封装 `webkitSpeechRecognition`）；`speechSupported()`；`lang` 自动从 `TtsPrefs.language` 映射（zh-CN/en-US/ja-JP/ko-KR）。
 - `qwen-tts.ts` — `fetchSpeakBlob` / `speakWithLocalTts` / `TtsPlayQueue`（`maxInflight=2`、`minStartReady=1`）+ `fetchTtsStatus/Voices`。
 - `sentence-agg.ts` — `SpeechChunkAggregator`：先硬切 `HARD_END=/(?<=[。！？.!?…\n])/`、再软切 ≥28 字、最后长度截断 `TTS_CHUNK_CHARS=40`，空闲 250 ms 软刷。
-- `speakable.ts` — TTS 前清洗（与 [`backend/src/fae/tts/speakable.py`](../backend/src/fae/tts/speakable.py) 镜像）：去 markdown / emoji / filler / `lmao+|lol+|x[dD]` 等。
+- `speakable.ts` — TTS 前清洗（与 [`backend/src/fae/tts/speakable.py`](../../backend/src/fae/tts/speakable.py) 镜像）：去 markdown / emoji / filler / `lmao+|lol+|x[dD]` 等。
 - `strip-thinking.ts` — 剥 `…` 与 ```` ```thinking ```` 围栏；判断 `isThinkingStreaming`。
 - `ws-chat.ts` — UI 端 WS 客户端（薄壳，转发到 `@fae/client.WsChatClient`）。
 - `pipecat-client.ts` — `createVoiceSession()`：仅是 `POST /api/voice/session` 的 fetch 封装，**不依赖任何 Pipecat 客户端 SDK**。
@@ -185,7 +185,7 @@
 
 ### 3.4 hooks
 
-- [`ui/src/hooks/useVoiceSession.ts`](../ui/src/hooks/useVoiceSession.ts) 唯一业务 hook，集中管理 STT/WS/TTS/Daily：
+- [`ui/src/hooks/useVoiceSession.ts`](../../ui/src/hooks/useVoiceSession.ts) 唯一业务 hook，集中管理 STT/WS/TTS/Daily：
   - `runAssistant()` 主路径：取消旧流 → `wsRef.chat()` → 累积 `assistantBuf` → `toSpeakableText` → `SpeechChunkAggregator.push` → `TtsPlayQueue.enqueue`。
   - `interrupt()` 复位聚合器、`ttsQueue.stop()`、`wsRef.cancel()`、`stt.stop()`；Daily 模式额外 `POST /api/voice/barge-in`。
   - `TurnMetrics`（`sttFinalAt / llmFirstTokenAt / ttsFirstByteAt / ttsFirstPlayAt / ttsServerMs`），`?debug=1` 时在头部展示。
@@ -193,16 +193,16 @@
 
 ### 3.5 状态与数据流
 
-- 服务端状态：[`ui/src/providers/QueryProvider.tsx`](../ui/src/providers/QueryProvider.tsx) — TanStack Query；默认 `staleTime: 10s`、`refetchOnWindowFocus: false`；`useMutation` 全部走乐观更新 + `onError` 回滚 + `onSettled` 失效。
+- 服务端状态：[`ui/src/providers/QueryProvider.tsx`](../../ui/src/providers/QueryProvider.tsx) — TanStack Query；默认 `staleTime: 10s`、`refetchOnWindowFocus: false`；`useMutation` 全部走乐观更新 + `onError` 回滚 + `onSettled` 失效。
 - 客户端状态：纯 `useState` / `useRef`（集中在 `useVoiceSession.ts`）。`window.CustomEvent`（`fae:config-changed` / `fae:tts-prefs-changed` / `fae:prefer-daily-changed`）做跨组件同步。
 
 ---
 
 ## 4. TS SDK — `sdk/typescript/src/`
 
-- [`sdk/typescript/src/client.ts`](../sdk/typescript/src/client.ts) `FaeClient`：HTTP / REST + 能力发现（`getCapabilities` / `getReady` / `listNotifications` / `subscribeNotifications`）。
-- [`sdk/typescript/src/ws-chat.ts`](../sdk/typescript/src/ws-chat.ts) `WsChatClient`：流式 `/ws/chat`，事件 `skills / subagent / token / done / notification / error`。
-- [`sdk/typescript/src/types.ts`](../sdk/typescript/src/types.ts) `LlmConfigInput` / `WsServerMessage` / `StreamHandlers` / `FaeCapabilities` / `FaeReady`。
+- [`sdk/typescript/src/client.ts`](../../sdk/typescript/src/client.ts) `FaeClient`：HTTP / REST + 能力发现（`getCapabilities` / `getReady` / `listNotifications` / `subscribeNotifications`）。
+- [`sdk/typescript/src/ws-chat.ts`](../../sdk/typescript/src/ws-chat.ts) `WsChatClient`：流式 `/ws/chat`，事件 `skills / subagent / token / done / notification / error`。
+- [`sdk/typescript/src/types.ts`](../../sdk/typescript/src/types.ts) `LlmConfigInput` / `WsServerMessage` / `StreamHandlers` / `FaeCapabilities` / `FaeReady`。
 - 被 UI 通过 `ui/package.json` 的 `"@fae/client": "file:../sdk/typescript"` link 直接使用。
 
 ---
@@ -211,20 +211,20 @@
 
 仓库本身不带有 Qwen3-TTS 服务源码；运行时由 `scripts/tts/setup.sh` clone 第三方到 `.deps/qwen3-tts/`。
 
-- [`scripts/tts/setup.sh`](../scripts/tts/setup.sh) — `git clone --depth 1 https://github.com/groxaxo/Qwen3-TTS-Openai-Fastapi.git` 到 `.deps/qwen3-tts`；PyTorch venv 装 `.[api]`；Apple Silicon 额外建 `.venv-mlx` 装 `mlx-audio>=0.3`。
-- [`scripts/tts/run.sh`](../scripts/tts/run.sh) — 端口 8880（`FAE_TTS_PORT`，默认 8880）；Apple Silicon：`TTS_BACKEND=mlx` + `MLX_MODEL_ID=mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16` + `TTS_MAX_CONCURRENT=1` + `TTS_LAZY_LOAD=false` + `TTS_WARMUP_ON_START=true`；其它平台：PyTorch + `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` + `TTS_DEVICE=cpu` + `TTS_DTYPE=float32` + `TTS_ATTN=sdpa`。最终 `exec python -m api.main`。
-- [`scripts/tts/prepare.sh`](../scripts/tts/prepare.sh) — 用 `huggingface_hub.snapshot_download` 下载权重；启动服务 → POST `/v1/audio/speech` 一句"你好，语音已就绪。" warmup → macOS 下 `afplay` 自动试听。
+- [`scripts/tts/setup.sh`](../../scripts/tts/setup.sh) — `git clone --depth 1 https://github.com/groxaxo/Qwen3-TTS-Openai-Fastapi.git` 到 `.deps/qwen3-tts`；PyTorch venv 装 `.[api]`；Apple Silicon 额外建 `.venv-mlx` 装 `mlx-audio>=0.3`。
+- [`scripts/tts/run.sh`](../../scripts/tts/run.sh) — 端口 8880（`FAE_TTS_PORT`，默认 8880）；Apple Silicon：`TTS_BACKEND=mlx` + `MLX_MODEL_ID=mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16` + `TTS_MAX_CONCURRENT=1` + `TTS_LAZY_LOAD=false` + `TTS_WARMUP_ON_START=true`；其它平台：PyTorch + `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` + `TTS_DEVICE=cpu` + `TTS_DTYPE=float32` + `TTS_ATTN=sdpa`。最终 `exec python -m api.main`。
+- [`scripts/tts/prepare.sh`](../../scripts/tts/prepare.sh) — 用 `huggingface_hub.snapshot_download` 下载权重；启动服务 → POST `/v1/audio/speech` 一句"你好，语音已就绪。" warmup → macOS 下 `afplay` 自动试听。
 - 第三方 venv 用到的核心包：`mlx-audio`（Apple Silicon 推理）、`huggingface_hub[hf_xet]`、`fastapi`、`uvicorn[standard]`、`python-multipart`、`pydantic`、`inflect`、`aiofiles`、`pydub`、`httpx`、`numpy`、`librosa`、`soundfile`、`einops`、`PyYAML`、`requests`、`tqdm`；再 `pip install -e . --no-deps` 装仓库自身。
 
 ---
 
 ## 6. 部署 / 脚本
 
-- [`deploy/scripts/start.sh`](../deploy/scripts/start.sh) — 全栈 Compose（`docker-compose.yml`）。
-- [`deploy/scripts/start-core.sh`](../deploy/scripts/start-core.sh) — Slim Core（`docker-compose.core.yml`），`WITH_TTS_STUB=1` 时再生成 override，把 backend 的 `VLLM_TTS_URL` 指向 `http://tts:8880/v1`。
+- [`deploy/scripts/start.sh`](../../deploy/scripts/start.sh) — 全栈 Compose（`docker-compose.yml`）。
+- [`deploy/scripts/start-core.sh`](../../deploy/scripts/start-core.sh) — Slim Core（`docker-compose.core.yml`），`WITH_TTS_STUB=1` 时再生成 override，把 backend 的 `VLLM_TTS_URL` 指向 `http://tts:8880/v1`。
 - `docker-compose.core.yml` — 默认只跑 `backend`（embedded SQLite 记忆），TTS stub 是 `--profile tts` 可选。
-- `docker-compose.yml` — 全栈：`backend / ui / letta / vllm-asr / qdrant / redis`；`vllm-asr` 当前是固定返回"你好"的 stub（[`deploy/docker/asr-stub/main.py`](../deploy/docker/asr-stub/main.py)）。
-- 根 [`package.json`](../package.json) `dev`（concurrently 启 backend/ui/tts）、`setup`、`setup:tts`、`prepare:tts`、`dev:stub`、`test:backend`、`build:ui`。
+- `docker-compose.yml` — 全栈：`backend / ui / letta / vllm-asr / qdrant / redis`；`vllm-asr` 当前是固定返回"你好"的 stub（[`deploy/docker/asr-stub/main.py`](../../deploy/docker/asr-stub/main.py)）。
+- 根 [`package.json`](../../package.json) `dev`（concurrently 启 backend/ui/tts）、`setup`、`setup:tts`、`prepare:tts`、`dev:stub`、`test:backend`、`build:ui`。
 
 ---
 
@@ -339,19 +339,19 @@ lifespan → ProactiveLoop.start()
 
 ---
 
-## 10. 与 `doc/ARCHITECTURE.md` / `doc/LOCAL_TTS.md` 的差异校正
+## 10. 与 `doc/architect/ARCHITECTURE.md` / `doc/operations/LOCAL_TTS.md` 的差异校正
 
 > 这是"以代码为准" 的纠偏；阅读架构文档时建议同时对照本节。
 
 ### 10.1 默认语音链
 
 - 代码事实：浏览器 `Web Speech API` STT → `/ws/chat` → 后端 proxy 不参与音频流 → UI `SpeechChunkAggregator` → `POST /api/tts/speak` → `LocalTTSClient` → `POST {VLLM_TTS_URL}/v1/audio/speech` → `.deps/qwen3-tts`（`python -m api.main`）→ WAV → 浏览器 `Audio.play()`。
-- [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) 中历史段落曾写"云 DashScope Realtime" 或"自带 LLM TTS"，**目前未启用**。
+- [`doc/architect/ARCHITECTURE.md`](ARCHITECTURE.md) 中历史段落曾写"云 DashScope Realtime" 或"自带 LLM TTS"，**目前未启用**。
 
 ### 10.2 TTS 实际后端
 
 - 代码事实：默认是 `groxaxo/Qwen3-TTS-Openai-Fastapi`；Apple Silicon → `mlx-audio` + 1.7B CustomVoice bf16；其它平台 → PyTorch + 0.6B CustomVoice。
-- [`doc/LOCAL_TTS.md`](LOCAL_TTS.md) 几处与脚本默认值不一致：
+- [`doc/operations/LOCAL_TTS.md`](../operations/LOCAL_TTS.md) 几处与脚本默认值不一致：
   - 文档行 23–25 写"最多 4 个 in-flight，首播等待 2 个"，实际 `qwen-tts.ts:214-225` 是 `maxInflight=2`、`minStartReady=1`。
   - 文档行 66–69 与 85–87 写"8-bit / 8-bit checkpoint"，实际默认 `bf16`、并发 1。
   - 文档行 127 写"Mac `concurrent=2`"，实际 `scripts/tts/run.sh:26-29` 是 `TTS_MAX_CONCURRENT=1`。
@@ -359,16 +359,16 @@ lifespan → ProactiveLoop.start()
 
 ### 10.3 CosyVoice
 
-- 代码事实：仓库无 CosyVoice 包、无 Dockerfile / 启动脚本、无模型配置、无集成测试；只有 [`backend/src/fae/tts/local_client.py`](../backend/src/fae/tts/local_client.py) 注释把它当作"如外部 CosyVoice 网关兼容 `/v1/audio/speech` 则可工作"的潜在后端。`Settings` 与 README 提到的"Qwen3-TTS / CosyVoice / stub" 在不替换 `VLLM_TTS_URL` 的情况下不会被实际启用。
+- 代码事实：仓库无 CosyVoice 包、无 Dockerfile / 启动脚本、无模型配置、无集成测试；只有 [`backend/src/fae/tts/local_client.py`](../../backend/src/fae/tts/local_client.py) 注释把它当作"如外部 CosyVoice 网关兼容 `/v1/audio/speech` 则可工作"的潜在后端。`Settings` 与 README 提到的"Qwen3-TTS / CosyVoice / stub" 在不替换 `VLLM_TTS_URL` 的情况下不会被实际启用。
 
 ### 10.4 ASR 与 full compose 的破损假设
 
-- [`deploy/docker/vllm-asr.Dockerfile`](../deploy/docker/vllm-asr.Dockerfile) 当前只装 `fastapi` + `uvicorn`，但 `deploy/docker/asr-stub/main.py` 用了 `File` / `UploadFile`，缺 `python-multipart` 启动可能直接报 `ImportError`。
-- `Qwen3ASRService`（[`backend/src/fae/pipecat/services/qwen3_asr.py`](../backend/src/fae/pipecat/services/qwen3_asr.py)）**未接入默认 Daily pipeline**；`daily_bot.py` 实际用 Pipecat `OpenAISTTService` + `VLLM_ASR_URL` + model `whisper-1`。
+- [`deploy/docker/vllm-asr.Dockerfile`](../../deploy/docker/vllm-asr.Dockerfile) 当前只装 `fastapi` + `uvicorn`，但 `deploy/docker/asr-stub/main.py` 用了 `File` / `UploadFile`，缺 `python-multipart` 启动可能直接报 `ImportError`。
+- `Qwen3ASRService`（[`backend/src/fae/pipecat/services/qwen3_asr.py`](../../backend/src/fae/pipecat/services/qwen3_asr.py)）**未接入默认 Daily pipeline**；`daily_bot.py` 实际用 Pipecat `OpenAISTTService` + `VLLM_ASR_URL` + model `whisper-1`。
 
 ### 10.5 Daily / Pipecat 客户端角色
 
-- [`ui/src/lib/pipecat-client.ts`](../ui/src/lib/pipecat-client.ts) 只是 `POST /api/voice/session` 的 fetch 封装，**不引用 `@pipecat-ai/client-react`**（UI 并未安装该 SDK）；
+- [`ui/src/lib/pipecat-client.ts`](../../ui/src/lib/pipecat-client.ts) 只是 `POST /api/voice/session` 的 fetch 封装，**不引用 `@pipecat-ai/client-react`**（UI 并未安装该 SDK）；
 - UI 对 Daily 路径只调用 `joinDailyRoom()` 起 mic，不订阅远端 track；真正的服务端 pipeline 由 `run_daily_bot` 驱动。
 
 ### 10.6 UI 路由 / 组件 / store 列表（与架构文档老版本不同）
@@ -379,7 +379,7 @@ lifespan → ProactiveLoop.start()
 
 ### 10.7 `VLLM_LLM_URL`
 
-- [`backend/src/fae/config.py`](../backend/src/fae/config.py) 声明的 `vllm_llm_url` 在仓库内无任何调用点，是死配置；full compose 把 `LLM_BASE_URL` 传给 Letta 而不是 FAE 主聊天 provider。
+- [`backend/src/fae/config.py`](../../backend/src/fae/config.py) 声明的 `vllm_llm_url` 在仓库内无任何调用点，是死配置；full compose 把 `LLM_BASE_URL` 传给 Letta 而不是 FAE 主聊天 provider。
 
 ### 10.8 stub / 占位 与可跳过项
 
@@ -392,23 +392,23 @@ lifespan → ProactiveLoop.start()
 
 ## 11. 建议阅读顺序（新加入的开发者）
 
-1. [`backend/src/fae/__init__.py`](../backend/src/fae/__init__.py) → [`backend/src/fae/config.py`](../backend/src/fae/config.py) → [`backend/src/fae/sessions.py`](../backend/src/fae/sessions.py) → [`backend/src/fae/voice_runtime.py`](../backend/src/fae/voice_runtime.py) — 全局。
-2. [`backend/src/fae/api/__init__.py`](../backend/src/fae/api/__init__.py)（lifespan）→ [`backend/src/fae/api/deps.py`](../backend/src/fae/api/deps.py) → [`backend/src/fae/api/ws.py`](../backend/src/fae/api/ws.py) — 请求路径与依赖注入。
-3. [`backend/src/fae/llm/`](../backend/src/fae/llm/) → [`backend/src/fae/agent/prepare.py`](../backend/src/fae/agent/prepare.py) → [`backend/src/fae/agent/llm_turn.py`](../backend/src/fae/agent/llm_turn.py) — 单轮对话 + 工具分发。
-4. [`backend/src/fae/memory/factory.py`](../backend/src/fae/memory/factory.py) → [`backend/src/fae/memory/letta_client.py`](../backend/src/fae/memory/letta_client.py) & [`backend/src/fae/memory/embedded.py`](../backend/src/fae/memory/embedded.py) → `recall_store / archival / compaction / consolidation / episodic` — 记忆栈。
-5. [`backend/src/fae/agent/skills_runtime.py`](../backend/src/fae/agent/skills_runtime.py) + `skills_loader / matcher / state / schema` → `subagents/*` — Skills + 子代理。
-6. [`backend/src/fae/scheduler/`](../backend/src/fae/scheduler/) 全目录 — 调度与通知。
-7. [`backend/src/fae/pipecat/`](../backend/src/fae/pipecat/) — 语音管线，重点是 `daily_bot.py` 与 `services/`。
-8. [`backend/src/fae/tts/`](../backend/src/fae/tts/) + [`backend/src/fae/tools/`](../backend/src/fae/tools/) + [`backend/src/fae/channels/`](../backend/src/fae/channels/) + [`backend/src/fae/notifications/`](../backend/src/fae/notifications/) — 外围集成。
-9. UI：[`ui/src/app/layout.tsx`](../ui/src/app/layout.tsx) → [`ui/src/app/page.tsx`](../ui/src/app/page.tsx) → [`ui/src/hooks/useVoiceSession.ts`](../ui/src/hooks/useVoiceSession.ts) → [`ui/src/lib/`](../ui/src/lib/) — 前端入口与状态机。
-10. [`scripts/tts/`](../scripts/tts/) 三脚本 + [`deploy/scripts/`](../deploy/scripts/) — 部署。
+1. [`backend/src/fae/__init__.py`](../../backend/src/fae/__init__.py) → [`backend/src/fae/config.py`](../../backend/src/fae/config.py) → [`backend/src/fae/sessions.py`](../../backend/src/fae/sessions.py) → [`backend/src/fae/voice_runtime.py`](../../backend/src/fae/voice_runtime.py) — 全局。
+2. [`backend/src/fae/api/__init__.py`](../../backend/src/fae/api/__init__.py)（lifespan）→ [`backend/src/fae/api/deps.py`](../../backend/src/fae/api/deps.py) → [`backend/src/fae/api/ws.py`](../../backend/src/fae/api/ws.py) — 请求路径与依赖注入。
+3. [`backend/src/fae/llm/`](../../backend/src/fae/llm/) → [`backend/src/fae/agent/prepare.py`](../../backend/src/fae/agent/prepare.py) → [`backend/src/fae/agent/llm_turn.py`](../../backend/src/fae/agent/llm_turn.py) — 单轮对话 + 工具分发。
+4. [`backend/src/fae/memory/factory.py`](../../backend/src/fae/memory/factory.py) → [`backend/src/fae/memory/letta_client.py`](../../backend/src/fae/memory/letta_client.py) & [`backend/src/fae/memory/embedded.py`](../../backend/src/fae/memory/embedded.py) → `recall_store / archival / compaction / consolidation / episodic` — 记忆栈。
+5. [`backend/src/fae/agent/skills_runtime.py`](../../backend/src/fae/agent/skills_runtime.py) + `skills_loader / matcher / state / schema` → `subagents/*` — Skills + 子代理。
+6. [`backend/src/fae/scheduler/`](../../backend/src/fae/scheduler/) 全目录 — 调度与通知。
+7. [`backend/src/fae/pipecat/`](../../backend/src/fae/pipecat/) — 语音管线，重点是 `daily_bot.py` 与 `services/`。
+8. [`backend/src/fae/tts/`](../../backend/src/fae/tts/) + [`backend/src/fae/tools/`](../../backend/src/fae/tools/) + [`backend/src/fae/channels/`](../../backend/src/fae/channels/) + [`backend/src/fae/notifications/`](../../backend/src/fae/notifications/) — 外围集成。
+9. UI：[`ui/src/app/layout.tsx`](../../ui/src/app/layout.tsx) → [`ui/src/app/page.tsx`](../../ui/src/app/page.tsx) → [`ui/src/hooks/useVoiceSession.ts`](../../ui/src/hooks/useVoiceSession.ts) → [`ui/src/lib/`](../../ui/src/lib/) — 前端入口与状态机。
+10. [`scripts/tts/`](../../scripts/tts/) 三脚本 + [`deploy/scripts/`](../../deploy/scripts/) — 部署。
 
 ---
 
 ## 12. 校验清单
 
-- [ ] `rg "ProactiveLoop|LocalTTSClient|OpenAICompatibleProvider|ConnectionHub|ActivityTracker"` 在仓库内有命中。
-- [ ] `rg "pipecat-ai|apscheduler|pywebpush|mlx-audio|groxaxo/Qwen3-TTS-Openai-Fastapi"` 在仓库内有命中。
-- [ ] `rg "/ws/chat|/api/tts/speak|/api/voice/session"` 在仓库内有命中。
-- [ ] `rg "BrowserSTT|TtsPlayQueue|SpeechChunkAggregator"` 在 UI 内有命中。
-- [ ] 与 `doc/ARCHITECTURE.md` / `doc/LOCAL_TTS.md` 差异对照，§10 列出的差异仍有效。
+- `rg "ProactiveLoop|LocalTTSClient|OpenAICompatibleProvider|ConnectionHub|ActivityTracker"` 在仓库内有命中。
+- `rg "pipecat-ai|apscheduler|pywebpush|mlx-audio|groxaxo/Qwen3-TTS-Openai-Fastapi"` 在仓库内有命中。
+- `rg "/ws/chat|/api/tts/speak|/api/voice/session"` 在仓库内有命中。
+- `rg "BrowserSTT|TtsPlayQueue|SpeechChunkAggregator"` 在 UI 内有命中。
+- 与 `doc/architect/ARCHITECTURE.md` / `doc/operations/LOCAL_TTS.md` 差异对照，§10 列出的差异仍有效。

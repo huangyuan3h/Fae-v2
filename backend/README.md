@@ -2,7 +2,7 @@
 
 Python backend for FAE-v2: FastAPI (`/ws/chat`, memory, skills, scheduler, local TTS) plus optional Daily/Pipecat voice.
 
-**Canonical docs**: [../README.md](../README.md) · [../doc/ARCHITECTURE.md](../doc/ARCHITECTURE.md) · [../doc/DEVELOPMENT_PLAN.md](../doc/DEVELOPMENT_PLAN.md)
+**Canonical docs**: [../README.md](../README.md) · [../doc/architect/ARCHITECTURE.md](../doc/architect/ARCHITECTURE.md) · [../doc/TODO.md](../doc/TODO.md)
 
 **Default voice path**: browser STT → `/ws/chat` → local TTS (`VLLM_TTS_URL`). Daily is optional. LiveKit / MCP are not in scope.
 
