@@ -31,6 +31,9 @@ def _memory_off_by_default(
     monkeypatch.setenv("SCHEDULES_DB_PATH", str(tmp_path / "fae-schedules.db"))
     monkeypatch.setenv("CHAT_HISTORY_DB_PATH", str(tmp_path / "fae-chat-history.db"))
     monkeypatch.setenv("TOOL_AUDIT_DB_PATH", str(tmp_path / "fae-tool-audit.db"))
+    monkeypatch.setenv("AGENT_TRACE_DB_PATH", str(tmp_path / "fae-agent-trace.db"))
+    monkeypatch.setenv("TASK_DB_PATH", str(tmp_path / "fae-tasks.db"))
+    monkeypatch.setenv("APPROVALS_DB_PATH", str(tmp_path / "fae-approvals.db"))
     monkeypatch.setenv(
         "CHAT_HISTORY_CLEANUP_INTERVAL_S", "3600",
     )

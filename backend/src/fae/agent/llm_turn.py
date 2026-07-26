@@ -11,10 +11,25 @@ from typing import TYPE_CHECKING, Any
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
 from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL, dispatch_run_subagent
 from fae.agent.tool_offload import ToolOffloader, maybe_offload_result
+from fae.approvals import (
+    ApprovalStore,
+    STATUS_APPROVED,
+    STATUS_DENIED,
+    STATUS_EXPIRED,
+    STATUS_CANCELLED,
+    STATUS_AWAITING_CONFIRM,
+    request_approval,
+)
 from fae.llm.client import LLMClient
 from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.tools import SCHEDULE_TOOLS, dispatch_schedule_tool
+from fae.tool_registry import (
+    EffectivePolicy,
+    PolicyDecision,
+    diff_preview_for,
+    resolve_policy,
+)
 from fae.tools.bash import BASH_TOOLS, dispatch_bash_tool
 from fae.tools.filesystem import FILESYSTEM_TOOLS, dispatch_filesystem_tool
 from fae.tools.git import GIT_TOOLS, dispatch_git_tool
@@ -54,8 +69,11 @@ async def _emit_tool_event(
 ) -> None:
     if callback is None:
         return
+    tagged = dict(event)
+    if not tagged.get("kind") and tagged.get("type") == "tool":
+        tagged["kind"] = "tool"
     try:
-        await callback(event)
+        await callback(tagged)
     except Exception:
         logger.exception("Tool event handler failed")
 
@@ -192,16 +210,20 @@ async def _dispatch_coding_tool(
     arguments: str,
     *,
     call_id: str = "",
-    workspace_root: str,
-    filesystem_enabled: bool,
-    bash_enabled: bool,
-    bash_timeout_s: float,
-    git_enabled: bool,
-    git_timeout_s: float,
+    workspace_root: str = "",
+    filesystem_enabled: bool = False,
+    bash_enabled: bool = False,
+    bash_timeout_s: float = 30.0,
+    git_enabled: bool = False,
+    git_timeout_s: float = 20.0,
     session_id: str = "default",
     channel: str = "unknown",
     channel_id: str | None = None,
     on_tool_event: OnToolEvent | None = None,
+    approval_store: ApprovalStore | None = None,
+    effective_policy: EffectivePolicy | None = None,
+    trace_turn_id: str | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> str | None:
     enabled = (
         (tool_name in _FILESYSTEM_TOOL_NAMES and filesystem_enabled)
@@ -211,6 +233,125 @@ async def _dispatch_coding_tool(
     if not enabled:
         return None
     event_id = call_id or f"{tool_name}-{id(arguments)}"
+
+    # ── Approval gate (sensitive / dangerous tools) ─────────────────────
+    approval_status = "not_required"
+    approval_id: str | None = None
+    decision = resolve_policy(
+        effective_policy, tool_name, channel=channel
+    )
+    if not decision.allow and approval_store is not None:
+        requester = (
+            f"agent:{trace_turn_id or 'unknown'}" if trace_turn_id else "agent"
+        )
+
+        async def _approval_emit(ev: dict[str, Any]) -> None:
+            if on_tool_event is None:
+                return
+            await on_tool_event(
+                {
+                    "type": "approval_request",
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                    **ev,
+                }
+            )
+
+        resolved = await request_approval(
+            approval_store,
+            tool_name=tool_name,
+            arguments=arguments,
+            session_id=session_id,
+            turn_id=trace_turn_id,
+            channel=channel,
+            channel_id=channel_id,
+            requester=requester,
+            on_event=_approval_emit,
+            cancel_event=cancel_event,
+        )
+        approval_id = resolved.id
+        approval_status = resolved.status
+        if resolved.status in {STATUS_DENIED, STATUS_EXPIRED, STATUS_CANCELLED}:
+            reason_code = (
+                "approval_denied"
+                if resolved.status == STATUS_DENIED
+                else (
+                    "approval_expired"
+                    if resolved.status == STATUS_EXPIRED
+                    else "approval_cancelled"
+                )
+            )
+            preview = diff_preview_for(tool_name, arguments)
+            blocked = json.dumps(
+                {
+                    "ok": False,
+                    "error": reason_code,
+                    "approval_id": resolved.id,
+                    "tool_name": tool_name,
+                    "decision_reason": resolved.decision_reason,
+                    "decided_by": resolved.decided_by,
+                    "diff_preview": preview,
+                    "args_hash": resolved.args_hash,
+                },
+                ensure_ascii=False,
+            )
+            if on_tool_event is not None:
+                await _emit_tool_event(
+                    on_tool_event,
+                    {
+                        "type": "tool",
+                        "phase": "result",
+                        "id": event_id,
+                        "name": tool_name,
+                        "ok": False,
+                        "error_code": reason_code,
+                        "result": blocked[:20000],
+                        "session_id": session_id,
+                        "channel": channel,
+                        "channel_id": channel_id,
+                        "approval_id": resolved.id,
+                        "approval_status": resolved.status,
+                    },
+                )
+            return blocked
+        # STATUS_APPROVED or STATUS_AWAITING_CONFIRM (defensive): proceed.
+    elif not decision.allow and approval_store is None:
+        # No store available — block execution rather than bypass.
+        reason = (
+            decision.reason
+            or "approval required but no approval store configured"
+        )
+        blocked = json.dumps(
+            {
+                "ok": False,
+                "error": "approval_unavailable",
+                "message": reason,
+                "tool_name": tool_name,
+            },
+            ensure_ascii=False,
+        )
+        if on_tool_event is not None:
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": event_id,
+                    "name": tool_name,
+                    "ok": False,
+                    "error_code": "approval_unavailable",
+                    "result": blocked[:20000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                    "approval_status": "unavailable",
+                },
+            )
+        return blocked
+    elif decision.source == "always":
+        approval_status = "auto_approved"
+
     if on_tool_event is not None:
         await _emit_tool_event(
             on_tool_event,
@@ -223,6 +364,8 @@ async def _dispatch_coding_tool(
                 "session_id": session_id,
                 "channel": channel,
                 "channel_id": channel_id,
+                "approval_id": approval_id,
+                "approval_status": approval_status,
             },
         )
     try:
@@ -247,6 +390,11 @@ async def _dispatch_coding_tool(
             {"ok": False, "error": "tool_exception", "message": str(exc)},
             ensure_ascii=False,
         )
+    if approval_id is not None and approval_store is not None:
+        try:
+            approval_store.mark_consumed(approval_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("approval mark_consumed failed")
     if on_tool_event is not None:
         try:
             payload = json.loads(result)
@@ -265,6 +413,12 @@ async def _dispatch_coding_tool(
                 "session_id": session_id,
                 "channel": channel,
                 "channel_id": channel_id,
+                "approval_id": approval_id,
+                "approval_status": (
+                    "approved" if approval_status in {"not_required", "auto_approved"} and approval_id else (
+                        approval_status if approval_status != "not_required" else "approved"
+                    )
+                ),
             },
         )
     return result
@@ -295,6 +449,9 @@ async def apply_lazy_skill_tool(
     on_subagent_event: OnSubagentEvent | None = None,
     on_tool_event: OnToolEvent | None = None,
     tool_offloader: ToolOffloader | None = None,
+    trace_turn_id: str | None = None,
+    approval_store: ApprovalStore | None = None,
+    effective_policy: EffectivePolicy | None = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
@@ -348,6 +505,10 @@ async def apply_lazy_skill_tool(
                 channel=channel,
                 channel_id=channel_id,
                 on_tool_event=on_tool_event,
+                approval_store=approval_store,
+                effective_policy=effective_policy,
+                trace_turn_id=trace_turn_id,
+                cancel_event=cancel_event,
             )
             if result is None:
                 continue
@@ -416,6 +577,115 @@ async def apply_lazy_skill_tool(
             return _strip_tools(new_req), new_act, None
 
         if tc.name in _SCHEDULE_TOOL_NAMES and schedule_store is not None:
+            sched_decision = resolve_policy(
+                effective_policy, tc.name, channel=channel
+            )
+            sched_approval_id: str | None = None
+            sched_approval_status = "not_required"
+            if not sched_decision.allow and approval_store is not None:
+                async def _sched_approval_emit(ev: dict[str, Any]) -> None:
+                    if on_tool_event is None:
+                        return
+                    await on_tool_event(
+                        {
+                            "type": "approval_request",
+                            "session_id": session_id,
+                            "channel": channel,
+                            "channel_id": channel_id,
+                            **ev,
+                        }
+                    )
+
+                resolved = await request_approval(
+                    approval_store,
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    session_id=session_id,
+                    turn_id=trace_turn_id,
+                    channel=channel,
+                    channel_id=channel_id,
+                    requester=f"agent:{trace_turn_id or 'unknown'}",
+                    on_event=_sched_approval_emit,
+                    cancel_event=cancel_event,
+                )
+                sched_approval_id = resolved.id
+                sched_approval_status = resolved.status
+                if resolved.status in {
+                    STATUS_DENIED,
+                    STATUS_EXPIRED,
+                    STATUS_CANCELLED,
+                }:
+                    reason_code = (
+                        "approval_denied"
+                        if resolved.status == STATUS_DENIED
+                        else (
+                            "approval_expired"
+                            if resolved.status == STATUS_EXPIRED
+                            else "approval_cancelled"
+                        )
+                    )
+                    blocked = json.dumps(
+                        {
+                            "ok": False,
+                            "error": reason_code,
+                            "approval_id": resolved.id,
+                            "tool_name": tc.name,
+                            "decision_reason": resolved.decision_reason,
+                            "decided_by": resolved.decided_by,
+                        },
+                        ensure_ascii=False,
+                    )
+                    if on_tool_event is not None:
+                        await _emit_tool_event(
+                            on_tool_event,
+                            {
+                                "type": "tool",
+                                "phase": "result",
+                                "id": tc.id,
+                                "name": tc.name,
+                                "ok": False,
+                                "error_code": reason_code,
+                                "result": blocked[:20000],
+                                "session_id": session_id,
+                                "channel": channel,
+                                "channel_id": channel_id,
+                                "approval_id": resolved.id,
+                                "approval_status": resolved.status,
+                            },
+                        )
+                    summary = f"已处理日程工具 {tc.name}：{blocked}"
+                    return _strip_tools(request), activation, summary
+            elif not sched_decision.allow and approval_store is None:
+                blocked = json.dumps(
+                    {
+                        "ok": False,
+                        "error": "approval_unavailable",
+                        "tool_name": tc.name,
+                    },
+                    ensure_ascii=False,
+                )
+                if on_tool_event is not None:
+                    await _emit_tool_event(
+                        on_tool_event,
+                        {
+                            "type": "tool",
+                            "phase": "result",
+                            "id": tc.id,
+                            "name": tc.name,
+                            "ok": False,
+                            "error_code": "approval_unavailable",
+                            "result": blocked[:20000],
+                            "session_id": session_id,
+                            "channel": channel,
+                            "channel_id": channel_id,
+                            "approval_status": "unavailable",
+                        },
+                    )
+                summary = f"已处理日程工具 {tc.name}：{blocked}"
+                return _strip_tools(request), activation, summary
+            elif sched_decision.source == "always":
+                sched_approval_status = "auto_approved"
+
             await _emit_tool_event(
                 on_tool_event,
                 {
@@ -427,6 +697,8 @@ async def apply_lazy_skill_tool(
                     "session_id": session_id,
                     "channel": channel,
                     "channel_id": channel_id,
+                    "approval_id": sched_approval_id,
+                    "approval_status": sched_approval_status,
                 },
             )
             try:
@@ -440,6 +712,11 @@ async def apply_lazy_skill_tool(
                 )
                 ok = False
                 error_code = "tool_exception"
+            if sched_approval_id is not None and approval_store is not None:
+                try:
+                    approval_store.mark_consumed(sched_approval_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("approval mark_consumed failed (schedule)")
             await _emit_tool_event(
                 on_tool_event,
                 {
@@ -453,6 +730,8 @@ async def apply_lazy_skill_tool(
                     "session_id": session_id,
                     "channel": channel,
                     "channel_id": channel_id,
+                    "approval_id": sched_approval_id,
+                    "approval_status": sched_approval_status,
                 },
             )
             summary = f"已处理日程工具 {tc.name}：{result}"
@@ -600,6 +879,9 @@ async def stream_assistant_turn(
     on_subagent_event: OnSubagentEvent | None = None,
     on_tool_event: OnToolEvent | None = None,
     tool_offloader: ToolOffloader | None = None,
+    trace_turn_id: str | None = None,
+    approval_store: ApprovalStore | None = None,
+    effective_policy: EffectivePolicy | None = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
@@ -648,6 +930,9 @@ async def stream_assistant_turn(
             cancel_event=cancel_event,
             on_subagent_event=on_subagent_event,
             on_tool_event=on_tool_event,
+            trace_turn_id=trace_turn_id,
+            approval_store=approval_store,
+            effective_policy=effective_policy,
         )
         if early is not None and on_schedule_mutated is not None:
             if "日程工具" in early:

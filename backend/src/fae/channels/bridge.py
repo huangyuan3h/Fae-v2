@@ -97,6 +97,7 @@ async def handle_inbound_text(
     channel_id: str | None = None,
     on_schedule_mutated: Any | None = None,
     on_tool_event: Any | None = None,
+    trace_turn_id: str | None = None,
 ) -> str:
     """Run one user turn through prepare → tools/LLM → persist. Returns reply text."""
     user_text = (text or "").strip()
@@ -180,6 +181,7 @@ async def handle_inbound_text(
                 git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
                 tool_offloader=tool_offloader,
                 on_tool_event=on_tool_event,
+                trace_turn_id=trace_turn_id,
             )
             if early and "日程工具" in early and callable(on_schedule_mutated):
                 on_schedule_mutated()

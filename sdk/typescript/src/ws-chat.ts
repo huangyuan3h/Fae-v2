@@ -1,4 +1,7 @@
 import type {
+  ApprovalDecisionInput,
+  ApprovalRequestHandler,
+  ApprovalResolvedHandler,
   LlmConfigInput,
   NotifyHandler,
   StreamHandlers,
@@ -24,11 +27,42 @@ export class WsChatClient {
   private activeCleanup: (() => void) | null = null;
   private activeReject: ((err: Error) => void) | null = null;
   private notifyHandler: NotifyHandler | null = null;
+  private approvalRequestHandler: ApprovalRequestHandler | null = null;
+  private approvalResolvedHandler: ApprovalResolvedHandler | null = null;
 
   constructor(private readonly url: string) {}
 
   setNotificationHandler(handler: NotifyHandler | null) {
     this.notifyHandler = handler;
+  }
+
+  setApprovalRequestHandler(handler: ApprovalRequestHandler | null) {
+    this.approvalRequestHandler = handler;
+  }
+
+  setApprovalResolvedHandler(handler: ApprovalResolvedHandler | null) {
+    this.approvalResolvedHandler = handler;
+  }
+
+  sendApprovalDecision(
+    approvalId: string,
+    decision: ApprovalDecisionInput,
+  ): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    this.ws.send(
+      JSON.stringify({
+        type: "approval_decision",
+        approval_id: approvalId,
+        action: decision.action,
+        reason: decision.reason,
+        confirm: decision.confirm ?? false,
+        remember: decision.remember ?? null,
+        decided_by: decision.decided_by ?? "user",
+      }),
+    );
+    return true;
   }
 
   connect(): Promise<void> {
@@ -91,6 +125,26 @@ export class WsChatClient {
             arguments: msg.arguments,
             ok: msg.ok,
             result: msg.result,
+            approval_id: msg.approval_id,
+            approval_status: msg.approval_status,
+          });
+        } else if (msg.type === "approval_request") {
+          handlers.onApprovalRequest?.(msg.approval, msg.follow_up);
+          this.approvalRequestHandler?.(msg.approval, msg.follow_up);
+        } else if (msg.type === "approval_resolved") {
+          handlers.onApprovalResolved?.({
+            approval_id: msg.approval_id,
+            tool_name: msg.tool_name,
+            status: msg.status,
+            decision_reason: msg.decision_reason ?? null,
+            decided_by: msg.decided_by ?? null,
+          });
+          this.approvalResolvedHandler?.({
+            approval_id: msg.approval_id,
+            tool_name: msg.tool_name,
+            status: msg.status,
+            decision_reason: msg.decision_reason ?? null,
+            decided_by: msg.decided_by ?? null,
           });
         } else if (msg.type === "notification") {
           handlers.onNotification?.(

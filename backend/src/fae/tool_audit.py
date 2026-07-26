@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import sqlite3
 import threading
 import time
@@ -13,17 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-_REDACTED = "[REDACTED]"
-_MAX_FIELD_CHARS = 20_000
+from fae.sanitize import safe_json, safe_text
+
 logger = logging.getLogger("fae.tool_audit")
-_SENSITIVE_KEY = re.compile(
-    r"(?:api[_-]?key|access[_-]?token|authorization|bearer|cookie|password|passwd|secret|token|private[_-]?key|client[_-]?secret)",
-    re.IGNORECASE,
-)
-_SENSITIVE_TEXT = re.compile(
-    r"\b(api[_-]?key|access[_-]?token|authorization|bearer|cookie|password|passwd|secret|token)\b(\s*[:=]\s*)([^\s,;]+)",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -40,54 +31,10 @@ class ToolAuditEvent:
     ok: bool | None
     error_code: str | None
     approval_status: str
+    approval_id: str | None
     started_at: float
     finished_at: float | None
     duration_ms: float | None
-
-
-def _sanitize_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            str(key): _REDACTED if _SENSITIVE_KEY.search(str(key)) else _sanitize_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_sanitize_value(item) for item in value]
-    if isinstance(value, tuple):
-        return [_sanitize_value(item) for item in value]
-    if isinstance(value, str):
-        return _SENSITIVE_TEXT.sub(r"\1\2" + _REDACTED, value)
-    return value
-
-
-def _safe_json(value: Any) -> str:
-    if isinstance(value, str):
-        raw = value
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            pass
-    else:
-        raw = ""
-    if raw and isinstance(value, str):
-        sanitized = _sanitize_value(value)
-    else:
-        try:
-            sanitized = json.dumps(
-                _sanitize_value(value),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )
-        except (TypeError, ValueError):
-            sanitized = str(value)
-    return sanitized[:_MAX_FIELD_CHARS]
-
-
-def _safe_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return _SENSITIVE_TEXT.sub(r"\1\2" + _REDACTED, str(value))[:_MAX_FIELD_CHARS]
 
 
 def _result_error_code(result: str) -> str | None:
@@ -156,6 +103,10 @@ class ToolAuditStore:
                 self._conn.execute(
                     "ALTER TABLE tool_audit_events ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'not_required'"
                 )
+            if "approval_id" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE tool_audit_events ADD COLUMN approval_id TEXT"
+                )
             self._conn.commit()
 
     def record_event(
@@ -166,14 +117,15 @@ class ToolAuditStore:
         channel: str = "unknown",
         channel_id: str | None = None,
     ) -> ToolAuditEvent:
-        event_id = _safe_text(event.get("id")) or str(uuid.uuid4())
+        event_id = safe_text(event.get("id")) or str(uuid.uuid4())
         call_id = event_id
         sid = (session_id or "").strip() or "default"
         source = (channel or "").strip() or "unknown"
-        tool_name = _safe_text(event.get("name")) or "unknown"
-        raw_phase = _safe_text(event.get("phase"))
-        arguments = _safe_json(event.get("arguments", ""))
-        approval_status = _safe_text(event.get("approval_status")) or "not_required"
+        tool_name = safe_text(event.get("name")) or "unknown"
+        raw_phase = safe_text(event.get("phase"))
+        arguments = safe_json(event.get("arguments", ""))
+        approval_status = safe_text(event.get("approval_status")) or "not_required"
+        approval_id = safe_text(event.get("approval_id")) or None
         now = time.time()
         with self._lock:
             row = self._conn.execute(
@@ -187,8 +139,8 @@ class ToolAuditStore:
                         """
                         INSERT INTO tool_audit_events
                         (id, call_id, session_id, channel, channel_id, tool_name, phase,
-                         arguments, approval_status, started_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 'start', ?, ?, ?)
+                         arguments, approval_status, approval_id, started_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'start', ?, ?, ?, ?)
                         """,
                         (
                             event_id,
@@ -199,6 +151,7 @@ class ToolAuditStore:
                             tool_name,
                             arguments,
                             approval_status,
+                            approval_id,
                             started_at,
                         ),
                     )
@@ -206,9 +159,9 @@ class ToolAuditStore:
                     started_at = float(row["started_at"])
             else:
                 phase = "done" if bool(event.get("ok")) else "error"
-                result = _safe_json(event.get("result", ""))
+                result = safe_json(event.get("result", ""))
                 error_code = (
-                    _safe_text(event.get("error_code"))
+                    safe_text(event.get("error_code"))
                     or (None if phase == "done" else _result_error_code(result))
                 )
                 started_at = float(row["started_at"]) if row is not None else now
@@ -219,8 +172,9 @@ class ToolAuditStore:
                         """
                         INSERT INTO tool_audit_events
                         (id, call_id, session_id, channel, channel_id, tool_name, phase,
-                         arguments, result, ok, error_code, approval_status, started_at, finished_at, duration_ms)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         arguments, result, ok, error_code, approval_status, approval_id,
+                         started_at, finished_at, duration_ms)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             event_id,
@@ -235,6 +189,7 @@ class ToolAuditStore:
                             int(bool(event.get("ok"))),
                             error_code,
                             approval_status,
+                            approval_id,
                             started_at,
                             finished_at,
                             duration_ms,
@@ -245,6 +200,7 @@ class ToolAuditStore:
                         """
                         UPDATE tool_audit_events
                         SET phase = ?, result = ?, ok = ?, error_code = ?,
+                            approval_status = ?, approval_id = ?,
                             finished_at = ?, duration_ms = ?
                         WHERE id = ?
                         """,
@@ -253,6 +209,8 @@ class ToolAuditStore:
                             result,
                             int(bool(event.get("ok"))),
                             error_code,
+                            approval_status,
+                            approval_id,
                             finished_at,
                             duration_ms,
                             event_id,
@@ -319,6 +277,7 @@ class ToolAuditStore:
             ok=None if ok is None else bool(ok),
             error_code=row["error_code"],
             approval_status=str(row["approval_status"] or "not_required"),
+            approval_id=row["approval_id"],
             started_at=float(row["started_at"]),
             finished_at=(
                 None if row["finished_at"] is None else float(row["finished_at"])

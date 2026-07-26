@@ -86,6 +86,7 @@ async def dispatch_run_subagent(
             await on_event(
                 {
                     "type": "subagent",
+                    "kind": "subagent",
                     "phase": "start",
                     "name": name or "unknown",
                     "task": task[:200],
@@ -111,6 +112,7 @@ async def dispatch_run_subagent(
             await on_event(
                 {
                     "type": "subagent",
+                    "kind": "subagent",
                     "phase": "done",
                     "name": result.name,
                     "ok": result.ok,

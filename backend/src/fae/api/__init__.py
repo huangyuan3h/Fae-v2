@@ -24,18 +24,26 @@ from pathlib import Path
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_loader import default_skills_dir
 from fae.agent.skills_runtime import SkillRuntime
+from fae.agent_trace import (
+    AgentTraceStore,
+    make_agent_trace_callback,
+    new_turn_id,
+)
 from fae.api.capabilities import router as capabilities_router
+from fae.api.agent_trace import router as agent_trace_router
 from fae.api.chat_history import (
     persist_chat_history_turn,
     router as chat_history_router,
 )
 from fae.api.deps import get_llm_client
+from fae.api.approvals import router as approvals_router, session_policies_router
 from fae.api.memory import router as memory_router
 from fae.api.notifications import router as notifications_router
 from fae.api.pipeline import router as pipeline_router
 from fae.api.schedules import router as schedules_router
 from fae.api.schedules import status_router as scheduler_status_router
 from fae.api.skills import router as skills_router
+from fae.api.tasks import router as tasks_router
 from fae.api.tts import router as tts_router
 from fae.api.tool_audit import router as tool_audit_router
 from fae.api.voice import router as voice_router
@@ -62,7 +70,9 @@ from fae.llm import (
 from fae.memory.consolidation import MemoryConsolidator, SleeptimeScheduler
 from fae.memory.factory import MemoryStack, create_memory_stack
 from fae.pipecat.services.letta_memory import LettaMemoryService
+from fae.approvals import ApprovalStore
 from fae.scheduler import ActivityTracker, ConnectionHub, ProactiveLoop, ScheduleStore
+from fae.scheduler.tasks import TaskStore
 from fae.scheduler.delivery import NotificationDelivery
 from fae.scheduler.jobs import builtin_job_specs
 from fae.sessions import SessionStore
@@ -89,6 +99,27 @@ def _chat_history_db_path(settings: Settings) -> Path:
 
 def _tool_audit_db_path(settings: Settings) -> Path:
     db_path = Path(settings.tool_audit_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _agent_trace_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.agent_trace_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _task_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.task_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _approvals_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.approvals_db_path)
     if not db_path.is_absolute():
         db_path = REPO_ROOT / db_path
     return db_path
@@ -202,6 +233,40 @@ async def lifespan(app: FastAPI):
     if not isinstance(audit_store, ToolAuditStore) or audit_store.closed:
         audit_store = ToolAuditStore(_tool_audit_db_path(settings))
         app.state.tool_audit = audit_store
+    trace_store = getattr(app.state, "agent_trace", None)
+    if not isinstance(trace_store, AgentTraceStore) or trace_store.closed:
+        trace_store = AgentTraceStore(_agent_trace_db_path(settings))
+        app.state.agent_trace = trace_store
+    task_store = getattr(app.state, "task_store", None)
+    if not isinstance(task_store, TaskStore) or task_store.closed:
+        task_store = TaskStore(_task_db_path(settings))
+        app.state.task_store = task_store
+    app.state.task_recovered = False
+    try:
+        recovered = task_store.recover_orphaned_running()
+    except Exception:  # noqa: BLE001
+        logger.exception("task recovery failed")
+        recovered = []
+    if recovered:
+        logger.warning(
+            "Recovered %d orphaned running task(s) to needs_input",
+            len(recovered),
+        )
+        app.state.task_recovered = True
+    approval_store = getattr(app.state, "approvals", None)
+    if not isinstance(approval_store, ApprovalStore) or approval_store.closed:
+        approval_store = ApprovalStore(_approvals_db_path(settings))
+        app.state.approvals = approval_store
+    # Reap any pending approvals whose TTL lapsed while the process was down.
+    try:
+        swept = approval_store.sweep_expired()
+        if swept:
+            logger.info(
+                "Marked %d pending approval(s) as expired on startup",
+                len(swept),
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("approval sweep on startup failed")
     history_cleanup_task = asyncio.create_task(
         chat_history_cleanup_loop(
             history_store,
@@ -359,6 +424,25 @@ async def lifespan(app: FastAPI):
                 if isinstance(proactive, ProactiveLoop):
                     proactive.resync()
 
+            tg_turn_id = new_turn_id()
+            tg_audit = make_tool_audit_callback(
+                app.state.tool_audit,
+                session_id="default",
+                channel="telegram",
+                channel_id=chat_id,
+            )
+            tg_trace = make_agent_trace_callback(
+                app.state.agent_trace,
+                turn_id=tg_turn_id,
+                session_id="default",
+                channel="telegram",
+                channel_id=chat_id,
+            )
+
+            async def _tg_on_tool(event: dict) -> None:
+                await tg_trace(event)
+                await tg_audit(event)
+
             return await handle_inbound_text(
                 text,
                 settings=settings,
@@ -374,13 +458,8 @@ async def lifespan(app: FastAPI):
                 session_id="default",
                 channel="telegram",
                 channel_id=chat_id,
-                on_tool_event=make_tool_audit_callback(
-                    app.state.tool_audit,
-                    session_id="default",
-                    channel="telegram",
-                    channel_id=chat_id,
-                ),
-                on_schedule_mutated=_resync,
+                on_tool_event=_tg_on_tool,
+                trace_turn_id=tg_turn_id,
             )
 
         tg_task = asyncio.create_task(
@@ -411,6 +490,18 @@ async def lifespan(app: FastAPI):
     if isinstance(audit_store, ToolAuditStore):
         audit_store.close()
     app.state.tool_audit = None
+    trace_store = getattr(app.state, "agent_trace", None)
+    if isinstance(trace_store, AgentTraceStore):
+        trace_store.close()
+    app.state.agent_trace = None
+    task_store_handle = getattr(app.state, "task_store", None)
+    if isinstance(task_store_handle, TaskStore):
+        task_store_handle.close()
+    app.state.task_store = None
+    approval_store_handle = getattr(app.state, "approvals", None)
+    if isinstance(approval_store_handle, ApprovalStore):
+        approval_store_handle.close()
+    app.state.approvals = None
 
     tg_stop.set()
     if tg_task is not None:
@@ -532,6 +623,9 @@ def create_app(
         retention_days=settings.chat_history_retention_days,
     )
     app.state.tool_audit = ToolAuditStore(_tool_audit_db_path(settings))
+    app.state.agent_trace = AgentTraceStore(_agent_trace_db_path(settings))
+    app.state.task_store = TaskStore(_task_db_path(settings))
+    app.state.approvals = ApprovalStore(_approvals_db_path(settings))
     app.state.chat_history_cleanup_task = None
     app.state.memory = None
     app.state.memory_client = None
@@ -766,6 +860,23 @@ def create_app(
                 or git_on
             )
             if tools_needed:
+                turn_id = new_turn_id()
+                trace_callback = make_agent_trace_callback(
+                    request.app.state.agent_trace,
+                    turn_id=turn_id,
+                    session_id=session_id,
+                    channel="http",
+                )
+                audit_callback = make_tool_audit_callback(
+                    request.app.state.tool_audit,
+                    session_id=session_id,
+                    channel="http",
+                )
+
+                async def _chain_on_tool_event(event: dict) -> None:
+                    await trace_callback(event)
+                    await audit_callback(event)
+
                 prepared, activation, early = await apply_lazy_skill_tool(
                     client,
                     prepared,
@@ -789,11 +900,7 @@ def create_app(
                     git_enabled=git_on,
                     git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
                     tool_offloader=getattr(request.app.state, "tool_offloader", None),
-                    on_tool_event=make_tool_audit_callback(
-                        request.app.state.tool_audit,
-                        session_id=session_id,
-                        channel="http",
-                    ),
+                    on_tool_event=_chain_on_tool_event,
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)
@@ -861,6 +968,7 @@ def create_app(
     app.include_router(ws_router)
     app.include_router(chat_history_router)
     app.include_router(tool_audit_router)
+    app.include_router(agent_trace_router)
 
     # ── P7: capability discovery ───────────────────────────────────────
     app.include_router(capabilities_router)
@@ -892,6 +1000,13 @@ def create_app(
     app.include_router(schedules_router)
     app.include_router(scheduler_status_router)
     app.include_router(notifications_router)
+
+    # ── Persistent task state machine (P1) ─────────────────────────────
+    app.include_router(tasks_router)
+
+    # ── Sensitive op approval flow (P1) ────────────────────────────────
+    app.include_router(approvals_router)
+    app.include_router(session_policies_router)
 
     return app
 

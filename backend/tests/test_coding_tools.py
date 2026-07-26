@@ -15,6 +15,7 @@ from fae.llm.provider import FakeProvider
 from fae.tools.bash import dispatch_bash_tool
 from fae.tools.filesystem import dispatch_filesystem_tool
 from fae.tools.git import dispatch_git_tool
+from fae.tool_registry import EffectivePolicy
 
 
 def _result(raw: str) -> dict:
@@ -163,6 +164,10 @@ async def test_coding_tool_loop_writes_then_runs_node(tmp_path: Path) -> None:
         filesystem_enabled=True,
         bash_enabled=True,
         on_tool_event=on_tool_event,
+        effective_policy=EffectivePolicy(
+            session_id="default",
+            always_allow=frozenset({"write_file", "run_bash"}),
+        ),
     )
 
     assert early == "Created and verified Hello World."

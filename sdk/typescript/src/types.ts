@@ -41,6 +41,21 @@ export type WsServerMessage =
       arguments?: string;
       ok?: boolean;
       result?: string;
+      approval_id?: string | null;
+      approval_status?: string | null;
+    }
+  | {
+      type: "approval_request";
+      approval: ApprovalRequestMsg;
+      follow_up?: boolean;
+    }
+  | {
+      type: "approval_resolved";
+      approval_id: string;
+      tool_name: string;
+      status: ApprovalStatus;
+      decision_reason?: string | null;
+      decided_by?: string | null;
     }
   | { type: "token"; content: string }
   | {
@@ -58,6 +73,91 @@ export type WsServerMessage =
       speak?: boolean;
     }
   | { type: "error"; code: string; message: string };
+
+export type WsClientMessage =
+  | { type: "chat"; request: unknown; session_id?: string }
+  | { type: "cancel" }
+  | {
+      type: "approval_decision";
+      approval_id: string;
+      action: "approve" | "deny" | "cancel";
+      reason?: string;
+      confirm?: boolean;
+      remember?: "session" | "always" | null;
+      decided_by?: string;
+    };
+
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "superseded"
+  | "awaiting_confirm";
+
+export type ApprovalRequestMsg = {
+  id: string;
+  session_id: string;
+  turn_id: string | null;
+  channel: string;
+  channel_id: string | null;
+  tool_name: string;
+  risk_tier: string;
+  arguments_summary: string;
+  arguments_full: string;
+  diff_preview: string | null;
+  requester: string;
+  status: ApprovalStatus;
+  decision_reason: string | null;
+  decided_by: string | null;
+  needs_double_confirm: boolean;
+  double_confirm_window_s: number;
+  args_hash: string;
+  ttl_s: number;
+  created_at: number;
+  expires_at: number;
+  decided_at: number | null;
+  consumed: boolean;
+};
+
+export type ApprovalResolvedMsg = {
+  approval_id: string;
+  tool_name: string;
+  status: ApprovalStatus;
+  decision_reason?: string | null;
+  decided_by?: string | null;
+};
+
+export type ApprovalDecisionInput = {
+  action: "approve" | "deny" | "cancel";
+  reason?: string;
+  confirm?: boolean;
+  remember?: "session" | "always";
+  decided_by?: string;
+};
+
+export type ApprovalListResponse = {
+  items: ApprovalRequestMsg[];
+  count: number;
+};
+
+export type SessionPolicies = {
+  session_id: string;
+  always_allow: string[];
+  denied_tools: string[];
+  raw_meta?: Record<string, string>;
+};
+
+export type ToolSpecSummary = {
+  risk_tier: "safe" | "caution" | "sensitive" | "dangerous";
+  side_effects: string[];
+  requires_approval: boolean;
+  needs_diff_preview: boolean;
+  needs_double_confirm: boolean;
+  default_ttl_s: number;
+  description: string;
+};
 
 export type NotifyHandler = (
   title: string,
@@ -82,7 +182,16 @@ export type ToolHandler = (msg: {
   arguments?: string;
   ok?: boolean;
   result?: string;
+  approval_id?: string | null;
+  approval_status?: string | null;
 }) => void;
+
+export type ApprovalRequestHandler = (
+  msg: ApprovalRequestMsg,
+  followUp?: boolean,
+) => void;
+
+export type ApprovalResolvedHandler = (msg: ApprovalResolvedMsg) => void;
 
 export type StreamHandlers = {
   onToken: (token: string) => void;
@@ -96,6 +205,8 @@ export type StreamHandlers = {
   onSubagent?: SubagentHandler;
   onTool?: ToolHandler;
   onNotification?: NotifyHandler;
+  onApprovalRequest?: ApprovalRequestHandler;
+  onApprovalResolved?: ApprovalResolvedHandler;
 };
 
 export type FaeCapabilities = {

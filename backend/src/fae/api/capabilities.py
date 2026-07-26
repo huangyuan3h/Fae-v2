@@ -12,6 +12,7 @@ from fae.channels.telegram import telegram_ready
 from fae.api.auth import client_token_required
 from fae.config import Settings
 from fae.scheduler.loop import ProactiveLoop
+from fae.tool_registry import specs_for_capabilities
 
 router = APIRouter(tags=["capabilities"])
 
@@ -42,11 +43,18 @@ def build_capabilities(request: Request) -> dict[str, Any]:
             "tts_local": bool((settings.vllm_tts_url or "").strip()),
         },
         "tools": sorted(known_tool_names()),
+        "tool_specs": specs_for_capabilities(),
         "tool_runtime": {
             "workspace_configured": bool((settings.coding_workspace_root or "").strip()),
             "filesystem_enabled": bool(settings.coding_filesystem_enabled),
             "bash_enabled": bool(settings.coding_bash_enabled),
             "git_enabled": bool(settings.coding_git_enabled),
+        },
+        "approval_flow": {
+            "default_ttl_s": settings.approval_default_ttl_s,
+            "dangerous_ttl_s": settings.approval_dangerous_ttl_s,
+            "double_confirm_window_s": settings.approval_double_confirm_window_s,
+            "transport": ["http:/api/approvals", "ws:approval_decision"],
         },
         "skills_enabled": bool(settings.skills_enabled),
         "subagent_enabled": bool(settings.subagent_enabled),

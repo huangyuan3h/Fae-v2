@@ -5,10 +5,25 @@ Protocol (JSON over text frames):
   client -> server:
     {"type": "chat",  "request": <ChatRequest>, "session_id": "<optional>"}
     {"type": "cancel"}
+    {"type": "approval_decision",
+     "approval_id": "<id>",
+     "action": "approve" | "deny" | "cancel",
+     "reason"?: str,
+     "confirm"?: bool,
+     "remember"?: "session" | "always" | null}
 
   server -> client:
     {"type": "skills", "active": ["technical_debugging"], "lazy_catalog": [...]}
     {"type": "subagent", "phase": "start"|"done", "name": "researcher", ...}
+    {"type": "approval_request",
+     "approval": {...full ApprovalRequest.to_dict()...},
+     "follow_up"?: bool}
+    {"type": "approval_resolved",
+     "approval_id": "...",
+     "tool_name": "...",
+     "status": "approved" | "denied" | "expired" | "cancelled" | "awaiting_confirm",
+     "decision_reason"?: str,
+     "decided_by"?: str}
     {"type": "token", "content": "你"}
     {"type": "done",  "usage": {...} | null, "session_id": "..."}
     {"type": "notification", "id": "...", "title": "...", "body": "..."}
@@ -32,6 +47,7 @@ from starlette.websockets import WebSocketState
 from fae.agent.llm_turn import stream_assistant_turn
 from fae.agent.prepare import prepare_chat_request
 from fae.agent.skills_runtime import SkillRuntime
+from fae.approvals import ApprovalStore
 from fae.api.auth import ensure_ws_client_token
 from fae.api.chat_history import persist_chat_history_turn
 from fae.api.deps import get_llm_client
@@ -40,7 +56,9 @@ from fae.llm import ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.activity import ActivityTracker
 from fae.scheduler.hub import ConnectionHub
+from fae.agent_trace import make_agent_trace_callback, new_turn_id
 from fae.tool_audit import make_tool_audit_callback
+from fae.tool_registry import EffectivePolicy
 
 logger = logging.getLogger("fae.ws")
 
@@ -76,6 +94,24 @@ def _memory_from_app(ws: WebSocket) -> LettaMemoryService | None:
 def _skills_from_app(ws: WebSocket) -> SkillRuntime | None:
     skills = getattr(ws.app.state, "skills", None)
     return skills if isinstance(skills, SkillRuntime) else None
+
+
+def _approvals_from_app(ws: WebSocket) -> ApprovalStore | None:
+    store = getattr(ws.app.state, "approvals", None)
+    return store if isinstance(store, ApprovalStore) else None
+
+
+def _effective_policy_for(ws: WebSocket, session_id: str) -> EffectivePolicy | None:
+    from fae.api.approvals import _policy_from_session
+    from fae.sessions import SessionStore
+
+    sessions = getattr(ws.app.state, "sessions", None)
+    if not isinstance(sessions, SessionStore):
+        return None
+    session = sessions.get(session_id)
+    if session is None:
+        return None
+    return _policy_from_session(session)
 
 
 def _resolve_session_id(
@@ -158,8 +194,16 @@ async def _run_stream(
         async def _on_subagent(ev: dict) -> None:
             await _send(ws, ev)
 
+        turn_id = new_turn_id()
         audit_tool = make_tool_audit_callback(
             ws.app.state.tool_audit,
+            session_id=session_id,
+            channel="ws",
+            channel_id=str(id(ws)),
+        )
+        trace_tool = make_agent_trace_callback(
+            ws.app.state.agent_trace,
+            turn_id=turn_id,
             session_id=session_id,
             channel="ws",
             channel_id=str(id(ws)),
@@ -167,6 +211,7 @@ async def _run_stream(
 
         async def _on_tool(ev: dict) -> None:
             await _send(ws, ev)
+            await trace_tool(ev)
             await audit_tool(ev)
 
         async for token, activation in stream_assistant_turn(
@@ -194,6 +239,9 @@ async def _run_stream(
             on_subagent_event=_on_subagent,
             on_tool_event=_on_tool,
             tool_offloader=getattr(ws.app.state, "tool_offloader", None),
+            trace_turn_id=turn_id,
+            approval_store=_approvals_from_app(ws),
+            effective_policy=_effective_policy_for(ws, session_id),
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)
@@ -304,6 +352,93 @@ async def ws_chat(
                 await _cancel_active(active)
                 active = None
                 stream_cancel = None
+                continue
+
+            if msg_type == "approval_decision":
+                approval_id = raw.get("approval_id")
+                action = raw.get("action")
+                if not isinstance(approval_id, str) or not isinstance(action, str):
+                    await _send(
+                        websocket,
+                        {
+                            "type": "error",
+                            "code": "bad_request",
+                            "message": "approval_decision requires approval_id and action",
+                        },
+                    )
+                    continue
+                approval_store = _approvals_from_app(websocket)
+                if approval_store is None:
+                    await _send(
+                        websocket,
+                        {
+                            "type": "error",
+                            "code": "no_approval_store",
+                            "message": "approval store unavailable",
+                        },
+                    )
+                    continue
+                try:
+                    updated = await asyncio.to_thread(
+                        approval_store.resolve,
+                        approval_id,
+                        action=action,
+                        reason=raw.get("reason"),
+                        decided_by=str(raw.get("decided_by") or "user"),
+                        confirm=bool(raw.get("confirm", False)),
+                    )
+                except KeyError:
+                    await _send(
+                        websocket,
+                        {
+                            "type": "error",
+                            "code": "not_found",
+                            "message": f"approval {approval_id} not found",
+                        },
+                    )
+                    continue
+                except ValueError as e:
+                    await _send(
+                        websocket,
+                        {
+                            "type": "error",
+                            "code": "bad_request",
+                            "message": str(e),
+                        },
+                    )
+                    continue
+                # Optional policy write-back (mirrors the HTTP route).
+                remember = raw.get("remember")
+                if action == "approve" and remember == "always":
+                    from fae.api.approvals import _ALWAYS_KEY
+                    from fae.sessions import SessionStore
+
+                    sessions = getattr(websocket.app.state, "sessions", None)
+                    if isinstance(sessions, SessionStore):
+                        session = sessions.get(updated.session_id)
+                        if session is not None:
+                            current = session.meta.get(_ALWAYS_KEY, "")
+                            pieces = {p.strip() for p in current.split(",") if p.strip()}
+                            pieces.add(updated.tool_name)
+                            session.meta[_ALWAYS_KEY] = ",".join(sorted(pieces))
+                elif action == "approve" and remember == "session":
+                    try:
+                        await asyncio.to_thread(
+                            approval_store.mark_consumed, updated.id
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("mark_consumed failed (ws session)")
+                await _send(
+                    websocket,
+                    {
+                        "type": "approval_resolved",
+                        "approval_id": updated.id,
+                        "tool_name": updated.tool_name,
+                        "status": updated.status,
+                        "decision_reason": updated.decision_reason,
+                        "decided_by": updated.decided_by,
+                    },
+                )
                 continue
 
             if msg_type == "chat":
