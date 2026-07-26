@@ -37,6 +37,7 @@ from fae.api.schedules import router as schedules_router
 from fae.api.schedules import status_router as scheduler_status_router
 from fae.api.skills import router as skills_router
 from fae.api.tts import router as tts_router
+from fae.api.tool_audit import router as tool_audit_router
 from fae.api.voice import router as voice_router
 from fae.api.ws import router as ws_router
 from fae.api.auth import require_client_token_http
@@ -65,6 +66,10 @@ from fae.scheduler import ActivityTracker, ConnectionHub, ProactiveLoop, Schedul
 from fae.scheduler.delivery import NotificationDelivery
 from fae.scheduler.jobs import builtin_job_specs
 from fae.sessions import SessionStore
+from fae.tool_audit import (
+    ToolAuditStore,
+    make_tool_audit_callback,
+)
 from fae.voice_runtime import VoiceRuntime
 
 
@@ -77,6 +82,13 @@ def _schedules_db_path(settings: Settings) -> Path:
 
 def _chat_history_db_path(settings: Settings) -> Path:
     db_path = Path(settings.chat_history_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _tool_audit_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.tool_audit_db_path)
     if not db_path.is_absolute():
         db_path = REPO_ROOT / db_path
     return db_path
@@ -186,6 +198,10 @@ async def lifespan(app: FastAPI):
             retention_days=settings.chat_history_retention_days,
         )
         app.state.chat_history = history_store
+    audit_store = getattr(app.state, "tool_audit", None)
+    if not isinstance(audit_store, ToolAuditStore) or audit_store.closed:
+        audit_store = ToolAuditStore(_tool_audit_db_path(settings))
+        app.state.tool_audit = audit_store
     history_cleanup_task = asyncio.create_task(
         chat_history_cleanup_loop(
             history_store,
@@ -356,6 +372,14 @@ async def lifespan(app: FastAPI):
                 else None,
                 tool_offloader=getattr(app.state, "tool_offloader", None),
                 session_id="default",
+                channel="telegram",
+                channel_id=chat_id,
+                on_tool_event=make_tool_audit_callback(
+                    app.state.tool_audit,
+                    session_id="default",
+                    channel="telegram",
+                    channel_id=chat_id,
+                ),
                 on_schedule_mutated=_resync,
             )
 
@@ -383,6 +407,10 @@ async def lifespan(app: FastAPI):
     app.state.chat_history_cleanup_task = None
     history_store.close()
     app.state.chat_history = None
+    audit_store = getattr(app.state, "tool_audit", None)
+    if isinstance(audit_store, ToolAuditStore):
+        audit_store.close()
+    app.state.tool_audit = None
 
     tg_stop.set()
     if tg_task is not None:
@@ -503,6 +531,7 @@ def create_app(
         _chat_history_db_path(settings),
         retention_days=settings.chat_history_retention_days,
     )
+    app.state.tool_audit = ToolAuditStore(_tool_audit_db_path(settings))
     app.state.chat_history_cleanup_task = None
     app.state.memory = None
     app.state.memory_client = None
@@ -743,6 +772,8 @@ def create_app(
                     activation,
                     skills_rt if isinstance(skills_rt, SkillRuntime) else None,
                     session_id=session_id,
+                    channel="http",
+                    channel_id=None,
                     schedule_store=sched,
                     weather_enabled=weather_on,
                     default_city=default_city,
@@ -758,6 +789,11 @@ def create_app(
                     git_enabled=git_on,
                     git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
                     tool_offloader=getattr(request.app.state, "tool_offloader", None),
+                    on_tool_event=make_tool_audit_callback(
+                        request.app.state.tool_audit,
+                        session_id=session_id,
+                        channel="http",
+                    ),
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)
@@ -824,6 +860,7 @@ def create_app(
     # ── Checkpoint 3: WebSocket streaming chat ─────────────────────────
     app.include_router(ws_router)
     app.include_router(chat_history_router)
+    app.include_router(tool_audit_router)
 
     # ── P7: capability discovery ───────────────────────────────────────
     app.include_router(capabilities_router)

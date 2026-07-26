@@ -40,6 +40,7 @@ from fae.llm import ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.activity import ActivityTracker
 from fae.scheduler.hub import ConnectionHub
+from fae.tool_audit import make_tool_audit_callback
 
 logger = logging.getLogger("fae.ws")
 
@@ -157,8 +158,16 @@ async def _run_stream(
         async def _on_subagent(ev: dict) -> None:
             await _send(ws, ev)
 
+        audit_tool = make_tool_audit_callback(
+            ws.app.state.tool_audit,
+            session_id=session_id,
+            channel="ws",
+            channel_id=str(id(ws)),
+        )
+
         async def _on_tool(ev: dict) -> None:
             await _send(ws, ev)
+            await audit_tool(ev)
 
         async for token, activation in stream_assistant_turn(
             client,
@@ -166,6 +175,8 @@ async def _run_stream(
             activation,
             skills,
             session_id=session_id,
+            channel="ws",
+            channel_id=str(id(ws)),
             schedule_store=schedule_store,
             weather_enabled=weather_on,
             default_city=default_city,

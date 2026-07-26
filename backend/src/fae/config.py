@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
 
     chat_history_db_path: str = ".data/fae-chat-history.db"
+    tool_audit_db_path: str = ".data/fae-tool-audit.db"
     chat_history_retention_days: int = Field(default=7, ge=1, le=3650)
     chat_history_cleanup_interval_s: float = Field(default=3600.0, ge=0.05)
 

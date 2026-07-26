@@ -48,6 +48,27 @@ OnSubagentEvent = Callable[[dict[str, Any]], Awaitable[None]]
 OnToolEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+async def _emit_tool_event(
+    callback: OnToolEvent | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    try:
+        await callback(event)
+    except Exception:
+        logger.exception("Tool event handler failed")
+
+
+def _tool_result_ok(result: str) -> bool:
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError:
+        return True
+    return bool(payload.get("ok", True)) if isinstance(payload, dict) else True
+
+
+
 def _strip_tools(request: ChatRequest) -> ChatRequest:
     if request.tools is None and request.tool_choice is None:
         return request
@@ -177,6 +198,9 @@ async def _dispatch_coding_tool(
     bash_timeout_s: float,
     git_enabled: bool,
     git_timeout_s: float,
+    session_id: str = "default",
+    channel: str = "unknown",
+    channel_id: str | None = None,
     on_tool_event: OnToolEvent | None = None,
 ) -> str | None:
     enabled = (
@@ -188,45 +212,60 @@ async def _dispatch_coding_tool(
         return None
     event_id = call_id or f"{tool_name}-{id(arguments)}"
     if on_tool_event is not None:
-        await on_tool_event(
+        await _emit_tool_event(
+            on_tool_event,
             {
                 "type": "tool",
                 "phase": "start",
                 "id": event_id,
                 "name": tool_name,
                 "arguments": arguments[:4000],
-            }
+                "session_id": session_id,
+                "channel": channel,
+                "channel_id": channel_id,
+            },
         )
-    if tool_name in _FILESYSTEM_TOOL_NAMES:
-        result = dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
-    elif tool_name in _BASH_TOOL_NAMES:
-        result = await dispatch_bash_tool(
-            tool_name,
-            arguments,
-            root=workspace_root,
-            timeout_s=bash_timeout_s,
-        )
-    else:
-        result = await dispatch_git_tool(
-            tool_name,
-            arguments,
-            root=workspace_root,
-            timeout_s=git_timeout_s,
+    try:
+        if tool_name in _FILESYSTEM_TOOL_NAMES:
+            result = dispatch_filesystem_tool(tool_name, arguments, root=workspace_root)
+        elif tool_name in _BASH_TOOL_NAMES:
+            result = await dispatch_bash_tool(
+                tool_name,
+                arguments,
+                root=workspace_root,
+                timeout_s=bash_timeout_s,
+            )
+        else:
+            result = await dispatch_git_tool(
+                tool_name,
+                arguments,
+                root=workspace_root,
+                timeout_s=git_timeout_s,
+            )
+    except Exception as exc:  # noqa: BLE001
+        result = json.dumps(
+            {"ok": False, "error": "tool_exception", "message": str(exc)},
+            ensure_ascii=False,
         )
     if on_tool_event is not None:
         try:
             payload = json.loads(result)
         except json.JSONDecodeError:
             payload = {"ok": False, "error": "invalid_tool_result"}
-        await on_tool_event(
+        await _emit_tool_event(
+            on_tool_event,
             {
                 "type": "tool",
                 "phase": "result",
                 "id": event_id,
                 "name": tool_name,
                 "ok": bool(payload.get("ok")),
+                "error_code": payload.get("error"),
                 "result": result[:20000],
-            }
+                "session_id": session_id,
+                "channel": channel,
+                "channel_id": channel_id,
+            },
         )
     return result
 
@@ -238,6 +277,8 @@ async def apply_lazy_skill_tool(
     skills: SkillRuntime | None,
     *,
     session_id: str = "default",
+    channel: str = "unknown",
+    channel_id: str | None = None,
     schedule_store: ScheduleStore | None = None,
     weather_enabled: bool = False,
     default_city: str | None = None,
@@ -303,6 +344,9 @@ async def apply_lazy_skill_tool(
                 bash_timeout_s=bash_timeout_s,
                 git_enabled=git_enabled,
                 git_timeout_s=git_timeout_s,
+                session_id=session_id,
+                channel=channel,
+                channel_id=channel_id,
                 on_tool_event=on_tool_event,
             )
             if result is None:
@@ -339,21 +383,124 @@ async def apply_lazy_skill_tool(
             if not name:
                 continue
             logger.info("LAZY request_skill name=%s", name)
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments[:4000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
             new_req, new_act = skills.load_lazy_into_request(
                 request, name, activation, session_id=session_id
+            )
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "ok": True,
+                    "result": json.dumps({"ok": True, "skill": name}),
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
             )
             return _strip_tools(new_req), new_act, None
 
         if tc.name in _SCHEDULE_TOOL_NAMES and schedule_store is not None:
-            result = dispatch_schedule_tool(schedule_store, tc.name, tc.arguments)
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments[:4000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
+            try:
+                result = dispatch_schedule_tool(schedule_store, tc.name, tc.arguments)
+                ok = True
+                error_code = None
+            except Exception as exc:  # noqa: BLE001
+                result = json.dumps(
+                    {"ok": False, "error": "tool_exception", "message": str(exc)},
+                    ensure_ascii=False,
+                )
+                ok = False
+                error_code = "tool_exception"
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "ok": ok,
+                    "error_code": error_code,
+                    "result": str(result)[:20000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
             summary = f"已处理日程工具 {tc.name}：{result}"
             return _strip_tools(request), activation, summary
 
         if tc.name in _WEATHER_TOOL_NAMES and weather_enabled:
-            result = await dispatch_weather_tool(
-                tc.name,
-                tc.arguments,
-                default_city=default_city,
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments[:4000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
+            try:
+                result = await dispatch_weather_tool(
+                    tc.name,
+                    tc.arguments,
+                    default_city=default_city,
+                )
+                ok = _tool_result_ok(result)
+                error_code = None if ok else "tool_failed"
+            except Exception as exc:  # noqa: BLE001
+                result = json.dumps(
+                    {"ok": False, "error": "tool_exception", "message": str(exc)},
+                    ensure_ascii=False,
+                )
+                ok = False
+                error_code = "tool_exception"
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "ok": ok,
+                    "error_code": error_code,
+                    "result": str(result)[:20000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
             )
             logger.info("get_weather result_len=%s", len(result))
             messages = list(request.messages)
@@ -364,15 +511,55 @@ async def apply_lazy_skill_tool(
             return _strip_tools(enriched), activation, None
 
         if tc.name == "run_subagent" and attach_subagent:
-            result = await dispatch_run_subagent(
-                tc.arguments,
-                llm=client,
-                config=request.config,
-                memory=memory,
-                session_id=session_id,
-                timeout_s=subagent_timeout_s,
-                cancel_event=cancel_event,
-                on_event=on_subagent_event,
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments[:4000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
+            try:
+                result = await dispatch_run_subagent(
+                    tc.arguments,
+                    llm=client,
+                    config=request.config,
+                    memory=memory,
+                    session_id=session_id,
+                    timeout_s=subagent_timeout_s,
+                    cancel_event=cancel_event,
+                    on_event=on_subagent_event,
+                )
+                ok = _tool_result_ok(result)
+                error_code = None if ok else "tool_failed"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                result = json.dumps(
+                    {"ok": False, "error": "tool_exception", "message": str(exc)},
+                    ensure_ascii=False,
+                )
+                ok = False
+                error_code = "tool_exception"
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "ok": ok,
+                    "error_code": error_code,
+                    "result": str(result)[:20000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
             )
             logger.info("run_subagent result_len=%s", len(result))
             messages = list(request.messages)
@@ -394,6 +581,8 @@ async def stream_assistant_turn(
     skills: SkillRuntime | None,
     *,
     session_id: str = "default",
+    channel: str = "unknown",
+    channel_id: str | None = None,
     schedule_store: ScheduleStore | None = None,
     weather_enabled: bool = False,
     default_city: str | None = None,
@@ -441,6 +630,8 @@ async def stream_assistant_turn(
             act,
             skills,
             session_id=session_id,
+            channel=channel,
+            channel_id=channel_id,
             schedule_store=schedule_store,
             weather_enabled=weather_enabled,
             default_city=default_city,
