@@ -25,6 +25,8 @@ class ToolAuditOut(BaseModel):
     ok: bool | None
     error_code: str | None
     approval_status: str
+    approval_id: str | None
+    turn_id: str | None
     started_at: float
     finished_at: float | None
     duration_ms: float | None
@@ -41,6 +43,7 @@ async def list_tool_audit(
     tool_name: Annotated[str | None, Query()] = None,
     channel: Annotated[str | None, Query()] = None,
     phase: Annotated[str | None, Query()] = None,
+    turn_id: Annotated[str | None, Query()] = None,
     before: Annotated[float | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[ToolAuditOut]:
@@ -53,6 +56,7 @@ async def list_tool_audit(
         tool_name=tool_name,
         channel=channel,
         phase=phase,
+        turn_id=turn_id,
         before=before,
         limit=limit,
     )

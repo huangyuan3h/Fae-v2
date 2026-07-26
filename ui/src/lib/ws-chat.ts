@@ -4,16 +4,20 @@
 import {
   buildWsChatUrl,
   ChatAbortedError,
+  type ApprovalRequestMsg,
   type ChatHistory,
   type ChatSessionsResponse,
   type ChatSessionSummary,
   WsChatClient as SdkWsChatClient,
+  type AgentTraceEvent,
   type LlmConfigInput,
   type NotifyHandler,
   type StreamHandlers,
   type SubagentHandler,
   type TokenUsage,
+  type ToolAuditEvent,
   type ToolHandler,
+  type TurnStartedHandler,
   type WsServerMessage,
 } from "@fae/client";
 
@@ -21,18 +25,35 @@ import type { AgentConfig } from "./config";
 import { authHeaders, backendHttpBase, clientAccessToken } from "./config";
 
 export type {
+  ApprovalRequestMsg,
   ChatHistory,
   ChatSessionsResponse,
   ChatSessionSummary,
+  AgentTraceEvent,
   NotifyHandler,
   StreamHandlers,
   SubagentHandler,
   TokenUsage,
+  ToolAuditEvent,
   ToolHandler,
+  TurnStartedHandler,
   WsServerMessage,
 };
 
 export { ChatAbortedError };
+
+/* Approval: types & SDK methods live in @fae/client (P7 SDK). */
+import type {
+  ApprovalDecisionInput,
+  ApprovalRequestHandler,
+  ApprovalResolvedHandler,
+} from "@fae/client";
+
+export type {
+  ApprovalDecisionInput,
+  ApprovalRequestHandler,
+  ApprovalResolvedHandler,
+};
 
 export class WsChatClient {
   private inner: SdkWsChatClient;
@@ -45,6 +66,22 @@ export class WsChatClient {
 
   setNotificationHandler(handler: NotifyHandler | null) {
     this.inner.setNotificationHandler(handler);
+  }
+
+  setApprovalRequestHandler(handler: ApprovalRequestHandler | null) {
+    this.inner.setApprovalRequestHandler(handler);
+  }
+
+  setApprovalResolvedHandler(handler: ApprovalResolvedHandler | null) {
+    this.inner.setApprovalResolvedHandler(handler);
+  }
+
+  setTurnStartedHandler(handler: TurnStartedHandler | null) {
+    this.inner.setTurnStartedHandler(handler);
+  }
+
+  sendApprovalDecision(approvalId: string, decision: ApprovalDecisionInput): boolean {
+    return this.inner.sendApprovalDecision(approvalId, decision);
   }
 
   connect(): Promise<void> {
@@ -134,5 +171,47 @@ export async function setChatSessionPinned(
       method: "POST",
       body: JSON.stringify({ pinned }),
     },
+  );
+}
+
+export async function fetchAgentTrace(
+  opts: {
+    sessionId?: string;
+    turnId?: string;
+    kind?: string;
+    limit?: number;
+  } = {},
+): Promise<AgentTraceEvent[]> {
+  const params = new URLSearchParams();
+  if (opts.sessionId) params.set("session_id", opts.sessionId);
+  if (opts.turnId) params.set("turn_id", opts.turnId);
+  if (opts.kind) params.set("kind", opts.kind);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return jsonFetch<AgentTraceEvent[]>(
+    `/api/agent-trace${qs ? "?" + qs : ""}`,
+  );
+}
+
+export async function fetchToolAudit(
+  opts: {
+    sessionId?: string;
+    toolName?: string;
+    channel?: string;
+    phase?: string;
+    turnId?: string;
+    limit?: number;
+  } = {},
+): Promise<ToolAuditEvent[]> {
+  const params = new URLSearchParams();
+  if (opts.sessionId) params.set("session_id", opts.sessionId);
+  if (opts.toolName) params.set("tool_name", opts.toolName);
+  if (opts.channel) params.set("channel", opts.channel);
+  if (opts.phase) params.set("phase", opts.phase);
+  if (opts.turnId) params.set("turn_id", opts.turnId);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return jsonFetch<ToolAuditEvent[]>(
+    `/api/tool-audit${qs ? "?" + qs : ""}`,
   );
 }

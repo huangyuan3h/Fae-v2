@@ -182,3 +182,62 @@ def test_agent_trace_payload_round_trip(tmp_path: Path, event: dict, persist: bo
         assert (len(events) == 1) is persist
     finally:
         store.close()
+
+
+def test_agent_trace_normalizes_result_phase_with_duration(tmp_path: Path) -> None:
+    store = AgentTraceStore(tmp_path / "trace.db")
+    try:
+        store.record_event(
+            {"kind": "tool", "phase": "start", "name": "run_bash"},
+            turn_id="turn-1",
+            session_id="s",
+        )
+        import time as _t
+
+        _t.sleep(0.01)
+        # ``phase: result`` (live wire form) must persist as terminal
+        # ``done`` when ok=true, and populate duration_ms from the matching
+        # start row.
+        store.record_event(
+            {
+                "kind": "tool",
+                "phase": "result",
+                "name": "run_bash",
+                "ok": True,
+                "result": "ok",
+            },
+            turn_id="turn-1",
+            session_id="s",
+        )
+        events = store.list_events(turn_id="turn-1")
+        assert [e.phase for e in events] == ["done", "start"]
+        terminal = next(e for e in events if e.phase == "done")
+        assert terminal.ok is True
+        assert terminal.duration_ms is not None
+        assert terminal.duration_ms > 0
+        assert terminal.finished_at is not None
+
+        # Result with ok=False should be persisted as error.
+        store.record_event(
+            {"kind": "tool", "phase": "start", "name": "write_file"},
+            turn_id="turn-1",
+            session_id="s",
+        )
+        store.record_event(
+            {
+                "kind": "tool",
+                "phase": "result",
+                "name": "write_file",
+                "ok": False,
+                "result": '{"ok":false,"error":"permission"}',
+                "error_code": "permission_denied",
+            },
+            turn_id="turn-1",
+            session_id="s",
+        )
+        events = store.list_events(turn_id="turn-1")
+        err_terminal = next(e for e in events if e.phase == "error")
+        assert err_terminal.ok is False
+        assert err_terminal.error_code == "permission_denied"
+    finally:
+        store.close()

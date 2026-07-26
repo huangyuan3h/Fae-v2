@@ -19,6 +19,7 @@ class ChatHistoryTurnOut(BaseModel):
     user_text: str
     assistant_text: str
     created_at: str
+    trace_turn_id: str | None = None
 
 
 class ChatHistoryOut(BaseModel):
@@ -56,6 +57,7 @@ def _to_turn_out(turn) -> ChatHistoryTurnOut:
         user_text=turn.user_text,
         assistant_text=turn.assistant_text,
         created_at=turn.created_at.isoformat(),
+        trace_turn_id=turn.trace_turn_id,
     )
 
 
@@ -165,6 +167,7 @@ async def persist_chat_history_turn(
     session_id: str,
     user_text: str,
     assistant_text: str,
+    trace_turn_id: str | None = None,
 ) -> None:
     state = getattr(app, "state", None)
     store = getattr(state, "chat_history", None)
@@ -176,6 +179,7 @@ async def persist_chat_history_turn(
             session_id,
             user_text,
             assistant_text,
+            trace_turn_id=trace_turn_id,
         )
     except Exception:
         logger.exception("Failed to persist chat history turn")

@@ -22,9 +22,11 @@ def test_tool_audit_round_trip_redacts_and_updates(tmp_path: Path) -> None:
             session_id="session-1",
             channel="ws",
             channel_id="connection-1",
+            turn_id="turn-A",
         )
         assert started.phase == "start"
         assert started.ok is None
+        assert started.turn_id == "turn-A"
 
         finished = store.record_event(
             {
@@ -47,11 +49,17 @@ def test_tool_audit_round_trip_redacts_and_updates(tmp_path: Path) -> None:
         assert "secret-value" not in finished.arguments
         assert "secret" not in finished.result
         assert finished.duration_ms is not None
+        assert finished.turn_id == "turn-A"
 
         events = store.list_events(session_id="session-1", channel="ws")
         assert len(events) == 1
         assert events[0].id == "call-1"
         assert events[0].channel_id == "connection-1"
+        assert events[0].turn_id == "turn-A"
+
+        # Filtering by turn_id is honored.
+        assert len(store.list_events(turn_id="turn-A")) == 1
+        assert len(store.list_events(turn_id="turn-Z")) == 0
     finally:
         store.close()
 

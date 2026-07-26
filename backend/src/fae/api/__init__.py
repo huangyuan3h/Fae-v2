@@ -470,6 +470,9 @@ async def lifespan(app: FastAPI):
                 await tg_trace(event)
                 await tg_audit(event)
 
+            async def _tg_on_subagent(event: dict) -> None:
+                await tg_trace(event)
+
             return await handle_inbound_text(
                 text,
                 settings=settings,
@@ -486,6 +489,7 @@ async def lifespan(app: FastAPI):
                 channel="telegram",
                 channel_id=chat_id,
                 on_tool_event=_tg_on_tool,
+                on_subagent_event=_tg_on_subagent,
                 trace_turn_id=tg_turn_id,
             )
 
@@ -788,6 +792,22 @@ def create_app(
         code = 503 if memory_status == "down" else 200
         return JSONResponse(payload, status_code=code)
 
+    def _http_policy_for_session(session_id: str):
+        """Mirror of ``ws._effective_policy_for`` — per-session approval
+        policy lookup so ``/api/chat`` and ``/ws/chat`` share the gate."""
+        from fae.api.approvals import _policy_from_session
+        from fae.sessions import SessionStore
+        from fae.tool_registry import EffectivePolicy
+
+        sessions = getattr(app.state, "sessions", None)
+        if not isinstance(sessions, SessionStore):
+            return None
+        session = sessions.get(session_id)
+        if session is None:
+            return None
+        policy: EffectivePolicy | None = _policy_from_session(session)
+        return policy
+
     # ── Checkpoint 2 endpoints ────────────────────────────────────────
     @app.post("/api/test-connection", response_model=dict[str, str])
     async def test_connection(
@@ -883,6 +903,9 @@ def create_app(
                 activation,
                 skills_rt if isinstance(skills_rt, SkillRuntime) else None,
             )
+            subagent_timeout = float(
+                getattr(settings, "subagent_timeout_s", 60.0) or 60.0
+            )
             coding_root = str(getattr(settings, "coding_workspace_root", "") or "").strip()
             filesystem_on = bool(coding_root and getattr(settings, "coding_filesystem_enabled", False))
             bash_on = bool(coding_root and getattr(settings, "coding_bash_enabled", False))
@@ -896,8 +919,8 @@ def create_app(
                 or bash_on
                 or git_on
             )
+            turn_id = new_turn_id()
             if tools_needed:
-                turn_id = new_turn_id()
                 trace_callback = make_agent_trace_callback(
                     request.app.state.agent_trace,
                     turn_id=turn_id,
@@ -913,6 +936,9 @@ def create_app(
                 async def _chain_on_tool_event(event: dict) -> None:
                     await trace_callback(event)
                     await audit_callback(event)
+
+                async def _chain_on_subagent_event(event: dict) -> None:
+                    await trace_callback(event)
 
                 prepared, activation, early = await apply_lazy_skill_tool(
                     client,
@@ -937,6 +963,12 @@ def create_app(
                     git_timeout_s=float(getattr(settings, "coding_git_timeout_s", 20.0)),
                     tool_offloader=getattr(request.app.state, "tool_offloader", None),
                     on_tool_event=_chain_on_tool_event,
+                    on_subagent_event=_chain_on_subagent_event,
+                    trace_turn_id=turn_id,
+                    approval_store=getattr(request.app.state, "approvals", None),
+                    effective_policy=_http_policy_for_session(
+                        request.app, session_id,
+                    ),
                 )
                 if early and "日程工具" in early:
                     proactive = getattr(request.app.state, "proactive", None)
@@ -955,6 +987,7 @@ def create_app(
                 session_id=session_id,
                 user_text=user_text,
                 assistant_text=response.content,
+                trace_turn_id=turn_id,
             )
             if memory is not None and memory.enabled and user_text:
                 await memory.persist_turn(

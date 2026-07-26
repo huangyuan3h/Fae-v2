@@ -32,6 +32,7 @@ class ToolAuditEvent:
     error_code: str | None
     approval_status: str
     approval_id: str | None
+    turn_id: str | None
     started_at: float
     finished_at: float | None
     duration_ms: float | None
@@ -107,6 +108,17 @@ class ToolAuditStore:
                 self._conn.execute(
                     "ALTER TABLE tool_audit_events ADD COLUMN approval_id TEXT"
                 )
+            if "turn_id" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE tool_audit_events ADD COLUMN turn_id TEXT"
+                )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_tool_audit_turn
+                  ON tool_audit_events (turn_id)
+                  WHERE turn_id IS NOT NULL
+                """
+            )
             self._conn.commit()
 
     def record_event(
@@ -116,6 +128,7 @@ class ToolAuditStore:
         session_id: str = "default",
         channel: str = "unknown",
         channel_id: str | None = None,
+        turn_id: str | None = None,
     ) -> ToolAuditEvent:
         event_id = safe_text(event.get("id")) or str(uuid.uuid4())
         call_id = event_id
@@ -126,6 +139,7 @@ class ToolAuditStore:
         arguments = safe_json(event.get("arguments", ""))
         approval_status = safe_text(event.get("approval_status")) or "not_required"
         approval_id = safe_text(event.get("approval_id")) or None
+        turn_id_clean = (turn_id or "").strip() or None
         now = time.time()
         with self._lock:
             row = self._conn.execute(
@@ -139,8 +153,8 @@ class ToolAuditStore:
                         """
                         INSERT INTO tool_audit_events
                         (id, call_id, session_id, channel, channel_id, tool_name, phase,
-                         arguments, approval_status, approval_id, started_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 'start', ?, ?, ?, ?)
+                         arguments, approval_status, approval_id, turn_id, started_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'start', ?, ?, ?, ?, ?)
                         """,
                         (
                             event_id,
@@ -152,11 +166,16 @@ class ToolAuditStore:
                             arguments,
                             approval_status,
                             approval_id,
+                            turn_id_clean,
                             started_at,
                         ),
                     )
                 else:
                     started_at = float(row["started_at"])
+                    self._conn.execute(
+                        "UPDATE tool_audit_events SET turn_id = ? WHERE id = ?",
+                        (turn_id_clean, event_id),
+                    )
             else:
                 phase = "done" if bool(event.get("ok")) else "error"
                 result = safe_json(event.get("result", ""))
@@ -173,8 +192,8 @@ class ToolAuditStore:
                         INSERT INTO tool_audit_events
                         (id, call_id, session_id, channel, channel_id, tool_name, phase,
                          arguments, result, ok, error_code, approval_status, approval_id,
-                         started_at, finished_at, duration_ms)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         turn_id, started_at, finished_at, duration_ms)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             event_id,
@@ -190,6 +209,7 @@ class ToolAuditStore:
                             error_code,
                             approval_status,
                             approval_id,
+                            turn_id_clean,
                             started_at,
                             finished_at,
                             duration_ms,
@@ -200,7 +220,7 @@ class ToolAuditStore:
                         """
                         UPDATE tool_audit_events
                         SET phase = ?, result = ?, ok = ?, error_code = ?,
-                            approval_status = ?, approval_id = ?,
+                            approval_status = ?, approval_id = ?, turn_id = ?,
                             finished_at = ?, duration_ms = ?
                         WHERE id = ?
                         """,
@@ -211,6 +231,7 @@ class ToolAuditStore:
                             error_code,
                             approval_status,
                             approval_id,
+                            turn_id_clean,
                             finished_at,
                             duration_ms,
                             event_id,
@@ -232,6 +253,7 @@ class ToolAuditStore:
         tool_name: str | None = None,
         channel: str | None = None,
         phase: str | None = None,
+        turn_id: str | None = None,
         before: float | None = None,
         limit: int = 50,
     ) -> list[ToolAuditEvent]:
@@ -249,6 +271,9 @@ class ToolAuditStore:
         if phase:
             clauses.append("phase = ?")
             params.append(phase)
+        if turn_id:
+            clauses.append("turn_id = ?")
+            params.append(turn_id)
         if before is not None:
             clauses.append("started_at < ?")
             params.append(before)
@@ -278,6 +303,7 @@ class ToolAuditStore:
             error_code=row["error_code"],
             approval_status=str(row["approval_status"] or "not_required"),
             approval_id=row["approval_id"],
+            turn_id=row["turn_id"],
             started_at=float(row["started_at"]),
             finished_at=(
                 None if row["finished_at"] is None else float(row["finished_at"])
@@ -302,6 +328,7 @@ def make_tool_audit_callback(
     session_id: str,
     channel: str,
     channel_id: str | None = None,
+    turn_id: str | None = None,
 ) -> Callable[[dict[str, Any]], Awaitable[None]]:
     async def on_event(event: dict[str, Any]) -> None:
         if store.closed:
@@ -313,6 +340,7 @@ def make_tool_audit_callback(
                 session_id=session_id,
                 channel=channel,
                 channel_id=channel_id,
+                turn_id=turn_id,
             )
         except Exception:
             logger.exception("Tool audit event persist failed")

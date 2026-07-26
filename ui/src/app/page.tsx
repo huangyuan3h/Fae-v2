@@ -5,7 +5,6 @@ import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 
 import { AppNav } from "@/components/AppNav";
 import { ChatHistorySidebar } from "@/components/voice/ChatHistorySidebar";
-import { AgentSteps } from "@/components/voice/AgentSteps";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
 import { MicButton } from "@/components/voice/MicButton";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
@@ -45,7 +44,8 @@ function HomeContent() {
     ttsMode,
     activeSkills,
     skillScores,
-    steps,
+    turnExecutions,
+    sendApprovalDecision,
     lastVoiceDebug,
     historyNote,
     lastUsage,
@@ -251,7 +251,6 @@ function HomeContent() {
         )}
 
         <div className="flex w-full flex-1 flex-col">
-          <AgentSteps steps={steps} />
           {(historyHasMore || loadingEarlier) && (
             <div className="mt-2 flex justify-center">
               <button
@@ -265,7 +264,29 @@ function HomeContent() {
               </button>
             </div>
           )}
-          <ChatTranscript lines={lines} partial={partial} />
+          <ChatTranscript
+            lines={lines}
+            partial={partial}
+            turnExecutions={turnExecutions}
+            approval={{
+              onApprove: (approvalId, decision) => {
+                sendApprovalDecision(approvalId, {
+                  action: "approve",
+                  remember: decision.remember ?? null,
+                });
+              },
+              onDeny: (approvalId) =>
+                sendApprovalDecision(approvalId, {
+                  action: "deny",
+                  remember: null,
+                }),
+              onCancel: (approvalId) =>
+                sendApprovalDecision(approvalId, {
+                  action: "cancel",
+                  remember: null,
+                }),
+            }}
+          />
         </div>
 
         <form

@@ -128,11 +128,17 @@ def test_history_endpoint_keeps_recent_turns_after_multiple_chats(
                     },
                 )
                 assert resp.status_code == 200
-            history = client.get(
-                "/api/chat/history?session_id=loop&limit=10"
-            )
+        history = client.get(
+            "/api/chat/history?session_id=loop&limit=10"
+        )
         body = history.json()
+        print("DEBUG_BODY:", body)
         assert [t["user_text"] for t in body["turns"]] == ["a", "b", "c"]
+        # trace_turn_id may be null (HTTP /api/chat does not set it), but
+        # the field must be present and round-trip empty for traceability.
+        for turn in body["turns"]:
+            assert "trace_turn_id" in turn
+            assert turn["trace_turn_id"] is None
     finally:
         _close_store(app)
 

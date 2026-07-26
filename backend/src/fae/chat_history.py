@@ -20,6 +20,7 @@ class ChatHistoryTurn:
     user_text: str
     assistant_text: str
     created_at: datetime
+    trace_turn_id: str | None = None
 
 
 class ChatHistoryStore:
@@ -63,6 +64,23 @@ class ChatHistoryStore:
                 );
                 """
             )
+            columns = {
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(chat_history_turns)"
+                ).fetchall()
+            }
+            if "trace_turn_id" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE chat_history_turns ADD COLUMN trace_turn_id TEXT"
+                )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_chat_history_trace_turn
+                  ON chat_history_turns (trace_turn_id)
+                  WHERE trace_turn_id IS NOT NULL
+                """
+            )
             self._conn.commit()
 
     def append(
@@ -72,6 +90,7 @@ class ChatHistoryStore:
         assistant_text: str,
         *,
         created_at: datetime | None = None,
+        trace_turn_id: str | None = None,
     ) -> ChatHistoryTurn:
         sid = (session_id or "").strip() or "default"
         created = created_at or datetime.now(UTC)
@@ -79,20 +98,22 @@ class ChatHistoryStore:
             created = created.replace(tzinfo=UTC)
         else:
             created = created.astimezone(UTC)
+        trace_id = (trace_turn_id or "").strip() or None
         turn = ChatHistoryTurn(
             id=str(uuid.uuid4()),
             session_id=sid,
             user_text=user_text or "",
             assistant_text=assistant_text or "",
             created_at=created,
+            trace_turn_id=trace_id,
         )
         ts = turn.created_at.timestamp()
         with self._lock:
             self._conn.execute(
                 """
                 INSERT INTO chat_history_turns
-                  (id, session_id, user_text, assistant_text, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                  (id, session_id, user_text, assistant_text, created_at, trace_turn_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     turn.id,
@@ -100,6 +121,7 @@ class ChatHistoryStore:
                     turn.user_text,
                     turn.assistant_text,
                     ts,
+                    trace_id,
                 ),
             )
             self._conn.execute(
@@ -174,7 +196,7 @@ class ChatHistoryStore:
             params.append(page_size + 1)
             rows = self._conn.execute(
                 f"""
-                SELECT t.id, t.session_id, t.user_text, t.assistant_text, t.created_at
+                SELECT t.id, t.session_id, t.user_text, t.assistant_text, t.created_at, t.trace_turn_id
                 FROM chat_history_turns AS t
                 WHERE t.session_id = ?{cutoff_clause}{before_clause}
                 ORDER BY t.created_at DESC, t.id DESC
@@ -357,6 +379,7 @@ class ChatHistoryStore:
             user_text=row["user_text"],
             assistant_text=row["assistant_text"],
             created_at=datetime.fromtimestamp(float(row["created_at"]), UTC),
+            trace_turn_id=row["trace_turn_id"],
         )
 
 

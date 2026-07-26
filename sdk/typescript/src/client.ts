@@ -298,7 +298,104 @@ export class FaeClient {
     const json = (await res.json()) as { tools: Record<string, ToolSpecSummary> };
     return json.tools;
   }
+
+  /**
+   * Pull the agent execution trace for a session. Used by the FE to
+   * hydrate per-turn main-line + details panels after a refresh.
+   */
+  async listAgentTrace(
+    opts: { sessionId?: string; turnId?: string; kind?: string; limit?: number } = {},
+  ): Promise<AgentTraceEvent[]> {
+    const params = new URLSearchParams();
+    if (opts.sessionId) params.set("session_id", opts.sessionId);
+    if (opts.turnId) params.set("turn_id", opts.turnId);
+    if (opts.kind) params.set("kind", opts.kind);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    const res = await fetch(
+      `${this.baseUrl}/api/agent-trace${qs ? "?" + qs : ""}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`agent-trace failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as AgentTraceEvent[];
+  }
+
+  /**
+   * Pull the tool-audit log for a session. Companion to listAgentTrace
+   * for clients that want parameter dumps without re-parsing the trace
+   * payload string.
+   */
+  async listToolAudit(
+    opts: {
+      sessionId?: string;
+      toolName?: string;
+      channel?: string;
+      phase?: string;
+      turnId?: string;
+      limit?: number;
+    } = {},
+  ): Promise<ToolAuditEvent[]> {
+    const params = new URLSearchParams();
+    if (opts.sessionId) params.set("session_id", opts.sessionId);
+    if (opts.toolName) params.set("tool_name", opts.toolName);
+    if (opts.channel) params.set("channel", opts.channel);
+    if (opts.phase) params.set("phase", opts.phase);
+    if (opts.turnId) params.set("turn_id", opts.turnId);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    const res = await fetch(
+      `${this.baseUrl}/api/tool-audit${qs ? "?" + qs : ""}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`tool-audit failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as ToolAuditEvent[];
+  }
 }
+
+export type AgentTraceEvent = {
+  id: number;
+  turn_id: string;
+  session_id: string;
+  channel: string;
+  channel_id: string | null;
+  kind: string;
+  phase: string;
+  name: string;
+  payload: string;
+  started_at: number;
+  finished_at: number | null;
+  duration_ms: number | null;
+  ok: boolean | null;
+  error_code: string | null;
+};
+
+export type ToolAuditEvent = {
+  id: string;
+  call_id: string;
+  session_id: string;
+  channel: string;
+  channel_id: string | null;
+  tool_name: string;
+  phase: string;
+  arguments: string;
+  result: string;
+  ok: boolean | null;
+  error_code: string | null;
+  approval_status: string;
+  approval_id: string | null;
+  turn_id: string | null;
+  started_at: number;
+  finished_at: number | null;
+  duration_ms: number | null;
+};
 
 export function createClient(opts: CreateClientOptions): FaeClient {
   return new FaeClient(opts);

@@ -58,9 +58,12 @@ import {
   setChatSessionPinned,
   updateChatSessionTitle,
   WsChatClient,
+  type ApprovalRequestMsg,
   type ChatSessionSummary,
   type TokenUsage,
 } from "@/lib/ws-chat";
+
+export type { ApprovalRequestMsg } from "@/lib/ws-chat";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 export type TransportMode = "browser" | "daily";
@@ -72,6 +75,64 @@ export type ChatLine = {
   content: string;
   historyTurnId?: string;
   historyCreatedAt?: string;
+  traceTurnId?: string;
+};
+
+/** A single event captured during an assistant turn — rendered in the
+ * collapsible details drawer (Cursor-style). The main line shows a
+ * derived "milestone" instead of these raw events. */
+export type ExecutionEvent = {
+  id: string;
+  kind: "skill" | "subagent" | "tool" | "approval";
+  name: string;
+  status:
+    | "running"
+    | "done"
+    | "error"
+    | "awaiting_approval"
+    | "approved"
+    | "denied"
+    | "expired"
+    | "cancelled";
+  /** Args (tool/subagent start) or result (terminal) — short preview for
+   * the drawer summary line; full content is held in `.detail`. */
+  preview?: string;
+  detail?: string;
+  errorCode?: string | null;
+  approvalId?: string | null;
+  durationMs?: number | null;
+  /** Optional confidence score (for ``kind: "skill"`` events). */
+  score?: number;
+  startedAt: number;
+};
+
+/** Compact milestone shown on the main line. Drawn from the *latest*
+ * approval, subagent, or tool event for that step. */
+export type ExecutionMilestone = {
+  id: string;
+  label: string;
+  status:
+    | "running"
+    | "done"
+    | "error"
+    | "awaiting_approval"
+    | "approved"
+    | "denied"
+    | "expired"
+    | "cancelled";
+};
+
+export type TurnExecution = {
+  /** Server-provided trace turn id (or null until `turn_started`). */
+  traceTurnId: string | null;
+  /** History turn id once persisted (`done.chat_turn_id`). */
+  chatTurnId: string | null;
+  milestones: ExecutionMilestone[];
+  events: ExecutionEvent[];
+  /** Currently-pending approval request so the inline card can render. */
+  pendingApproval: ApprovalRequestMsg | null;
+  /** Run-wide error captured from `error` frame or terminal failure. */
+  errorMessage: string | null;
 };
 
 export type ChatStep = {
@@ -105,6 +166,13 @@ export function useVoiceSession() {
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>({});
   const [steps, setSteps] = useState<ChatStep[]>([]);
+  /** Per-turn execution keyed by assistant ``ChatLine.id`` so each turn
+   * owns its own main-line + details panel — survives session switches
+   * (we clear on ``loadSession``). */
+  const [turnExecutions, setTurnExecutions] = useState<
+    Record<string, TurnExecution>
+  >({});
+  const currentAssistantLineRef = useRef<string | null>(null);
   const [lastVoiceDebug, setLastVoiceDebug] = useState<string | null>(null);
   // SSR-safe initial value: localStorage may be `true` on the client but the
   // server always returns `false` here. Reading the persisted flag inside a
@@ -130,6 +198,7 @@ export function useVoiceSession() {
   }, []);
 
   const wsRef = useRef(new WsChatClient());
+  const subagentCounterRef = useRef(0);
   const sttRef = useRef(new BrowserSTT());
   const dailyRef = useRef<DailyCall | null>(null);
   const assistantBuf = useRef("");
@@ -208,6 +277,7 @@ export function useVoiceSession() {
             content: turn.assistant_text,
             historyTurnId: turn.id,
             historyCreatedAt: turn.created_at,
+            traceTurnId: turn.trace_turn_id ?? undefined,
           },
         ];
       });
@@ -249,6 +319,83 @@ export function useVoiceSession() {
     [],
   );
 
+  const hydrateExecutionsFromTrace = useCallback(
+    async (sid: string) => {
+      try {
+        const { fetchAgentTrace } = await import("@/lib/ws-chat");
+        const events = await fetchAgentTrace({ sessionId: sid, limit: 500 });
+        if (!events.length) return;
+        type TraceEvent = (typeof events)[number];
+        const byTurn = new Map<string, TraceEvent[]>();
+        for (const ev of events) {
+          const arr = byTurn.get(ev.turn_id) ?? [];
+          arr.push(ev);
+          byTurn.set(ev.turn_id, arr);
+        }
+        setLines((prev) => {
+          const additions: Record<string, TurnExecution> = {};
+          for (const line of prev) {
+            if (line.role !== "assistant") continue;
+            const traceTurnId = line.traceTurnId;
+            if (!traceTurnId) continue;
+            const trace = byTurn.get(traceTurnId);
+            if (!trace || trace.length === 0) continue;
+            const events2: ExecutionEvent[] = trace
+              .filter((e) => e.kind !== "approval")
+              .map((e) => {
+                let status: ExecutionEvent["status"] = "running";
+                if (e.phase === "done" || (e.phase as string) === "result") {
+                  status = e.ok === false ? "error" : "done";
+                } else if (e.phase === "error") {
+                  status = "error";
+                }
+                let preview = "";
+                try {
+                  const parsed = JSON.parse(e.payload || "{}");
+                  preview =
+                    parsed.preview ||
+                    parsed.arguments_summary ||
+                    parsed.name ||
+                    e.name;
+                } catch {
+                  preview = e.name;
+                }
+                return {
+                  id: `${e.kind}-${e.id}`,
+                  kind: e.kind as ExecutionEvent["kind"],
+                  name: e.name,
+                  status,
+                  preview: String(preview).slice(0, 100),
+                  errorCode: e.error_code ?? null,
+                  durationMs: e.duration_ms ?? null,
+                  startedAt: e.started_at * 1000,
+                };
+              });
+            const milestones: ExecutionMilestone[] = events2.map((e) => ({
+              id: `m-${e.id}`,
+              label: `${e.kind}:${e.name}`,
+              status: e.status,
+            }));
+            additions[line.id] = {
+              traceTurnId,
+              chatTurnId: line.historyTurnId ?? null,
+              events: events2,
+              milestones,
+              pendingApproval: null,
+              errorMessage: null,
+            };
+          }
+          if (Object.keys(additions).length === 0) return prev;
+          setTurnExecutions((existing) => ({ ...existing, ...additions }));
+          return prev;
+        });
+      } catch {
+        /* trace hydration is best-effort; UI degrades to plain transcript */
+      }
+    },
+    [],
+  );
+
   const loadSession = useCallback(
     async (sid: string) => {
       historyLoadedRef.current = false;
@@ -257,15 +404,19 @@ export function useVoiceSession() {
       setLines([]);
       setHistoryNote(null);
       setHistoryHasMore(false);
+      setTurnExecutions({});
+      currentAssistantLineRef.current = null;
+      subagentCounterRef.current = 0;
       try {
         const payload = await fetchChatHistory(sid, { limit: 50 });
         applyHistoryPayload(payload, "replace");
+        await hydrateExecutionsFromTrace(sid);
       } catch {
         setHistoryNote(null);
       }
       void reloadSessions();
     },
-    [applyHistoryPayload, reloadSessions],
+    [applyHistoryPayload, hydrateExecutionsFromTrace, reloadSessions],
   );
 
   useEffect(() => {
@@ -688,10 +839,34 @@ export function useVoiceSession() {
       speechAggRef.current.setOnSoftFlush(enqueueChunks);
 
       const assistantId = `${Date.now()}-a`;
+      currentAssistantLineRef.current = assistantId;
+      setTurnExecutions((prev) => ({
+        ...prev,
+        [assistantId]: {
+          traceTurnId: null,
+          chatTurnId: null,
+          milestones: [],
+          events: [],
+          pendingApproval: null,
+          errorMessage: null,
+        },
+      }));
       setLines((prev) => [
         ...prev,
         { id: assistantId, role: "assistant", content: "" },
       ]);
+
+      const updateExecution = (
+        fn: (exec: TurnExecution) => TurnExecution,
+      ): void => {
+        const lineId = currentAssistantLineRef.current;
+        if (!lineId) return;
+        setTurnExecutions((prev) => {
+          const current = prev[lineId];
+          if (!current) return prev;
+          return { ...prev, [lineId]: fn(current) };
+        });
+      };
 
       try {
         setActiveSkills([]);
@@ -704,78 +879,223 @@ export function useVoiceSession() {
             onSkills: (names, scores, lazyCatalog) => {
               setActiveSkills(names);
               setSkillScores(scores ?? {});
-              const active = names.map((name, index) => ({
-                id: `skill-active-${name}`,
-                kind: "skill" as const,
-                name,
-                role: (index === 0 ? "primary" : "secondary") as
-                  | "primary"
-                  | "secondary",
-                status: "done" as const,
-                score: scores?.[name],
-              }));
-              const lazy = (lazyCatalog ?? [])
-                .filter((name) => !names.includes(name))
-                .map((name) => ({
-                  id: `skill-lazy-${name}`,
-                  kind: "skill" as const,
-                  name,
-                  role: "secondary" as const,
-                  status: "available" as const,
-                  detail: "按需加载",
-                }));
-              setSteps((prev) => [
-                ...active,
-                ...lazy,
-                ...prev.filter((step) => step.kind !== "skill"),
-              ]);
-            },
-            onSubagent: (ev) => {
-              const id = `subagent-${ev.name || "subagent"}`;
-              const detail =
-                ev.phase === "start"
-                  ? ev.task
-                  : (ev.summary || ev.error || "").trim().slice(0, 500);
-              setSteps((prev) => {
-                const next: ChatStep = {
-                  id,
-                  kind: "subagent",
-                  name: ev.name || "subagent",
-                  role: "secondary",
-                  status:
-                    ev.phase === "start"
-                      ? "running"
-                      : ev.ok === false
-                        ? "error"
-                        : "done",
-                  detail,
-                };
-                return [...prev.filter((step) => step.id !== id), next];
+              updateExecution((exec) => {
+                const next = { ...exec, events: [...exec.events] };
+                names.forEach((name) => {
+                  next.events.push({
+                    id: `skill-active-${name}`,
+                    kind: "skill",
+                    name,
+                    status: "done",
+                    score: scores?.[name],
+                    preview: scores?.[name]
+                      ? `${name} (${scores[name]!.toFixed(2)})`
+                      : name,
+                    startedAt: Date.now(),
+                  });
+                });
+                (lazyCatalog ?? [])
+                  .filter((name) => !names.includes(name))
+                  .forEach((name) => {
+                    next.events.push({
+                      id: `skill-lazy-${name}`,
+                      kind: "skill",
+                      name,
+                      status: "done",
+                      preview: `${name} (按需加载)`,
+                      detail: "按需加载",
+                      startedAt: Date.now(),
+                    });
+                  });
+                return next;
               });
             },
-            onTool: (ev) => {
+            onSubagent: (ev) => {
+              const name = ev.name || "subagent";
+              const eventId = `subagent-${name}-${subagentCounterRef.current++}`;
+              const preview =
+                ev.phase === "start"
+                  ? ev.task
+                    ? `→ ${ev.task.slice(0, 80)}`
+                    : `启动 ${name}`
+                  : ev.ok === false
+                    ? `失败：${ev.error || "未知错误"}`
+                    : (ev.summary || "").slice(0, 120);
               const detail =
                 ev.phase === "start"
+                  ? ev.task || ""
+                  : (ev.summary || ev.error || "").trim().slice(0, 1500);
+              updateExecution((exec) => ({
+                ...exec,
+                events: [
+                  ...exec.events,
+                  {
+                    id: eventId,
+                    kind: "subagent",
+                    name,
+                    status:
+                      ev.phase === "start"
+                        ? "running"
+                        : ev.ok === false
+                          ? "error"
+                          : "done",
+                    preview,
+                    detail,
+                    startedAt: Date.now(),
+                  },
+                ],
+                milestones: [
+                  ...exec.milestones.filter(
+                    (m) =>
+                      !(m.label.startsWith("subagent:") && m.label.includes(name)),
+                  ),
+                  {
+                    id: `milestone-subagent-${name}-${eventId}`,
+                    label: `subagent:${name}`,
+                    status:
+                      ev.phase === "start"
+                        ? "running"
+                        : ev.ok === false
+                          ? "error"
+                          : "done",
+                  },
+                ],
+              }));
+            },
+            onTool: (ev) => {
+              const eventId = `tool-${ev.id}`;
+              const preview =
+                ev.phase === "start"
                   ? ev.arguments
-                  : (ev.result || "").slice(0, 2000);
-              setSteps((prev) => {
-                const next: ChatStep = {
-                  id: `tool-${ev.id}`,
+                    ? ev.arguments.slice(0, 100)
+                    : `调用 ${ev.name}`
+                  : ev.ok
+                    ? ev.result
+                      ? `完成 (${ev.result.length} 字)`
+                      : "完成"
+                    : `失败：${ev.error_code || "tool_failed"}`;
+              const detail =
+                ev.phase === "start"
+                  ? ev.arguments ?? ""
+                  : ev.result ?? "";
+              const started = Date.now();
+              updateExecution((exec) => {
+                const next = { ...exec, events: [...exec.events] };
+                const existingIndex = next.events.findIndex((e) => e.id === eventId);
+                const newEvent: ExecutionEvent = {
+                  id: eventId,
                   kind: "tool",
                   name: ev.name,
-                  role: "secondary",
                   status:
                     ev.phase === "start"
                       ? "running"
                       : ev.ok
                         ? "done"
                         : "error",
+                  preview,
                   detail,
+                  errorCode: ev.error_code ?? null,
+                  approvalId: ev.approval_id ?? null,
+                  durationMs:
+                    ev.phase !== "start"
+                      ? existingIndex >= 0
+                        ? Math.max(0, started - next.events[existingIndex].startedAt)
+                        : null
+                      : null,
+                  startedAt:
+                    existingIndex >= 0 ? next.events[existingIndex].startedAt : started,
                 };
-                return [
-                  ...prev.filter((step) => step.id !== next.id),
-                  next,
-                ];
+                if (existingIndex >= 0) {
+                  next.events[existingIndex] = newEvent;
+                } else {
+                  next.events.push(newEvent);
+                }
+                return {
+                  ...next,
+                  milestones: [
+                    ...next.milestones.filter(
+                      (m) =>
+                        !(m.label.startsWith("tool:") && m.label.includes(ev.name)),
+                    ),
+                    {
+                      id: `milestone-tool-${ev.name}-${ev.id}`,
+                      label: `tool:${ev.name}`,
+                      status: newEvent.status,
+                    },
+                  ],
+                };
+              });
+            },
+            onApprovalRequest: (approval, followUp) => {
+              updateExecution((exec) => ({
+                ...exec,
+                pendingApproval: approval,
+                events: [
+                  ...exec.events,
+                  {
+                    id: `approval-${approval.id}`,
+                    kind: "approval",
+                    name: approval.tool_name,
+                    status: "awaiting_approval",
+                    preview: approval.arguments_summary,
+                    detail: approval.arguments_full,
+                    errorCode: null,
+                    approvalId: approval.id,
+                    startedAt: Date.now(),
+                  },
+                ],
+                milestones: [
+                  ...exec.milestones,
+                  {
+                    id: `milestone-approval-${approval.id}`,
+                    label: `approval:${approval.tool_name}`,
+                    status: "awaiting_approval",
+                  },
+                ],
+              }));
+              void followUp;
+            },
+            onApprovalResolved: (msg) => {
+              updateExecution((exec) => {
+                const cleared = msg.approval_id === exec.pendingApproval?.id
+                  ? { ...exec, pendingApproval: null }
+                  : exec;
+                const next = { ...cleared, events: [...cleared.events] };
+                const idx = next.events.findIndex(
+                  (e) => e.kind === "approval" && e.approvalId === msg.approval_id,
+                );
+                if (idx >= 0) {
+                  const status = msg.status;
+                  next.events[idx] = {
+                    ...next.events[idx],
+                    status:
+                      status === "approved"
+                        ? "approved"
+                        : status === "denied"
+                          ? "denied"
+                          : status === "expired"
+                            ? "expired"
+                            : "cancelled",
+                  };
+                }
+                const milestoneIdx = next.milestones.findIndex(
+                  (m) => m.id === `milestone-approval-${msg.approval_id}`,
+                );
+                if (milestoneIdx >= 0) {
+                  const status = msg.status;
+                  next.milestones[milestoneIdx] = {
+                    ...next.milestones[milestoneIdx],
+                    status:
+                      status === "approved"
+                        ? "approved"
+                        : status === "denied"
+                          ? "denied"
+                          : status === "expired"
+                            ? "expired"
+                            : "cancelled",
+                  };
+                }
+                return next;
               });
             },
             onToken: (token) => {
@@ -835,9 +1155,47 @@ export function useVoiceSession() {
                   };
                 });
               }
+              const lineId = currentAssistantLineRef.current;
+              if (lineId) {
+                if (info?.turn_id || info?.chat_turn_id) {
+                  const traceTurnId = info.turn_id;
+                  const chatTurnId = info.chat_turn_id;
+                  setTurnExecutions((prev) => {
+                    const exec = prev[lineId];
+                    if (!exec) return prev;
+                    return {
+                      ...prev,
+                      [lineId]: {
+                        ...exec,
+                        traceTurnId: traceTurnId ?? exec.traceTurnId,
+                        chatTurnId: chatTurnId ?? exec.chatTurnId,
+                      },
+                    };
+                  });
+                  if (chatTurnId) {
+                    setLines((prev) =>
+                      prev.map((l) =>
+                        l.id === lineId
+                          ? {
+                              ...l,
+                              traceTurnId: traceTurnId ?? l.traceTurnId,
+                              historyTurnId: chatTurnId ?? l.historyTurnId,
+                            }
+                          : l,
+                      ),
+                    );
+                  }
+                }
+                currentAssistantLineRef.current = null;
+              }
             },
             onError: (code, message) => {
-              setError(`${code}: ${message}`);
+              const errorText = `${code}: ${message}`;
+              setError(errorText);
+              updateExecution((exec) => ({
+                ...exec,
+                errorMessage: errorText,
+              }));
             },
           },
           memorySessionRef.current,
@@ -1000,6 +1358,30 @@ export function useVoiceSession() {
     startBrowserListening();
   }, [dailyConnected, postBargeIn, startBrowserListening]);
 
+  /* ── approval decision wiring ───────────────────────────────────── */
+
+  const sendApprovalDecision = useCallback(
+    (
+      approvalId: string,
+      decision: {
+        action: "approve" | "deny" | "cancel";
+        reason?: string;
+        confirm?: boolean;
+        remember?: "session" | "always" | null;
+      },
+    ): boolean => {
+      const payload = { ...decision };
+      if (payload.remember === null) {
+        delete (payload as { remember?: unknown }).remember;
+      }
+      return wsRef.current.sendApprovalDecision(approvalId, {
+        ...payload,
+        decided_by: "user",
+      } as Parameters<WsChatClient["sendApprovalDecision"]>[1]);
+    },
+    [],
+  );
+
   const pathLabel =
     mode === "daily" || dailyConnected
       ? "Daily 全双工"
@@ -1028,6 +1410,8 @@ export function useVoiceSession() {
     activeSkills,
     skillScores,
     steps,
+    turnExecutions,
+    sendApprovalDecision,
     lastVoiceDebug,
     historyNote,
     lastUsage,

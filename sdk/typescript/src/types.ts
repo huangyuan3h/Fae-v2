@@ -25,6 +25,11 @@ export type WsServerMessage =
       scores?: Record<string, number>;
     }
   | {
+      type: "turn_started";
+      turn_id: string;
+      session_id: string;
+    }
+  | {
       type: "subagent";
       phase: "start" | "done";
       name: string;
@@ -43,6 +48,7 @@ export type WsServerMessage =
       result?: string;
       approval_id?: string | null;
       approval_status?: string | null;
+      error_code?: string | null;
     }
   | {
       type: "approval_request";
@@ -62,6 +68,8 @@ export type WsServerMessage =
       type: "done";
       usage: TokenUsage | null;
       session_id?: string;
+      turn_id?: string;
+      chat_turn_id?: string;
       active_skills?: string[];
     }
   | {
@@ -184,6 +192,7 @@ export type ToolHandler = (msg: {
   result?: string;
   approval_id?: string | null;
   approval_status?: string | null;
+  error_code?: string | null;
 }) => void;
 
 export type ApprovalRequestHandler = (
@@ -195,7 +204,11 @@ export type ApprovalResolvedHandler = (msg: ApprovalResolvedMsg) => void;
 
 export type StreamHandlers = {
   onToken: (token: string) => void;
-  onDone?: (info?: { usage?: TokenUsage | null }) => void;
+  onDone?: (info?: {
+    usage?: TokenUsage | null;
+    turn_id?: string;
+    chat_turn_id?: string;
+  }) => void;
   onError: (code: string, message: string) => void;
   onSkills?: (
     active: string[],
@@ -247,6 +260,7 @@ export type ChatHistoryTurn = {
   user_text: string;
   assistant_text: string;
   created_at: string;
+  trace_turn_id?: string | null;
 };
 
 export type ChatHistory = {

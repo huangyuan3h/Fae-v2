@@ -41,7 +41,11 @@ _VALID_KINDS = frozenset({KIND_TOOL, KIND_SUBAGENT, KIND_SKILL, KIND_APPROVAL})
 PHASE_START = "start"
 PHASE_DONE = "done"
 PHASE_ERROR = "error"
-_VALID_PHASES = frozenset({PHASE_START, PHASE_DONE, PHASE_ERROR})
+PHASE_RESULT = "result"
+_VALID_PHASES = frozenset({PHASE_START, PHASE_DONE, PHASE_ERROR, PHASE_RESULT})
+# ``result`` is the live wire phase emitted by tool/subagent runtimes;
+# we treat it as a terminal marker and normalize to PHASE_DONE or
+# PHASE_ERROR based on the ``ok`` flag at write time.
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,20 @@ class AgentTraceStore:
                   ON agent_trace_events (session_id, started_at, id);
                 """
             )
+            columns = {
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(agent_trace_events)"
+                ).fetchall()
+            }
+            if "finished_at" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE agent_trace_events ADD COLUMN finished_at REAL"
+                )
+            if "duration_ms" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE agent_trace_events ADD COLUMN duration_ms REAL"
+                )
             self._conn.commit()
 
     def record_event(
@@ -152,15 +170,67 @@ class AgentTraceStore:
         if raw_ok is not None:
             ok_value = 1 if bool(raw_ok) else 0
         error_code = safe_text(event.get("error_code")) or None
-        if phase == PHASE_ERROR and not error_code:
+        if phase == PHASE_RESULT:
+            normalized_phase = PHASE_DONE if ok_value == 1 or raw_ok is True else PHASE_ERROR
+        else:
+            normalized_phase = phase
+        finished_at: float | None = None
+        duration_ms: float | None = None
+        if normalized_phase in (PHASE_DONE, PHASE_ERROR):
+            finished_at = now
+            # Lookup the most-recent matching start row to compute elapsed time.
+            with self._lock:
+                start_row = self._conn.execute(
+                    """
+                    SELECT started_at FROM agent_trace_events
+                    WHERE turn_id = ?
+                      AND kind = ?
+                      AND name = ?
+                      AND phase = 'start'
+                      AND id = (
+                        SELECT MAX(id) FROM agent_trace_events
+                        WHERE turn_id = ?
+                          AND kind = ?
+                          AND name = ?
+                          AND phase = 'start'
+                      )
+                    """,
+                    (tid, kind, name, tid, kind, name),
+                ).fetchone()
+                if start_row is not None:
+                    duration_ms = max(0.0, (finished_at - float(start_row["started_at"])) * 1000)
+        if normalized_phase == PHASE_ERROR and not error_code:
             error_code = "tool_failed"
         with self._lock:
+            if finished_at is not None:
+                start_row = self._conn.execute(
+                    """
+                    SELECT started_at FROM agent_trace_events
+                    WHERE turn_id = ?
+                      AND kind = ?
+                      AND name = ?
+                      AND phase = 'start'
+                      AND id = (
+                        SELECT MAX(id) FROM agent_trace_events
+                        WHERE turn_id = ?
+                          AND kind = ?
+                          AND name = ?
+                          AND phase = 'start'
+                      )
+                    """,
+                    (tid, kind, name, tid, kind, name),
+                ).fetchone()
+                if start_row is not None:
+                    duration_ms = max(
+                        0.0, (finished_at - float(start_row["started_at"])) * 1000
+                    )
             self._conn.execute(
                 """
                 INSERT INTO agent_trace_events
                   (turn_id, session_id, channel, channel_id, kind, phase,
-                   name, payload, started_at, ok, error_code)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   name, payload, started_at, finished_at, duration_ms,
+                   ok, error_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tid,
@@ -168,10 +238,12 @@ class AgentTraceStore:
                     source,
                     channel_id,
                     kind,
-                    phase,
+                    normalized_phase,
                     name,
                     payload,
                     now,
+                    finished_at,
+                    duration_ms,
                     ok_value,
                     error_code,
                 ),

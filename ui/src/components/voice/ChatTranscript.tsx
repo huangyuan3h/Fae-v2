@@ -3,9 +3,13 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { ChatLine } from "@/hooks/useVoiceSession";
+import type {
+  ChatLine,
+  TurnExecution,
+} from "@/hooks/useVoiceSession";
 import { normalizeMarkdownForDisplay } from "@/lib/markdown-display";
 import { isThinkingStreaming, stripThinking } from "@/lib/strip-thinking";
+import { ExecutionView } from "./ExecutionView";
 
 const mdClassName =
   "fae-md mt-1 block w-full " +
@@ -28,12 +32,25 @@ function roleLabel(role: ChatLine["role"]): string {
   return "FAE";
 }
 
+type ApprovalHandlers = {
+  onApprove?: (
+    approvalId: string,
+    decision: { remember?: "session" | "always" | null; confirm?: boolean },
+  ) => void;
+  onDeny?: (approvalId: string) => void;
+  onCancel?: (approvalId: string) => void;
+};
+
 export function ChatTranscript({
   lines,
   partial,
+  turnExecutions,
+  approval,
 }: {
   lines: ChatLine[];
   partial: string;
+  turnExecutions: Record<string, TurnExecution>;
+  approval?: ApprovalHandlers;
 }) {
   return (
     <div
@@ -48,47 +65,57 @@ export function ChatTranscript({
         const thinking =
           line.role === "assistant" && isThinkingStreaming(line.content);
         const isSystem = line.role === "system";
+        const execution =
+          line.role === "assistant" ? turnExecutions[line.id] : undefined;
         return (
-          <div
-            key={line.id}
-            data-testid={`chat-line-${line.role}`}
-            className="text-[15px] leading-relaxed"
-            style={{
-              color: isSystem
-                ? "var(--ink-soft)"
-                : line.role === "user"
-                  ? "var(--ink)"
-                  : "var(--ink-soft)",
-              fontFamily: "var(--font-body)",
-              opacity: isSystem ? 0.9 : 1,
-              background: isSystem ? "rgba(0,0,0,0.03)" : undefined,
-              borderRadius: isSystem ? 12 : undefined,
-              padding: isSystem ? "8px 12px" : undefined,
-            }}
-          >
-            <span
-              className="mr-2 text-xs uppercase tracking-wider"
+          <div key={line.id} data-testid={`chat-line-${line.role}`}>
+            <div
+              className="text-[15px] leading-relaxed"
               style={{
-                color: isSystem ? "var(--ink-soft)" : "var(--accent)",
-                fontFamily: "var(--font-display)",
+                color: isSystem
+                  ? "var(--ink-soft)"
+                  : line.role === "user"
+                    ? "var(--ink)"
+                    : "var(--ink-soft)",
+                fontFamily: "var(--font-body)",
+                opacity: isSystem ? 0.9 : 1,
+                background: isSystem ? "rgba(0,0,0,0.03)" : undefined,
+                borderRadius: isSystem ? 12 : undefined,
+                padding: isSystem ? "8px 12px" : undefined,
               }}
             >
-              {roleLabel(line.role)}
-            </span>
-            {line.role === "assistant" ? (
-              visible ? (
-                <div className={mdClassName}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {visible}
-                  </ReactMarkdown>
-                </div>
-              ) : thinking ? (
-                <span className="opacity-70">思考中…</span>
+              <span
+                className="mr-2 text-xs uppercase tracking-wider"
+                style={{
+                  color: isSystem ? "var(--ink-soft)" : "var(--accent)",
+                  fontFamily: "var(--font-display)",
+                }}
+              >
+                {roleLabel(line.role)}
+              </span>
+              {line.role === "assistant" ? (
+                visible ? (
+                  <div className={mdClassName}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {visible}
+                    </ReactMarkdown>
+                  </div>
+                ) : thinking ? (
+                  <span className="opacity-70">思考中…</span>
+                ) : (
+                  "…"
+                )
               ) : (
-                "…"
-              )
-            ) : (
-              line.content || "…"
+                line.content || "…"
+              )}
+            </div>
+            {execution && (
+              <ExecutionView
+                execution={execution}
+                onApprove={approval?.onApprove}
+                onDeny={approval?.onDeny}
+                onCancel={approval?.onCancel}
+              />
             )}
           </div>
         );

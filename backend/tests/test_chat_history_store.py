@@ -14,8 +14,8 @@ from fae.chat_history import ChatHistoryStore, chat_history_cleanup_loop
 def test_append_and_list_round_trip(tmp_path: Path) -> None:
     store = ChatHistoryStore(tmp_path / "history.db", retention_days=7)
     try:
-        first = store.append("sess", "你好", "你好呀")
-        second = store.append("sess", "今天天气", "晴 25 度")
+        first = store.append("sess", "你好", "你好呀", trace_turn_id="turn-1")
+        second = store.append("sess", "今天天气", "晴 25 度", trace_turn_id="turn-2")
         store.append("other", "noise", "应当忽略")
 
         turns = store.list("sess")
@@ -24,6 +24,8 @@ def test_append_and_list_round_trip(tmp_path: Path) -> None:
         assert turns[0].created_at <= turns[1].created_at
         assert turns[0].id == first.id
         assert turns[1].id == second.id
+        assert turns[0].trace_turn_id == "turn-1"
+        assert turns[1].trace_turn_id == "turn-2"
     finally:
         store.close()
 

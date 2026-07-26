@@ -22,6 +22,11 @@ function withAccessToken(wsUrl: string, token?: string): string {
   return `${wsUrl}${sep}access_token=${encodeURIComponent(t)}`;
 }
 
+export type TurnStartedHandler = (msg: {
+  turn_id: string;
+  session_id: string;
+}) => void;
+
 export class WsChatClient {
   private ws: WebSocket | null = null;
   private activeCleanup: (() => void) | null = null;
@@ -29,6 +34,7 @@ export class WsChatClient {
   private notifyHandler: NotifyHandler | null = null;
   private approvalRequestHandler: ApprovalRequestHandler | null = null;
   private approvalResolvedHandler: ApprovalResolvedHandler | null = null;
+  private turnStartedHandler: TurnStartedHandler | null = null;
 
   constructor(private readonly url: string) {}
 
@@ -42,6 +48,10 @@ export class WsChatClient {
 
   setApprovalResolvedHandler(handler: ApprovalResolvedHandler | null) {
     this.approvalResolvedHandler = handler;
+  }
+
+  setTurnStartedHandler(handler: TurnStartedHandler | null) {
+    this.turnStartedHandler = handler;
   }
 
   sendApprovalDecision(
@@ -117,6 +127,11 @@ export class WsChatClient {
             error: msg.error,
             summary: msg.summary,
           });
+        } else if (msg.type === "turn_started") {
+          this.turnStartedHandler?.({
+            turn_id: msg.turn_id,
+            session_id: msg.session_id,
+          });
         } else if (msg.type === "tool") {
           handlers.onTool?.({
             phase: msg.phase,
@@ -127,6 +142,7 @@ export class WsChatClient {
             result: msg.result,
             approval_id: msg.approval_id,
             approval_status: msg.approval_status,
+            error_code: msg.error_code ?? null,
           });
         } else if (msg.type === "approval_request") {
           handlers.onApprovalRequest?.(msg.approval, msg.follow_up);
@@ -157,7 +173,11 @@ export class WsChatClient {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {
           cleanup();
-          handlers.onDone?.({ usage: msg.usage ?? null });
+          handlers.onDone?.({
+            usage: msg.usage ?? null,
+            turn_id: msg.turn_id,
+            chat_turn_id: msg.chat_turn_id,
+          });
           resolve();
         } else if (msg.type === "error") {
           cleanup();

@@ -191,15 +191,23 @@ async def _run_stream(
             if proactive is not None and hasattr(proactive, "resync"):
                 proactive.resync()
 
-        async def _on_subagent(ev: dict) -> None:
-            await _send(ws, ev)
-
         turn_id = new_turn_id()
+        # Emit turn_started BEFORE any tool/subagent can fire so FE can
+        # bind a per-turn execution view to the upcoming assistant line.
+        await _send(
+            ws,
+            {
+                "type": "turn_started",
+                "turn_id": turn_id,
+                "session_id": session_id,
+            },
+        )
         audit_tool = make_tool_audit_callback(
             ws.app.state.tool_audit,
             session_id=session_id,
             channel="ws",
             channel_id=str(id(ws)),
+            turn_id=turn_id,
         )
         trace_tool = make_agent_trace_callback(
             ws.app.state.agent_trace,
@@ -208,6 +216,10 @@ async def _run_stream(
             channel="ws",
             channel_id=str(id(ws)),
         )
+
+        async def _on_subagent(ev: dict) -> None:
+            await _send(ws, ev)
+            await trace_tool(ev)
 
         async def _on_tool(ev: dict) -> None:
             await _send(ws, ev)
@@ -262,11 +274,12 @@ async def _run_stream(
         usage_payload: dict[str, int] | None = None
         if stream_usage is not None:
             usage_payload = stream_usage.model_dump(exclude_none=True)
-        await persist_chat_history_turn(
+        chat_turn = await persist_chat_history_turn(
             ws.app,
             session_id=session_id,
             user_text=user_text,
             assistant_text=assistant_text,
+            trace_turn_id=turn_id,
         )
         if memory is not None and memory.enabled and user_text:
             await memory.persist_turn(
@@ -284,6 +297,8 @@ async def _run_stream(
                 "type": "done",
                 "usage": usage_payload,
                 "session_id": session_id,
+                "turn_id": turn_id,
+                "chat_turn_id": getattr(chat_turn, "id", None),
                 "active_skills": last_active,
             },
         )
@@ -291,7 +306,13 @@ async def _run_stream(
         await _send(ws, {"type": "error", "code": e.code, "message": e.message})
     except asyncio.CancelledError:
         await _send(
-            ws, {"type": "done", "usage": None, "session_id": session_id}
+            ws,
+            {
+                "type": "done",
+                "usage": None,
+                "session_id": session_id,
+                "turn_id": turn_id,
+            },
         )
         raise
     except Exception as e:  # noqa: BLE001 — last-resort

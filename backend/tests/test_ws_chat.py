@@ -183,3 +183,33 @@ async def test_ws_chat_cancel_stops_stream() -> None:
                 if msg["type"] == "done":
                     return
             pytest.fail("did not receive done after cancel")
+
+
+async def test_ws_chat_emits_turn_started_and_done_turn_id() -> None:
+    """`turn_started` fires before any tokens; `done` carries ``turn_id``
+    and ``chat_turn_id`` so the FE can join the trace to a chat turn."""
+    fake = FakeProvider(tokens=["你", "好"], echo=False)
+    app = create_app(llm_client=LLMClient(provider=fake))
+
+    with _running_server(app) as url:
+        async with websockets.connect(url) as ws:
+            await ws.send(
+                '{"type":"chat","request":{'
+                '"config":{"base_url":"http://x","api_key":"k","model":"m"},'
+                '"messages":[{"role":"user","content":"hi"}],'
+                '"session_id":"ws-turn"}}'
+            )
+            turn_started_id: str | None = None
+            done_payload: dict | None = None
+            for _ in range(20):
+                raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                msg = json.loads(raw)
+                if msg["type"] == "turn_started":
+                    turn_started_id = msg["turn_id"]
+                elif msg["type"] == "done":
+                    done_payload = msg
+                    break
+            assert turn_started_id
+            assert done_payload is not None
+            assert done_payload["turn_id"] == turn_started_id
+            assert done_payload["chat_turn_id"]  # uuid string
