@@ -48,6 +48,8 @@ function HomeContent() {
     steps,
     lastVoiceDebug,
     historyNote,
+    lastUsage,
+    usageTotals,
     dailyConnected,
     support,
     sendText,
@@ -88,6 +90,32 @@ function HomeContent() {
       })
       .join(", ");
   }, [activeSkills, skillScores]);
+
+  const usageLabel = useMemo(() => {
+    if (!lastUsage) return null;
+    const parts: string[] = [];
+    if (lastUsage.prompt_tokens != null) {
+      parts.push(`prompt ${lastUsage.prompt_tokens}`);
+    }
+    if (lastUsage.completion_tokens != null) {
+      parts.push(`out ${lastUsage.completion_tokens}`);
+    }
+    if (lastUsage.cached_tokens != null && lastUsage.cached_tokens > 0) {
+      const total = lastUsage.prompt_tokens ?? lastUsage.cached_tokens;
+      const ratio = total > 0 ? Math.round((lastUsage.cached_tokens / total) * 100) : 0;
+      parts.push(`cache ${lastUsage.cached_tokens} (${ratio}%)`);
+    }
+    return parts.length ? `tokens: ${parts.join(" / ")}` : null;
+  }, [lastUsage]);
+
+  const totalUsageLabel = useMemo(() => {
+    if (!usageTotals) return null;
+    const p = usageTotals.prompt_tokens ?? 0;
+    const c = usageTotals.cached_tokens ?? 0;
+    if (p === 0 && c === 0) return null;
+    const ratio = p > 0 ? Math.round((c / p) * 100) : 0;
+    return `累计 prompt ${p} / cache ${c} (${ratio}%)`;
+  }, [usageTotals]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -168,6 +196,16 @@ function HomeContent() {
             {ttsMode ? ` · ${ttsMode}` : ""}
             {historyNote ? ` · ${historyNote}` : ""}
           </p>
+          {(usageLabel || totalUsageLabel) && (
+            <p
+              className="mt-1 hidden text-xs text-[var(--ink-soft)] sm:block"
+              data-testid="usage-summary"
+            >
+              {usageLabel}
+              {usageLabel && totalUsageLabel ? " · " : ""}
+              {totalUsageLabel}
+            </p>
+          )}
           {debug && (
             <p
               className="mt-2 rounded-lg bg-black/[0.04] px-3 py-2 font-mono text-[11px] text-[var(--ink-soft)]"

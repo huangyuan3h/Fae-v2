@@ -84,6 +84,11 @@ export type ChatStep = {
   score?: number;
 };
 
+function addOrUndef(base: number | undefined, delta: number | undefined): number | undefined {
+  if (delta == null) return base;
+  return (base ?? 0) + delta;
+}
+
 export function useVoiceSession() {
   const [config, setConfigState] = useState<AgentConfig>(() => syncActiveConfig());
   const [orb, setOrb] = useState<OrbState>("idle");
@@ -113,6 +118,8 @@ export function useVoiceSession() {
   const [retentionDays, setRetentionDays] = useState(7);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null);
+  const [usageTotals, setUsageTotals] = useState<TokenUsage | null>(null);
   // Final transcript queued by the STT callback; consumed by an Effect so the
   // latest `sendText` is always used without mutating a Ref.
   const [pendingText, setPendingText] = useState<string | null>(null);
@@ -798,10 +805,36 @@ export function useVoiceSession() {
                 /* TTS path must never break token display */
               }
             },
-            onDone: () => {
+            onDone: (info) => {
               speechAggRef.current.clearTimer();
               const leftover = speechAggRef.current.flush();
               if (leftover) enqueueChunks([leftover]);
+              const usage = info?.usage ?? null;
+              if (usage) {
+                setLastUsage(usage);
+                setUsageTotals((prev: TokenUsage | null) => {
+                  const base: TokenUsage = prev ?? {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    cached_tokens: 0,
+                  };
+                  return {
+                    prompt_tokens: addOrUndef(
+                      base.prompt_tokens, usage.prompt_tokens,
+                    ),
+                    completion_tokens: addOrUndef(
+                      base.completion_tokens, usage.completion_tokens,
+                    ),
+                    total_tokens: addOrUndef(
+                      base.total_tokens, usage.total_tokens,
+                    ),
+                    cached_tokens: addOrUndef(
+                      base.cached_tokens, usage.cached_tokens,
+                    ),
+                  };
+                });
+              }
             },
             onError: (code, message) => {
               setError(`${code}: ${message}`);
@@ -997,6 +1030,8 @@ export function useVoiceSession() {
     steps,
     lastVoiceDebug,
     historyNote,
+    lastUsage,
+    usageTotals,
     preferDaily,
     setPreferDaily,
     dailyConnected,
