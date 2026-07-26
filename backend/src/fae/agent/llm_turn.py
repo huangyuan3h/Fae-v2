@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
-from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL, dispatch_run_subagent
+from fae.agent.subagents.tools import dispatch_run_subagent
 from fae.agent.tool_offload import ToolOffloader, maybe_offload_result
 from fae.approvals import (
     ApprovalStore,
@@ -23,17 +23,19 @@ from fae.approvals import (
 from fae.llm.client import LLMClient
 from fae.llm.types import ChatMessage, ChatRequest, ChatResponse
 from fae.pipecat.services.letta_memory import LettaMemoryService
-from fae.scheduler.tools import SCHEDULE_TOOLS, dispatch_schedule_tool
+from fae.scheduler.tools import dispatch_schedule_tool
 from fae.tool_registry import (
     EffectivePolicy,
     PolicyDecision,
     diff_preview_for,
+    iter_openai_schemas,
     resolve_policy,
+    specs_in_group,
 )
-from fae.tools.bash import BASH_TOOLS, dispatch_bash_tool
-from fae.tools.filesystem import FILESYSTEM_TOOLS, dispatch_filesystem_tool
-from fae.tools.git import GIT_TOOLS, dispatch_git_tool
-from fae.tools.weather import WEATHER_TOOLS, dispatch_weather_tool
+from fae.tools.bash import dispatch_bash_tool
+from fae.tools.filesystem import dispatch_filesystem_tool
+from fae.tools.git import dispatch_git_tool
+from fae.tools.weather import dispatch_weather_tool
 
 if TYPE_CHECKING:
     from fae.scheduler.store import ScheduleStore
@@ -42,22 +44,24 @@ logger = logging.getLogger("fae.agent.skills")
 
 _MAX_TOOL_ROUNDS = 6
 
-_SCHEDULE_TOOL_NAMES = {
-    "schedule_create_job",
-    "list_jobs",
-    "cancel_job",
-}
-
-_WEATHER_TOOL_NAMES = {"get_weather"}
-_FILESYSTEM_TOOL_NAMES = {
-    "read_file",
-    "search_files",
-    "make_directory",
-    "write_file",
-    "edit_file",
-}
-_BASH_TOOL_NAMES = {"run_bash"}
-_GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log"}
+# Tool-name allow-lists derived from the unified registry. The registry owns
+# the canonical list per group; we freeze them at import time so dispatchers
+# can do O(1) membership tests without locking.
+_SCHEDULE_TOOL_NAMES: frozenset[str] = frozenset(
+    s.name for s in specs_in_group("schedule")
+)
+_WEATHER_TOOL_NAMES: frozenset[str] = frozenset(
+    s.name for s in specs_in_group("weather")
+)
+_FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
+    s.name for s in specs_in_group("filesystem")
+)
+_BASH_TOOL_NAMES: frozenset[str] = frozenset(
+    s.name for s in specs_in_group("bash")
+)
+_GIT_TOOL_NAMES: frozenset[str] = frozenset(
+    s.name for s in specs_in_group("git")
+)
 
 OnSubagentEvent = Callable[[dict[str, Any]], Awaitable[None]]
 OnToolEvent = Callable[[dict[str, Any]], Awaitable[None]]
@@ -134,19 +138,25 @@ def _merge_tools(
     bash_enabled: bool = False,
     git_enabled: bool = False,
 ) -> list[dict]:
+    """Compose the LLM-facing tool list from skill + feature flags.
+
+    Tools are sourced from the unified registry (``fae.tool_registry``); the
+    registry owns the OpenAI schemas and policy metadata, while feature
+    flags map to registry groups.
+    """
     tools = list(activation.tools or [])
     if schedule_store is not None:
-        _append_unique_tools(tools, SCHEDULE_TOOLS)
+        _append_unique_tools(tools, list(iter_openai_schemas("schedule")))
     if weather_enabled:
-        _append_unique_tools(tools, WEATHER_TOOLS)
+        _append_unique_tools(tools, list(iter_openai_schemas("weather")))
     if attach_subagent:
-        _append_unique_tools(tools, [RUN_SUBAGENT_TOOL])
+        _append_unique_tools(tools, list(iter_openai_schemas("subagent")))
     if filesystem_enabled:
-        _append_unique_tools(tools, FILESYSTEM_TOOLS)
+        _append_unique_tools(tools, list(iter_openai_schemas("filesystem")))
     if bash_enabled:
-        _append_unique_tools(tools, BASH_TOOLS)
+        _append_unique_tools(tools, list(iter_openai_schemas("bash")))
     if git_enabled:
-        _append_unique_tools(tools, GIT_TOOLS)
+        _append_unique_tools(tools, list(iter_openai_schemas("git")))
     return tools
 
 

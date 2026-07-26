@@ -124,14 +124,7 @@
 
 ### 统一 Tool Registry
 
-- **状态**：部分实现
-- **重要等级**：P1
-- **收益程度**：高
-- **预计时间**：1 周
-- **改动量**：大
-- **已有**：文件读写、受限 Bash、只读 Git、天气、日程和 Subagent 工具。
-- **待做**：统一管理 name、schema、权限级、timeout、read-only/mutating、确认策略、可用 channel 和结构化输出类型。
-- **验收**：所有工具通过同一个 Registry 注册和发现，API 能返回完整工具元数据。
+- **状态**：已完成（归档见 `doc/archive/TOOL_REGISTRY.md`）
 
 ### Sensitive / Dangerous 操作确认
 

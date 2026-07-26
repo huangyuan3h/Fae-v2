@@ -1,20 +1,28 @@
-"""Single source of truth for tool metadata + risk classification.
+"""Single source of truth for tool metadata, risk classification, and OpenAI schemas.
 
-Each tool exposed to the LLM has a ``ToolSpec`` describing:
+The registry owns:
 
-- ``risk_tier`` — safe / caution / sensitive / dangerous.
-- ``side_effects`` — short tags for logs/UI (``fs.write``, ``proc.exec``...).
-- ``requires_approval`` — when True, every invocation must pass through
-  ``fae.approvals.request_approval`` (or an explicit session preauthorization).
-- ``needs_diff_preview`` / ``needs_double_confirm`` — UI affordances.
-- ``default_ttl_s`` — default time-to-live before a pending approval expires.
-- ``channel_allowlist`` — channels allowed to invoke this tool (None = all).
+- Static ``ToolSpec`` catalog (name / group / schema / risk tier / approval policy).
+- Plugin-style ``register_tool(spec)`` and idempotent ``reset_registry()``.
+- Discovery helpers: ``known_tool_names``, ``groups``, ``specs_in_group``,
+  ``iter_openai_schemas(group=...)``.
+- Policy resolution: ``EffectivePolicy``, ``PolicyDecision``,
+  ``resolve_policy(policy, name, channel=...)``.
+- Capability/diff helpers: ``specs_for_capabilities``, ``diff_preview_for``,
+  ``canonical_args_hash``.
 
-A registry here is intentionally narrow: the existing ``BASH_TOOLS`` /
-``FILESYSTEM_TOOLS`` / ``GIT_TOOLS`` schema dicts remain where they are;
-this module just feeds metadata into the policy resolver and capability
-endpoints. Plan Mode's "统一 Tool Registry" work can promote these into a
-schema-factory without breaking policy callers.
+OpenAI-style tool **schemas** live in their feature modules
+(``fae.tools.{filesystem,bash,git,weather}``, ``fae.scheduler.tools``,
+``fae.agent.subagents.tools``, ``fae.agent.skills_runtime``) so each module
+remains self-contained. The registry imports these schema lists at import
+time and pairs them with policy metadata, making it the single place to
+declare a tool's risk tier and approval requirements.
+
+Domain dispatchers (``dispatch_filesystem_tool`` / ``dispatch_bash_tool`` / ...)
+remain in their respective modules because each has distinct context
+dependencies (sync vs async, executor pool, schedule store, subagent runtime).
+What this module unifies is the *registration + metadata* surface; dispatch
+composition is intentionally left untouched.
 """
 
 from __future__ import annotations
@@ -23,13 +31,12 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 logger = logging.getLogger("fae.tool_registry")
 
 RiskTier = Literal["safe", "caution", "sensitive", "dangerous"]
 
-# Side-effect tags. Free-form strings; UI/capability endpoint exposes them.
 SideEffect = Literal[
     "fs.read",
     "fs.write",
@@ -43,163 +50,288 @@ SideEffect = Literal[
 ]
 
 
+def _openai_tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    """Construct an OpenAI-style tool entry from its components."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class ToolSpec:
-    """Static metadata for one tool.
+    """Static metadata + OpenAI schema for one tool.
 
-    ``risk_tier`` is set explicitly — it is the policy anchor. Tools that
-    are not in ``TOOL_SPECS`` default to ``risk_tier="safe"`` *and*
-    ``requires_approval=False`` (defensive: future tools that someone forgets
-    to register cannot accidentally bypass approval).
+    ``risk_tier`` is the policy anchor. ``group`` is a routing label that maps
+    to a feature module (filesystem / bash / git / weather / schedule /
+    subagent / skill); the LLM-facing schema list is built by iterating
+    ``specs_in_group(g)``. ``schema`` is the OpenAI ``function`` body —
+    ``{name, description, parameters}`` — and is the single source of truth
+    that flows back out via ``to_openai()``.
     """
 
     name: str
     risk_tier: RiskTier
+    group: str
+    schema: dict[str, Any]
     side_effects: tuple[str, ...] = ()
     requires_approval: bool = False
     needs_diff_preview: bool = False
     needs_double_confirm: bool = False
     default_ttl_s: float = 60.0
     double_confirm_window_s: float = 5.0
-    channel_allowlist: frozenset[str] | None = None  # None = all
-    description: str = ""
+    channel_allowlist: frozenset[str] | None = None
+
+    @property
+    def description(self) -> str:
+        return self.schema.get("description", "")
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self.schema.get("parameters", {"type": "object", "properties": {}})
+
+    def to_openai(self) -> dict[str, Any]:
+        return _openai_tool(self.name, self.description, self.parameters)
 
 
 # ── Catalog ─────────────────────────────────────────────────────────────
-# When adding a new tool, also add an entry here so approvals / capabilities
-# learn its risk tier. ``register_tool`` below enforces this at runtime.
-
-_TOOL_SPECS: dict[str, ToolSpec] = {
-    # ── filesystem ────────────────────────────────────────────────────
-    "read_file": ToolSpec(
-        "read_file",
-        "safe",
-        side_effects=("fs.read",),
-        description="Read a UTF-8 text file inside the workspace.",
-    ),
-    "search_files": ToolSpec(
-        "search_files",
-        "safe",
-        side_effects=("fs.read",),
-        description="ripgrep-style search inside the workspace.",
-    ),
-    "make_directory": ToolSpec(
-        "make_directory",
-        "caution",
-        side_effects=("fs.mkdir",),
-        description="Create a directory inside the workspace.",
-    ),
-    "write_file": ToolSpec(
-        "write_file",
-        "sensitive",
-        side_effects=("fs.write",),
-        requires_approval=True,
-        needs_diff_preview=True,
-        default_ttl_s=60.0,
-        description="Write UTF-8 text to a file inside the workspace.",
-    ),
-    "edit_file": ToolSpec(
-        "edit_file",
-        "sensitive",
-        side_effects=("fs.write",),
-        requires_approval=True,
-        needs_diff_preview=True,
-        default_ttl_s=60.0,
-        description="Apply an old→new text replacement inside a file.",
-    ),
-    # ── bash ──────────────────────────────────────────────────────────
-    "run_bash": ToolSpec(
-        "run_bash",
-        "sensitive",
-        side_effects=("proc.exec",),
-        requires_approval=True,
-        default_ttl_s=60.0,
-        description="Execute a whitelisted binary inside the workspace.",
-    ),
-    # ── git (read-only today; mutating variants reserved for later) ───
-    "git_status": ToolSpec(
-        "git_status",
-        "safe",
-        description="git status --porcelain",
-    ),
-    "git_diff": ToolSpec(
-        "git_diff",
-        "safe",
-        description="git diff (read-only)",
-    ),
-    "git_log": ToolSpec(
-        "git_log",
-        "safe",
-        description="git log (read-only)",
-    ),
-    # ── scheduler ────────────────────────────────────────────────────
-    "schedule_create_job": ToolSpec(
-        "schedule_create_job",
-        "caution",
-        side_effects=("schedule.write", "state.mutate"),
-        description="Create a new scheduled job.",
-    ),
-    "list_jobs": ToolSpec(
-        "list_jobs",
-        "safe",
-        description="List scheduled jobs.",
-    ),
-    "cancel_job": ToolSpec(
-        "cancel_job",
-        "sensitive",
-        side_effects=("state.mutate",),
-        requires_approval=True,
-        default_ttl_s=60.0,
-        description="Cancel an active scheduled job.",
-    ),
-    # ── skills / subagents / weather ──────────────────────────────────
-    "request_skill": ToolSpec(
-        "request_skill",
-        "safe",
-        description="Lazily load a skill into the active skill set.",
-    ),
-    "run_subagent": ToolSpec(
-        "run_subagent",
-        "caution",
-        side_effects=("memory.write",),
-        description="Run a sub-agent (no tools allowed) to gather context.",
-    ),
-    "get_weather": ToolSpec(
-        "get_weather",
-        "safe",
-        side_effects=("net.out",),
-        description="Open-Meteo weather lookup (HTTPS GET, no API key).",
-    ),
-}
+_TOOL_SPECS: dict[str, ToolSpec] = {}
 
 
-def register_tool(spec: ToolSpec) -> ToolSpec:
-    """Insert (or replace) a ``ToolSpec``. Returns the previous value or None.
+def _spec_from(
+    schema: dict[str, Any],
+    group: str,
+    *,
+    risk_tier: RiskTier = "safe",
+    side_effects: tuple[str, ...] = (),
+    requires_approval: bool = False,
+    needs_diff_preview: bool = False,
+    needs_double_confirm: bool = False,
+    default_ttl_s: float = 60.0,
+    double_confirm_window_s: float = 5.0,
+    channel_allowlist: frozenset[str] | None = None,
+) -> ToolSpec:
+    """Build a ``ToolSpec`` from an OpenAI-style ``{type:function, function:{...}}``.
 
-    Tests use this to inject temporary specs; production callers should
-    prefer the static catalog. Always keep this idempotent.
+    ``risk_tier`` and approval metadata are policy decisions; this helper is
+    the only place to set them when registering schemas imported from
+    feature modules.
     """
+    func = schema.get("function")
+    if not isinstance(func, dict):
+        raise ValueError(f"schema missing 'function' body: {schema!r}")
+    name = func.get("name")
+    if not name or not isinstance(name, str):
+        raise ValueError(f"schema missing 'function.name': {schema!r}")
+    return ToolSpec(
+        name=name,
+        risk_tier=risk_tier,
+        group=group,
+        schema=dict(func),
+        side_effects=side_effects,
+        requires_approval=requires_approval,
+        needs_diff_preview=needs_diff_preview,
+        needs_double_confirm=needs_double_confirm,
+        default_ttl_s=default_ttl_s,
+        double_confirm_window_s=double_confirm_window_s,
+        channel_allowlist=channel_allowlist,
+    )
+
+
+# Canonical OpenAI schemas for each LLM-callable tool. The ``*_TOOLS`` lists
+# are imported lazily inside ``_build_static_catalog`` to avoid an import
+# cycle: importing ``fae.scheduler.tools`` pulls in ``fae.scheduler`` which
+# transitively imports ``fae.agent`` which imports ``fae.tool_registry``.
+
+_STATIC_BUILT = False
+_STATIC_SPECS: dict[str, ToolSpec] = {}
+_STATIC_TOOL_NAMES: frozenset[str] = frozenset()
+
+
+def _build_static_catalog() -> None:
+    """Populate ``_TOOL_SPECS`` from each feature module's schema list.
+
+    This is the only place where risk tier / approval metadata is declared
+    for built-in tools. Called once, lazily, on first registry access.
+    """
+    from fae.tools.filesystem import FILESYSTEM_TOOLS as _FS_SCHEMAS
+    from fae.tools.bash import BASH_TOOLS as _BASH_SCHEMAS
+    from fae.tools.git import GIT_TOOLS as _GIT_SCHEMAS
+    from fae.tools.weather import WEATHER_TOOLS as _WEATHER_SCHEMAS
+    from fae.scheduler.tools import SCHEDULE_TOOLS as _SCHED_SCHEMAS
+    from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL as _SUBAGENT_SCHEMA
+    from fae.agent.skills_runtime import REQUEST_SKILL_TOOL as _SKILL_SCHEMA
+
+    fs_overrides: dict[str, dict[str, Any]] = {
+        "read_file": dict(risk_tier="safe", side_effects=("fs.read",)),
+        "search_files": dict(risk_tier="safe", side_effects=("fs.read",)),
+        "make_directory": dict(risk_tier="caution", side_effects=("fs.mkdir",)),
+        "write_file": dict(
+            risk_tier="sensitive",
+            side_effects=("fs.write",),
+            requires_approval=True,
+            needs_diff_preview=True,
+        ),
+        "edit_file": dict(
+            risk_tier="sensitive",
+            side_effects=("fs.write",),
+            requires_approval=True,
+            needs_diff_preview=True,
+        ),
+    }
+    for schema in _FS_SCHEMAS:
+        name = schema["function"]["name"]
+        ovr = fs_overrides.get(name)
+        if ovr is None:
+            logger.warning("filesystem tool %r has no policy override", name)
+            continue
+        spec = _spec_from(schema, "filesystem", **ovr)
+        _TOOL_SPECS[spec.name] = spec
+
+    for schema in _BASH_SCHEMAS:
+        spec = _spec_from(
+            schema,
+            "bash",
+            risk_tier="sensitive",
+            side_effects=("proc.exec",),
+            requires_approval=True,
+        )
+        _TOOL_SPECS[spec.name] = spec
+
+    for schema in _GIT_SCHEMAS:
+        spec = _spec_from(schema, "git", risk_tier="safe")
+        _TOOL_SPECS[spec.name] = spec
+
+    for schema in _WEATHER_SCHEMAS:
+        spec = _spec_from(
+            schema,
+            "weather",
+            risk_tier="safe",
+            side_effects=("net.out",),
+        )
+        _TOOL_SPECS[spec.name] = spec
+
+    sched_overrides: dict[str, dict[str, Any]] = {
+        "schedule_create_job": dict(
+            risk_tier="caution",
+            side_effects=("schedule.write", "state.mutate"),
+        ),
+        "list_jobs": dict(risk_tier="safe"),
+        "cancel_job": dict(
+            risk_tier="sensitive",
+            side_effects=("state.mutate",),
+            requires_approval=True,
+        ),
+    }
+    for schema in _SCHED_SCHEMAS:
+        name = schema["function"]["name"]
+        ovr = sched_overrides.get(name)
+        if ovr is None:
+            logger.warning("schedule tool %r has no policy override", name)
+            continue
+        spec = _spec_from(schema, "schedule", **ovr)
+        _TOOL_SPECS[spec.name] = spec
+
+    subagent_spec = _spec_from(
+        _SUBAGENT_SCHEMA,
+        "subagent",
+        risk_tier="caution",
+        side_effects=("memory.write",),
+    )
+    _TOOL_SPECS[subagent_spec.name] = subagent_spec
+
+    skill_spec = _spec_from(_SKILL_SCHEMA, "skill", risk_tier="safe")
+    _TOOL_SPECS[skill_spec.name] = skill_spec
+
+
+def _ensure_built() -> None:
+    global _STATIC_BUILT, _STATIC_SPECS, _STATIC_TOOL_NAMES
+    if _STATIC_BUILT:
+        return
+    _STATIC_BUILT = True
+    _build_static_catalog()
+    _STATIC_SPECS = dict(_TOOL_SPECS)
+    _STATIC_TOOL_NAMES = frozenset(_STATIC_SPECS.keys())
+
+
+def register_tool(spec: ToolSpec) -> ToolSpec | None:
+    """Insert or replace a ``ToolSpec``. Returns the previous spec or None.
+
+    Tests and plugin modules use this to add or override specs at runtime.
+    Always keep this idempotent; ``reset_registry`` clears dynamic entries
+    but preserves the static catalog.
+    """
+    _ensure_built()
     previous = _TOOL_SPECS.get(spec.name)
     _TOOL_SPECS[spec.name] = spec
-    return previous  # type: ignore[return-value]
+    return previous
 
 
 def reset_registry() -> None:
-    """Drop all dynamically-added specs. Production-safe (no-ops)."""
-    static_names = set(_TOOL_SPECS.keys())  # snapshot
+    """Drop all dynamically-added specs, preserving the static catalog.
+
+    Production callers should not need this; the registry is fixed at first
+    access. Tests use it to revert ad-hoc ``register_tool`` mutations.
+    """
+    _ensure_built()
     _TOOL_SPECS.clear()
-    logger.debug("reset tool registry; %d specs retained", len(static_names))
+    _TOOL_SPECS.update(_STATIC_SPECS)
 
 
 def known_tool_names() -> frozenset[str]:
+    _ensure_built()
     return frozenset(_TOOL_SPECS.keys())
 
 
+def static_tool_names() -> frozenset[str]:
+    """Names of the built-in (non-dynamic) catalog."""
+    _ensure_built()
+    return _STATIC_TOOL_NAMES
+
+
 def get_spec(name: str) -> ToolSpec | None:
+    _ensure_built()
     return _TOOL_SPECS.get(name)
 
 
+def group_for(name: str) -> str | None:
+    spec = get_spec(name)
+    return spec.group if spec else None
+
+
+def groups() -> frozenset[str]:
+    """Return all registered group identifiers."""
+    _ensure_built()
+    return frozenset({spec.group for spec in _TOOL_SPECS.values()})
+
+
+def specs_in_group(group: str) -> tuple[ToolSpec, ...]:
+    """Return all specs for a given group (filesystem/bash/git/...)."""
+    _ensure_built()
+    return tuple(s for s in _TOOL_SPECS.values() if s.group == group)
+
+
+def iter_openai_schemas(group: str | None = None) -> Iterator[dict[str, Any]]:
+    """Yield OpenAI-style tool entries for one group (or all)."""
+    _ensure_built()
+    for spec in _TOOL_SPECS.values():
+        if group is None or spec.group == group:
+            yield spec.to_openai()
+
+
+def openai_schema_for(name: str) -> dict[str, Any] | None:
+    """Return the OpenAI-style tool entry for a single name, or None."""
+    spec = get_spec(name)
+    return spec.to_openai() if spec else None
+
+
 # ── Policy ──────────────────────────────────────────────────────────────
+
+
 @dataclass(frozen=True)
 class EffectivePolicy:
     """Resolved session preauthorization at the moment of a tool call."""
@@ -214,7 +346,7 @@ class PolicyDecision:
     """The result of evaluating a tool invocation against the policy."""
 
     allow: bool
-    source: str  # "always" | "session_rule" | "safe" | "denied" | "needs_approval"
+    source: str  # "always" | "safe" | "denied" | "needs_approval"
     risk_tier: RiskTier
     reason: str = ""
 
@@ -293,18 +425,22 @@ def resolve_policy(
 
 
 # ── Capability / diff helpers ───────────────────────────────────────────
+
+
 def specs_for_capabilities() -> dict[str, dict[str, Any]]:
     """Serialize specs for the public capabilities endpoint."""
     out: dict[str, dict[str, Any]] = {}
     for name, spec in _TOOL_SPECS.items():
         out[name] = {
             "risk_tier": spec.risk_tier,
+            "group": spec.group,
             "side_effects": list(spec.side_effects),
             "requires_approval": spec.requires_approval,
             "needs_diff_preview": spec.needs_diff_preview,
             "needs_double_confirm": spec.needs_double_confirm,
             "default_ttl_s": spec.default_ttl_s,
             "description": spec.description,
+            "parameters": spec.parameters,
         }
     return out
 
