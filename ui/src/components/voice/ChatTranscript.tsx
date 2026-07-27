@@ -3,13 +3,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type {
-  ChatLine,
-  TurnExecution,
-} from "@/hooks/useVoiceSession";
+import type { ChatLine } from "@/hooks/useVoiceSession";
 import { normalizeMarkdownForDisplay } from "@/lib/markdown-display";
 import { isThinkingStreaming, stripThinking } from "@/lib/strip-thinking";
-import { ExecutionView } from "./ExecutionView";
 
 const mdClassName =
   "fae-md mt-1 block w-full " +
@@ -32,29 +28,16 @@ function roleLabel(role: ChatLine["role"]): string {
   return "FAE";
 }
 
-type ApprovalHandlers = {
-  onApprove?: (
-    approvalId: string,
-    decision: { remember?: "session" | "always" | null; confirm?: boolean },
-  ) => void;
-  onDeny?: (approvalId: string) => void;
-  onCancel?: (approvalId: string) => void;
-};
-
 export function ChatTranscript({
   lines,
   partial,
-  turnExecutions,
-  approval,
 }: {
   lines: ChatLine[];
   partial: string;
-  turnExecutions: Record<string, TurnExecution>;
-  approval?: ApprovalHandlers;
 }) {
   return (
     <div
-      className="mx-auto flex w-full max-w-xl flex-col gap-3 px-4 py-2 text-left"
+      className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-2 text-left"
       data-testid="chat-transcript"
     >
       {lines.map((line) => {
@@ -64,30 +47,37 @@ export function ChatTranscript({
             : line.content;
         const thinking =
           line.role === "assistant" && isThinkingStreaming(line.content);
+        const isUser = line.role === "user";
         const isSystem = line.role === "system";
-        const execution =
-          line.role === "assistant" ? turnExecutions[line.id] : undefined;
         return (
-          <div key={line.id} data-testid={`chat-line-${line.role}`}>
+          <div
+            key={line.id}
+            data-testid={`chat-line-${line.role}`}
+            className={
+              isUser
+                ? "flex justify-end"
+                : isSystem
+                  ? "mx-auto w-full max-w-md"
+                  : "flex justify-start"
+            }
+          >
             <div
-              className="text-[15px] leading-relaxed"
-              style={{
-                color: isSystem
-                  ? "var(--ink-soft)"
-                  : line.role === "user"
-                    ? "var(--ink)"
-                    : "var(--ink-soft)",
-                fontFamily: "var(--font-body)",
-                opacity: isSystem ? 0.9 : 1,
-                background: isSystem ? "rgba(0,0,0,0.03)" : undefined,
-                borderRadius: isSystem ? 12 : undefined,
-                padding: isSystem ? "8px 12px" : undefined,
-              }}
+              className={
+                isUser
+                  ? "rounded-2xl rounded-br-sm bg-[var(--accent)] px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-sm"
+                  : isSystem
+                    ? "rounded-xl bg-black/[0.04] px-3 py-1.5 text-[13px] text-[var(--ink-soft)]"
+                    : "max-w-full rounded-2xl rounded-bl-sm bg-white/75 px-4 py-2.5 text-[15px] leading-relaxed text-[var(--ink)] shadow-sm ring-1 ring-black/[0.06]"
+              }
             >
               <span
-                className="mr-2 text-xs uppercase tracking-wider"
+                className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em]"
                 style={{
-                  color: isSystem ? "var(--ink-soft)" : "var(--accent)",
+                  color: isUser
+                    ? "rgba(255,255,255,0.7)"
+                    : isSystem
+                      ? "var(--ink-soft)"
+                      : "var(--accent)",
                   fontFamily: "var(--font-display)",
                 }}
               >
@@ -109,26 +99,20 @@ export function ChatTranscript({
                 line.content || "…"
               )}
             </div>
-            {execution && (
-              <ExecutionView
-                execution={execution}
-                onApprove={approval?.onApprove}
-                onDeny={approval?.onDeny}
-                onCancel={approval?.onCancel}
-              />
-            )}
           </div>
         );
       })}
       {partial ? (
-        <div className="text-[15px] text-[var(--ink-soft)] opacity-70">
-          <span
-            className="mr-2 text-xs uppercase tracking-wider"
-            style={{ color: "var(--accent)", fontFamily: "var(--font-display)" }}
-          >
-            你
-          </span>
-          {partial}
+        <div className="flex justify-end" data-testid="chat-line-partial">
+          <div className="rounded-2xl rounded-br-sm bg-[var(--accent)]/60 px-4 py-2.5 text-[15px] leading-relaxed text-white opacity-80">
+            <span
+              className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em]"
+              style={{ color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-display)" }}
+            >
+              你
+            </span>
+            {partial}
+          </div>
         </div>
       ) : null}
     </div>
