@@ -44,6 +44,27 @@
 
 - **状态**：已完成（归档见 `doc/archive/AGENT_WORKBENCH_FE.md`）
 
+### Agent 工作台式 FE 视觉打磨 2.0
+
+- **状态**：待开始
+- **重要等级**：P1
+- **收益程度**：高
+- **预计时间**：1–2 周
+- **改动量**：中
+- **用户感受**：1.x 解决了信息层级（细分了三栏、去掉了居中巨标题），但视觉质感还不够 — 缺少呼吸感、动画过渡和细节高光，远未达到 Cursor / Codex / Linear 一类产品的「看得舒服」水准。
+- **需求**：
+  - 制定一组 design tokens（间距阶梯、半径梯度、阴影层级、动效曲线），并替换页面里的临时内联样式。
+  - 给对话气泡、状态切换、审批审批通过 / 拒绝等关键事件补上轻微的 micro-animation（fade / scale / shimmer），避免突兀跳变。
+  - 把 VoiceOrb / StatusChip 与背景融合做一次视觉提升（pending 时整页有微弱 glow，而不是孤立的小点）。
+  - 重新打磨首页空状态（无历史对话时）：由 `Composition` 引导而非仅一个 textarea。
+  - 给 macOS Safari 与 iOS Safari 做一次视觉走查，修复安全区、滚动橡皮筋、被 Safari 工具栏遮挡的 footer。
+  - 补一组可复用的 Empty / Skeleton / Toast / Tooltip 原语，避免再次回到「页内拼样式」。
+  - 视觉走查产出 before/after 截图与对比清单，并沉淀 1–2 套参考样式（Cursor、Linear、Claude）。
+- **验收**：
+  - 用户观感明显改善，给非团队成员看截图能立即感受到「专业产品」的气场。
+  - 设计令牌、动画时长、空状态都成为可复用资源，后续添加新页面不再返工样式。
+  - 桌面与移动端视觉走查通过，pnpm lint / typecheck / build 全部通过。
+
 ### 复杂任务 Plan Mode
 
 - **状态**：待开始
