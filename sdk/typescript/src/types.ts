@@ -80,7 +80,50 @@ export type WsServerMessage =
       quiet?: boolean;
       speak?: boolean;
     }
-  | { type: "error"; code: string; message: string };
+  | { type: "error"; code: string; message: string }
+  | {
+      type: "plan_loaded" | "plan_suggested";
+      plan?: PlanPayload;
+      user_text?: string;
+    }
+  | {
+      type: "plan_created" | "plan_step_update" | "plan_step_completed";
+      plan_id: string;
+      plan?: PlanPayload | null;
+      step?: PlanStepPayload | null;
+    };
+
+export type PlanStepStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "blocked"
+  | "cancelled";
+
+export type PlanStatus = "active" | "completed" | "abandoned";
+
+export type PlanStepPayload = {
+  id: string;
+  index: number;
+  title: string;
+  acceptance?: string;
+  status: PlanStepStatus;
+  note?: string;
+  started_at?: number | null;
+  finished_at?: number | null;
+};
+
+export type PlanPayload = {
+  id: string;
+  session_id: string;
+  title: string;
+  summary?: string;
+  status: PlanStatus;
+  steps: PlanStepPayload[];
+  created_at: number;
+  updated_at: number;
+  finished_at?: number | null;
+};
 
 export type WsClientMessage =
   | { type: "chat"; request: unknown; session_id?: string }
@@ -220,6 +263,11 @@ export type StreamHandlers = {
   onNotification?: NotifyHandler;
   onApprovalRequest?: ApprovalRequestHandler;
   onApprovalResolved?: ApprovalResolvedHandler;
+  onPlanLoaded?: (plan: PlanPayload) => void;
+  onPlanCreated?: (plan: PlanPayload) => void;
+  onPlanStepUpdate?: (plan: PlanPayload, step: PlanStepPayload) => void;
+  onPlanStepCompleted?: (plan: PlanPayload, step: PlanStepPayload) => void;
+  onPlanSuggested?: (userText: string) => void;
 };
 
 export type FaeCapabilities = {

@@ -15,6 +15,7 @@ from fae.memory.embedded import EmbeddedMemoryClient
 from fae.memory.episodic import EpisodicStore
 from fae.memory.letta_client import LettaMemoryClient
 from fae.memory.recall_store import RecallStore
+from fae.plans import PlanStore
 from fae.scheduler.store import ScheduleStore
 from fae.scheduler.tasks import TaskStore
 
@@ -41,6 +42,7 @@ class DataDeletionService:
         agent_trace: AgentTraceStore,
         approvals: ApprovalStore,
         task_store: TaskStore,
+        plan_store: PlanStore,
         schedule_store: ScheduleStore,
         recall_store: RecallStore,
         episodic_store: EpisodicStore,
@@ -54,6 +56,7 @@ class DataDeletionService:
         self.agent_trace = agent_trace
         self.approvals = approvals
         self.task_store = task_store
+        self.plan_store = plan_store
         self.schedule_store = schedule_store
         self.recall_store = recall_store
         self.episodic_store = episodic_store
@@ -89,6 +92,9 @@ class DataDeletionService:
             counts["tasks"] = await self._delete(
                 self.task_store.clear, session_id=None
             )
+            counts["plans"] = await self._delete(
+                self.plan_store.clear, session_id=None
+            )
         else:
             counts["chat_history"] = await self._delete(
                 self.chat_history.clear, session_id=session_id
@@ -104,6 +110,9 @@ class DataDeletionService:
             )
             counts["tasks"] = await self._delete(
                 self.task_store.clear, session_id=session_id
+            )
+            counts["plans"] = await self._delete(
+                self.plan_store.clear, session_id=session_id
             )
 
         # 2. Schedule store (keep builtin jobs, clear user data)

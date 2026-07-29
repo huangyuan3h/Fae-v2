@@ -169,6 +169,20 @@ export class WsChatClient {
             msg.quiet,
             msg.speak,
           );
+        } else if (msg.type === "plan_loaded") {
+          if (msg.plan) handlers.onPlanLoaded?.(msg.plan);
+        } else if (msg.type === "plan_suggested") {
+          handlers.onPlanSuggested?.(msg.user_text ?? "");
+        } else if (msg.type === "plan_created") {
+          if (msg.plan) handlers.onPlanCreated?.(msg.plan);
+        } else if (msg.type === "plan_step_update") {
+          if (msg.plan && msg.step) {
+            handlers.onPlanStepUpdate?.(msg.plan, msg.step);
+          }
+        } else if (msg.type === "plan_step_completed") {
+          if (msg.plan && msg.step) {
+            handlers.onPlanStepCompleted?.(msg.plan, msg.step);
+          }
         } else if (msg.type === "token") {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {

@@ -184,6 +184,7 @@ def _build_static_catalog() -> None:
     from fae.scheduler.tools import SCHEDULE_TOOLS as _SCHED_SCHEMAS
     from fae.agent.subagents.tools import RUN_SUBAGENT_TOOL as _SUBAGENT_SCHEMA
     from fae.agent.skills_runtime import REQUEST_SKILL_TOOL as _SKILL_SCHEMA
+    from fae.agent.plan_tools import UPDATE_PLAN_TOOL as _PLAN_SCHEMA
 
     fs_overrides: dict[str, dict[str, Any]] = {
         "read_file": dict(
@@ -314,6 +315,16 @@ def _build_static_catalog() -> None:
         output_description="Skill activation confirmation / playbook.",
     )
     _TOOL_SPECS[skill_spec.name] = skill_spec
+
+    plan_spec = _spec_from(
+        _PLAN_SCHEMA,
+        "plan",
+        risk_tier="safe",
+        side_effects=("state.mutate",),
+        output_kind="text",
+        output_description="Plan / plan-step status update confirmation.",
+    )
+    _TOOL_SPECS[plan_spec.name] = plan_spec
 
 
 def _ensure_built() -> None:

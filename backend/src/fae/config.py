@@ -133,6 +133,16 @@ class Settings(BaseSettings):
     agent_trace_db_path: str = ".data/fae-agent-trace.db"
     task_db_path: str = ".data/fae-tasks.db"
     approvals_db_path: str = ".data/fae-approvals.db"
+    plans_db_path: str = ".data/fae-plans.db"
+    plan_auto_detect_enabled: bool = Field(
+        default=True,
+        description=(
+            "Run a lightweight LLM triage before each turn to decide if the "
+            "user's request needs a multi-step plan. Disabling skips the "
+            "auto-detect cost but the agent will only enter Plan Mode when "
+            "explicitly asked."
+        ),
+    )
     chat_history_retention_days: int = Field(default=7, ge=1, le=3650)
     chat_history_cleanup_interval_s: float = Field(default=3600.0, ge=0.05)
 

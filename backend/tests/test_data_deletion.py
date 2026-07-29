@@ -159,6 +159,8 @@ def test_data_deletion_service_forget_session_scoped(tmp_path) -> None:
     trace = AgentTraceStore(_db(tmp_path, "-trace"))
     approvals = ApprovalStore(_db(tmp_path, "-approvals"))
     tasks = TaskStore(_db(tmp_path, "-tasks"))
+    from fae.plans import PlanStore
+    plans = PlanStore(_db(tmp_path, "-plans"))
     schedules = ScheduleStore(_db(tmp_path, "-schedules"))
     recall = RecallStore(_db(tmp_path, "-recall"))
     episodic = EpisodicStore(_db(tmp_path, "-episodic"))
@@ -178,6 +180,7 @@ def test_data_deletion_service_forget_session_scoped(tmp_path) -> None:
         agent_trace=trace,
         approvals=approvals,
         task_store=tasks,
+        plan_store=plans,
         schedule_store=schedules,
         recall_store=recall,
         episodic_store=episodic,
@@ -216,6 +219,8 @@ def test_data_deletion_service_forget_global(tmp_path) -> None:
     trace = AgentTraceStore(_db(tmp_path, "-trace"))
     approvals = ApprovalStore(_db(tmp_path, "-approvals"))
     tasks = TaskStore(_db(tmp_path, "-tasks"))
+    from fae.plans import PlanStore
+    plans = PlanStore(_db(tmp_path, "-plans"))
     schedules = ScheduleStore(_db(tmp_path, "-schedules"))
     recall = RecallStore(_db(tmp_path, "-recall"))
     episodic = EpisodicStore(_db(tmp_path, "-episodic"))
@@ -233,6 +238,7 @@ def test_data_deletion_service_forget_global(tmp_path) -> None:
         agent_trace=trace,
         approvals=approvals,
         task_store=tasks,
+        plan_store=plans,
         schedule_store=schedules,
         recall_store=recall,
         episodic_store=episodic,

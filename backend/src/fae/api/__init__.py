@@ -60,6 +60,7 @@ from fae.channels.bridge import (
 from fae.channels.telegram import TelegramClient, telegram_poll_loop, telegram_ready
 from fae.chat_history import ChatHistoryStore, chat_history_cleanup_loop
 from fae.config import REPO_ROOT, Settings, get_settings
+from fae.plans import PlanStore
 from fae.llm import (
     ChatRequest,
     ChatResponse,
@@ -114,6 +115,13 @@ def _agent_trace_db_path(settings: Settings) -> Path:
 
 def _task_db_path(settings: Settings) -> Path:
     db_path = Path(settings.task_db_path)
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path
+
+
+def _plan_db_path(settings: Settings) -> Path:
+    db_path = Path(settings.plans_db_path)
     if not db_path.is_absolute():
         db_path = REPO_ROOT / db_path
     return db_path
@@ -242,6 +250,10 @@ async def lifespan(app: FastAPI):
     if not isinstance(task_store, TaskStore) or task_store.closed:
         task_store = TaskStore(_task_db_path(settings))
         app.state.task_store = task_store
+    plan_store = getattr(app.state, "plan_store", None)
+    if not isinstance(plan_store, PlanStore) or plan_store.closed:
+        plan_store = PlanStore(_plan_db_path(settings))
+        app.state.plan_store = plan_store
     app.state.task_recovered = False
     try:
         recovered = task_store.recover_orphaned_running()

@@ -1,6 +1,7 @@
 "use client";
 
 import type { DailyCall } from "@daily-co/daily-js";
+import type { PlanPayload } from "@fae/client";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -188,6 +189,8 @@ export function useVoiceSession() {
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null);
   const [usageTotals, setUsageTotals] = useState<TokenUsage | null>(null);
+  const [activePlan, setActivePlan] = useState<PlanPayload | null>(null);
+  const [planSuggested, setPlanSuggested] = useState(false);
   // Final transcript queued by the STT callback; consumed by an Effect so the
   // latest `sendText` is always used without mutating a Ref.
   const [pendingText, setPendingText] = useState<string | null>(null);
@@ -405,6 +408,8 @@ export function useVoiceSession() {
       setHistoryNote(null);
       setHistoryHasMore(false);
       setTurnExecutions({});
+      setActivePlan(null);
+      setPlanSuggested(false);
       currentAssistantLineRef.current = null;
       subagentCounterRef.current = 0;
       try {
@@ -1197,6 +1202,36 @@ export function useVoiceSession() {
                 errorMessage: errorText,
               }));
             },
+            onPlanLoaded: (loadedPlan) => {
+              setActivePlan(loadedPlan);
+              setPlanSuggested(false);
+            },
+            onPlanCreated: (newPlan) => {
+              setActivePlan(newPlan);
+              setPlanSuggested(false);
+            },
+            onPlanStepUpdate: (updatedPlan, updatedStep) => {
+              setActivePlan({
+                ...updatedPlan,
+                steps: updatedPlan.steps.map((s) =>
+                  s.id === updatedStep.id ? updatedStep : s,
+                ),
+              });
+            },
+            onPlanStepCompleted: (updatedPlan, completedStep) => {
+              setActivePlan({
+                ...updatedPlan,
+                steps: updatedPlan.steps.map((s) =>
+                  s.id === completedStep.id ? completedStep : s,
+                ),
+              });
+              if (updatedPlan.status !== "active") {
+                window.setTimeout(() => setActivePlan(null), 1500);
+              }
+            },
+            onPlanSuggested: () => {
+              setPlanSuggested(true);
+            },
           },
           memorySessionRef.current,
         );
@@ -1424,5 +1459,7 @@ export function useVoiceSession() {
     startListening,
     stopListening,
     interrupt,
+    activePlan,
+    planSuggested,
   };
 }

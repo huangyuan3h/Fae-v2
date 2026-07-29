@@ -8,6 +8,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from fae.agent.plan_tools import dispatch_update_plan
 from fae.agent.skills_runtime import SkillActivationInfo, SkillRuntime
 from fae.agent.subagents.tools import dispatch_run_subagent
 from fae.agent.tool_offload import ToolOffloader, maybe_offload_result
@@ -41,6 +42,7 @@ from fae.tools.git import dispatch_git_tool
 from fae.tools.weather import dispatch_weather_tool
 
 if TYPE_CHECKING:
+    from fae.plans import PlanStore
     from fae.scheduler.store import ScheduleStore
 
 logger = logging.getLogger("fae.agent.skills")
@@ -91,6 +93,32 @@ def _tool_result_ok(result: str) -> bool:
     except json.JSONDecodeError:
         return True
     return bool(payload.get("ok", True)) if isinstance(payload, dict) else True
+
+
+def _serialise_plan_or_none(plan, store) -> dict[str, Any] | None:
+    if plan is None:
+        return None
+    try:
+        return store.to_dict(plan)
+    except Exception:
+        return None
+
+
+def _serialise_step_or_none(step) -> dict[str, Any] | None:
+    if step is None:
+        return None
+    return {
+        "id": step.id,
+        "plan_id": step.plan_id,
+        "index": step.index,
+        "title": step.title,
+        "acceptance": step.acceptance,
+        "status": step.status,
+        "note": step.note,
+        "created_at": step.created_at,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+    }
 
 
 
@@ -160,6 +188,7 @@ def _merge_tools(
         _append_unique_tools(tools, list(iter_openai_schemas("bash")))
     if git_enabled:
         _append_unique_tools(tools, list(iter_openai_schemas("git")))
+    _append_unique_tools(tools, list(iter_openai_schemas("plan")))
     return tools
 
 
@@ -484,6 +513,7 @@ async def apply_lazy_skill_tool(
     trace_turn_id: str | None = None,
     approval_store: ApprovalStore | None = None,
     effective_policy: EffectivePolicy | None = None,
+    plan_store: "PlanStore | None" = None,
 ) -> tuple[ChatRequest, SkillActivationInfo, str | None]:
     """One non-streaming tool round. Returns (request, activation, early_content).
 
@@ -573,6 +603,76 @@ async def apply_lazy_skill_tool(
         return _strip_tools(probe_request), activation, None
 
     for tc in probe.tool_calls:
+        if tc.name == "update_plan" and plan_store is not None:
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments[:4000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
+
+            def _plan_emitter(ev) -> Awaitable[None] | None:
+                if on_tool_event is None:
+                    return None
+                async def _push() -> None:
+                    await on_tool_event(
+                        {
+                            "type": ev.type,
+                            "session_id": session_id,
+                            "channel": channel,
+                            "channel_id": channel_id,
+                            "plan_id": ev.plan_id,
+                            "plan": _serialise_plan_or_none(ev.plan, plan_store),
+                            "step": _serialise_step_or_none(ev.step),
+                        }
+                    )
+                return _push()
+
+            try:
+                result = dispatch_update_plan(
+                    tc.arguments,
+                    session_id=session_id,
+                    plan_store=plan_store,
+                    on_event=_plan_emitter,
+                )
+                ok = True
+                error_code = None
+            except Exception as exc:  # noqa: BLE001
+                result = json.dumps(
+                    {"ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                )
+                ok = False
+                error_code = "plan_tool_error"
+            await _emit_tool_event(
+                on_tool_event,
+                {
+                    "type": "tool",
+                    "phase": "result",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "ok": ok,
+                    "error_code": error_code,
+                    "result": str(result)[:20000],
+                    "session_id": session_id,
+                    "channel": channel,
+                    "channel_id": channel_id,
+                },
+            )
+            messages = list(request.messages)
+            messages.append(
+                await _wrap_tool_result(tool_offloader, tc.name, tc.id, result)
+            )
+            enriched = request.model_copy(update={"messages": messages})
+            return _strip_tools(enriched), activation, None
+
         if tc.name == "request_skill" and skills is not None:
             try:
                 args = json.loads(tc.arguments or "{}")
@@ -921,6 +1021,7 @@ async def stream_assistant_turn(
     trace_turn_id: str | None = None,
     approval_store: ApprovalStore | None = None,
     effective_policy: EffectivePolicy | None = None,
+    plan_store: "PlanStore | None" = None,
 ) -> AsyncIterator[tuple[str, SkillActivationInfo]]:
     """Yield (token, activation). First yield may update activation after tools."""
     act = activation
@@ -973,6 +1074,7 @@ async def stream_assistant_turn(
             trace_turn_id=trace_turn_id,
             approval_store=approval_store,
             effective_policy=effective_policy,
+            plan_store=plan_store,
         )
         if early is not None and on_schedule_mutated is not None:
             if "日程工具" in early:

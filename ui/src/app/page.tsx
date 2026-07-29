@@ -9,6 +9,7 @@ import { ChatHistorySidebar } from "@/components/voice/ChatHistorySidebar";
 import { ChatTranscript } from "@/components/voice/ChatTranscript";
 import { Composer } from "@/components/voice/Composer";
 import { ExecutionPanel } from "@/components/voice/ExecutionPanel";
+import { PlanPanel } from "@/components/voice/PlanPanel";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
 import {
   CONFIG_CHANGED_EVENT,
@@ -56,6 +57,8 @@ function HomeContent() {
     stopListening,
     interrupt,
     orb,
+    activePlan,
+    planSuggested,
   } = useVoiceSession();
   const [active, setActive] = useState<ModelProfile | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -233,7 +236,8 @@ function HomeContent() {
         </section>
 
         <aside className="hidden w-72 shrink-0 xl:block">
-          <div className="sticky top-16">
+          <div className="sticky top-16 flex flex-col gap-3">
+            <PlanPanel plan={activePlan} suggested={planSuggested} />
             <ExecutionPanel
               execution={currentExecution}
               approval={{

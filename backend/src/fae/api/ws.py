@@ -52,7 +52,7 @@ from fae.api.auth import ensure_ws_client_token
 from fae.api.chat_history import persist_chat_history_turn
 from fae.api.deps import get_llm_client
 from fae.channels.bridge import MissingServerLLMError, merge_chat_request
-from fae.llm import ChatRequest, LLMClient, LLMError
+from fae.llm import ChatMessage, ChatRequest, LLMClient, LLMError
 from fae.pipecat.services.letta_memory import LettaMemoryService
 from fae.scheduler.activity import ActivityTracker
 from fae.scheduler.hub import ConnectionHub
@@ -155,6 +155,61 @@ async def _run_stream(
             default_city=getattr(settings, "weather_default_city", "") or "",
             default_timezone=getattr(settings, "weather_default_timezone", "") or "",
         )
+
+        plan_store = getattr(ws.app.state, "plan_store", None)
+        active_plan = plan_store.get_active_for_session(session_id) if plan_store is not None else None
+        if active_plan is not None:
+            from fae.agent.plan_tools import active_plan_as_prompt_block
+            plan_block = active_plan_as_prompt_block(active_plan)
+            if plan_block:
+                sys_msg = next(
+                    (m for m in stream_request.messages if m.role == "system"),
+                    None,
+                )
+                if sys_msg is not None:
+                    new_content = sys_msg.content + "\n\n" + plan_block
+                    stream_request = stream_request.model_copy(
+                        update={
+                            "messages": [
+                                m if m is not sys_msg else ChatMessage(role="system", content=new_content)
+                                for m in stream_request.messages
+                            ]
+                        }
+                    )
+                else:
+                    stream_request = stream_request.model_copy(
+                        update={
+                            "messages": [
+                                ChatMessage(role="system", content=plan_block),
+                                *stream_request.messages,
+                            ]
+                        }
+                    )
+            await _send(
+                ws,
+                {
+                    "type": "plan_loaded",
+                    "plan": plan_store.to_dict(active_plan),
+                },
+            )
+        else:
+            plan_auto_enabled = bool(
+                getattr(settings, "plan_auto_detect_enabled", True)
+            )
+            if plan_auto_enabled and plan_store is not None and user_text.strip():
+                from fae.agent.plan_tools import inject_plan_directive, should_auto_plan
+                try:
+                    needs_plan = await should_auto_plan(
+                        client, stream_request.config, user_text
+                    )
+                except Exception:
+                    needs_plan = False
+                if needs_plan:
+                    stream_request = inject_plan_directive(stream_request)
+                    await _send(
+                        ws,
+                        {"type": "plan_suggested", "user_text": user_text},
+                    )
         await _send(
             ws,
             {
@@ -255,6 +310,7 @@ async def _run_stream(
             trace_turn_id=turn_id,
             approval_store=_approvals_from_app(ws),
             effective_policy=_effective_policy_for(ws, session_id),
+            plan_store=plan_store,
         ):
             if activation.active != last_active:
                 last_active = list(activation.active)

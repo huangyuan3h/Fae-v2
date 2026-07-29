@@ -67,12 +67,22 @@ async def forget_data(
     )
     session_store: SessionStore = request.app.state.sessions
 
+    plan_store = getattr(request.app.state, "plan_store", None)
+    if plan_store is None:
+        from fae.plans import PlanStore
+        from pathlib import Path as _P
+        from fae.config import REPO_ROOT as _R
+        plan_db = _P(getattr(settings, "plans_db_path", ".data/fae-plans.db"))
+        if not plan_db.is_absolute():
+            plan_db = _R / plan_db
+        plan_store = PlanStore(plan_db)
     service = DataDeletionService(
         chat_history=chat_history,
         tool_audit=tool_audit,
         agent_trace=agent_trace,
         approvals=approvals,
         task_store=task_store,
+        plan_store=plan_store,
         schedule_store=schedule_store,
         recall_store=recall_store,
         episodic_store=episodic_store,
