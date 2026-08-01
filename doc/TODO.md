@@ -8,222 +8,120 @@
 - 每项必须包含状态、重要等级、收益程度、预计时间、改动量和可验证的验收条件。
 - 开始开发时将状态改为「进行中」；完成并验证后，从本文件移除并写入 `archive/` 对应阶段记录。
 - 设计细节写入 `design/`，本文件只保留目标、范围和验收条件。
-- 优先级顺序：P0 阻塞项 → P1 高需求 → P2 体验增强 → Backlog 按需。
+- 优先级顺序：P0 基础闭环 → P1 核心产品能力 → P2 体验增强 → Backlog 按需。
 
 ### 评估口径
 
 | 维度 | 分级 | 说明 |
 |---|---|---|
-| 重要等级 | P0 / P1 / P2 | P0 阻塞发布或基础能力；P1 核心产品能力；P2 体验、质量或增强能力 |
+| 重要等级 | P0 / P1 / P2 | P0 阻塞核心目标；P1 核心产品能力；P2 体验、质量或增强能力 |
 | 收益程度 | 高 / 中 / 低 | 对核心使用频率、可用性、可靠性和用户体验的综合收益 |
 | 预计时间 | 工作日 / 周 | 单人完成首个可验收版本的粗略估算，不含长期打磨 |
 | 改动量 | 小 / 中 / 大 / 特大 | 涉及文件数量、跨端协作、数据模型和兼容性风险的综合估算 |
 
-## 当前焦点
+## 产品 North Star
 
-1. **Agent 工作台式 FE 视觉打磨 2.0**（P1 高收益，1–2 周）：把 FAE 的页面观感拉到 Cursor / Codex / Linear 的「看得舒服」水位。design tokens、micro-animation、VoiceOrb 背景融合、空状态 Composition 引导、Safari 走查、复用 Empty / Skeleton / Toast / Tooltip 原语。
+FAE 是个人 AI 助手，不是以聊天为终点的 Chatbot：
 
-## P0 · 文档与发布完整性
+- 主对话只负责理解意图、必要澄清、确认计划、报告关键里程碑和交付结论。
+- 调研、连接器同步、工具执行、长推理、记忆整理和评测默认在后台工作平面运行。
+- 对代表性重任务，前台模型 token 目标占比约 **10%**（验收区间 5%–15%），后台承担绝大多数有效工作；不得通过浪费后台 token 达标。
+- 所有后台任务必须可恢复、可取消、可审计、可追溯、可控制预算，并能在需要用户输入时跨 Web / 手机继续。
+- UI 默认展示主线，计划、任务、审批、轨迹和工具输出按需展开。
+- 语音是第一等交互路径；自然度、连续性、延迟和打断体验都必须达到日常可用。
 
-### 统一版本状态
+## 当前开发状态
 
-- **状态**：已完成
-  - 所有版本号统一到 0.6.0（README / pyproject.toml / package.json x2 / __init__.py / FastAPI app）
-  - 补打缺失 Git tags：v0.4.0、v0.5.0、v0.6.0
+- **已具备**：常驻 Core、长期记忆、Skills、主动 Loop、Telegram、Subagents、Plan Mode、TaskStore、Tool Registry、敏感操作审批、审计与执行轨迹、Context Engineering R1–R6 基础实现。
+- **核心缺口**：LLM usage 仍以进程总量为主；Subagent 仍阻塞主工具循环；Schedule / Connector / Subagent 尚未进入统一、可恢复的后台 worker；真实个人连接器、真实语音 E2E 和生产级 context eval 尚未闭环。
+- **开发原则**：先让后台工作可计量、可恢复，再扩展助手能力；UI 与声音系统优先修复日常使用中的结构性问题，纯视觉装饰后置。
+- 已完成事项索引见 [`archive/DEVELOPMENT_STATUS_2026-08-01.md`](./archive/DEVELOPMENT_STATUS_2026-08-01.md)。
 
-### 文档自动校验
+## Now
 
-- **状态**：已完成
-  - 扫描 29 个 Markdown 文件，所有相对链接有效
-  - 修复 `doc/architect/ARCHITECTURE.md` Section 5 目录树（~25 个 aspirational 路径替换为实际结构）
-  - Python `doc/...` 引用、模块导入路径全部有效
+1. **前台 / 后台 Token 归因与预算**：先定义并量化 10% / 90% 目标。
+2. **持久后台工作平面**：让重任务脱离主对话，可恢复、可取消、可继续。
+3. **个人助手 Golden Path**：用 Calendar + Email 场景验证完整闭环。
+4. **Voice System 2.0 基线**：建立真实设备与真实 ASR / TTS 的质量数据。
 
-## P1 · 核心产品体验
+## P0 · 核心架构闭环
 
-### Agent 工作台式 FE 重构
-
-- **状态**：已完成（归档见 `doc/archive/AGENT_WORKBENCH_FE.md`）
-
-### Agent 工作台式 FE 视觉打磨 2.0
+### 前台 / 后台 Token 归因与预算
 
 - **状态**：待开始
-- **重要等级**：P1
+- **重要等级**：P0
 - **收益程度**：高
 - **预计时间**：1–2 周
-- **改动量**：中
-- **用户感受**：1.x 解决了信息层级（细分了三栏、去掉了居中巨标题），但视觉质感还不够 — 缺少呼吸感、动画过渡和细节高光，远未达到 Cursor / Codex / Linear 一类产品的「看得舒服」水准。
+- **改动量**：大
 - **需求**：
-  - 制定一组 design tokens（间距阶梯、半径梯度、阴影层级、动效曲线），并替换页面里的临时内联样式。
-  - 给对话气泡、状态切换、审批审批通过 / 拒绝等关键事件补上轻微的 micro-animation（fade / scale / shimmer），避免突兀跳变。
-  - 把 VoiceOrb / StatusChip 与背景融合做一次视觉提升（pending 时整页有微弱 glow，而不是孤立的小点）。
-  - 重新打磨首页空状态（无历史对话时）：由 `Composition` 引导而非仅一个 textarea。
-  - 给 macOS Safari 与 iOS Safari 做一次视觉走查，修复安全区、滚动橡皮筋、被 Safari 工具栏遮挡的 footer。
-  - 补一组可复用的 Empty / Skeleton / Toast / Tooltip 原语，避免再次回到「页内拼样式」。
-  - 视觉走查产出 before/after 截图与对比清单，并沉淀 1–2 套参考样式（Cursor、Linear、Claude）。
+  - 为每次 LLM 调用记录 `lane`、`purpose`、`session_id`、`turn_id`、`task_id`、模型与 raw / cached / estimated token。
+  - 建立持久 usage ledger，支持按 session、task、lane 和时间窗口聚合，不再只依赖进程累计值。
+  - 为前台 ack / clarification / final summary 与后台 planning / research / tool loop / compaction 分别设置预算和超限策略。
+  - 提供 API 与最小 UI，展示前台占比、后台占比、总量和预算状态。
 - **验收**：
-  - 用户观感明显改善，给非团队成员看截图能立即感受到「专业产品」的气场。
-  - 设计令牌、动画时长、空状态都成为可复用资源，后续添加新页面不再返工样式。
-  - 桌面与移动端视觉走查通过，pnpm lint / typecheck / build 全部通过。
+  - 所有生产 LLM 调用均有明确 lane，`unknown` 调用为 0。
+  - 代表性重任务中前台 token 占比稳定在 5%–15%，且总 token 不超过独立预算上限。
+  - Provider 不返回 usage 时明确标记 estimate；cached token 单独报告。
+  - 后台超限时降级、暂停或请求确认，不拖垮实时对话。
 
-### 复杂任务 Plan Mode
+### 持久后台工作平面
 
-- **状态**：已完成（归档见 `doc/archive/PLAN_MODE.md`）
-
-### Plan Mode · 用户 blocked 接续
-
-- **状态**：已完成（归档见 `doc/archive/PLAN_MODE_REENGAGE.md`）
-- **重要等级**：P1
+- **状态**：待开始
+- **重要等级**：P0
 - **收益程度**：高
-- **预计时间**：3–5 个工作日
-- **改动量**：中
+- **预计时间**：2–4 周
+- **改动量**：特大
 - **需求**：
-  - 后端：`unblock_step(note=)` 覆盖 note；`append_step_note` 不改 status；Prompt 强约束 reengage rule；`<user_response_for_blocked>` 注入 system 块。
-  - WS：新增入站 `plan_step_input`（answer / abort）与出站 `plan_step_input_ack`。
-  - HTTP：新增 `GET /api/plans/active` 与 `POST /api/plans/{plan_id}/abandon`。
-  - SDK：`WsClientMessage` / `WsServerMessage` 扩展 + `WsChatClient.sendPlanStepInput`。
-  - FE：PlanPanel 在 blocked step 上加「补一条说明 / 取消这一步」按钮；`useVoiceSession.loadSession` 自动 `fetchActivePlan` 拉取；新方法 `provideStepInput` / `abandonActivePlan`。
+  - 在 TaskStore 上补齐 worker lease、heartbeat、resume、cancel 与 restart recovery。
+  - 将 Subagent、Schedule occurrence 和 Connector execution 接入统一任务入口；主对话只提交任务并返回简短 ack / plan。
+  - 任务产出结构化 artifact、摘要与 provenance；进度通过统一事件流进入 UI 和外部 channel。
+  - 建立副作用幂等、NotificationDelivery 幂等和 Telegram inbound 去重。
 - **验收**：
-  - blocked step 在 PlanPanel 中显红、可被输入或一键取消，输入后转 pending 并保留 note。
-  - 切 session / 刷新后无需先发 chat 即可看到 active plan。
-  - 「放弃计划」可正确释放 plan 占位。
-  - 后端 579 例测试通过；FE `pnpm typecheck/lint/build` 通过。
+  - 3–10 分钟任务不阻塞继续聊天，服务重启后能够恢复。
+  - 同一 idempotency key 不重复发信、建日历、发通知或执行其他副作用。
+  - 用户可取消任务；`needs_input` 可从 Web 或 Telegram 补充后继续。
+  - 主 transcript 只出现 ack、关键里程碑和最终结果，详细过程可按需查看。
 
-### Plan Mode · 手动编辑与重排序
+### 系统状态、可观测性与架构真相源
 
-- **状态**：已完成（归档见 `doc/archive/PLAN_MODE_EDIT.md`）
-- **重要等级**：P1
-- **收益程度**：中
+- **状态**：部分实现
+- **重要等级**：P0
+- **收益程度**：高
 - **预计时间**：1–2 周
-- **改动量**：中
+- **改动量**：大
 - **需求**：
-  - `PlanStore.edit_step(step_id, *, title=None, acceptance=None)`：拒绝 terminal（completed/cancelled），只改 title/acceptance，不动 status/note/idx/timestamps。
-  - `PlanStore.reorder_step(step_id, new_index)`：`BEGIN IMMEDIATE` + 三步 swap（-1 哨兵 → 范围 shift → 落位），不动 status/note/timestamps。
-  - HTTP：`PATCH /api/plans/{plan_id}/steps/{step_id}` + `POST /api/plans/{plan_id}/reorder`，错误码 400/404/409 完整。
-  - SDK：`editPlanStep` / `reorderPlanStep` HTTP helper。
-  - FE：PlanPanel 就地编辑 title/acceptance（点击 → input → blur 提交 / Esc 取消）+ ↑/↓ 重排序按钮。
+  - `/api/memory/stats` 及能力接口区分 configured、instantiated、active、degraded 和 reason。
+  - 统一 task、tool、LLM、ASR、TTS 的结构化日志及 session / turn / task 关联，统计端到端 P50 / P95。
+  - 校正文档中的过期组件、依赖、参数和测试状态；增加 Markdown 链接与关键文档事实校验。
 - **验收**：
-  - 用户可在不重启对话的前提下修订 title/acceptance；失败回滚 UI 草稿。
-  - 重排序后 step index 与 note 持久化到 SQLite，跨 turn 与刷新可见。
-  - LLM 下一轮拿到的 `<active_plan>` 含新 title 与新 idx。
-  - 后端 637 例测试通过，覆盖率 79.11%。
+  - 可从一次用户请求定位前台对话、后台任务、工具、token 与语音链路的慢点和失败阶段。
+  - 缺少 Key、依赖失败或功能降级时，API 准确报告真实状态。
+  - 日志不记录密钥或完整敏感内容；文档校验进入 CI。
 
-### 主线与细节分层的 Agent 执行视图
+### North-star 集成评测
 
-- **状态**：已完成（归档见 `doc/archive/AGENT_EXECUTION_VIEW.md`）
+- **状态**：待开始
+- **重要等级**：P0
+- **收益程度**：高
+- **预计时间**：1–2 周
+- **改动量**：大
+- **需求**：建立覆盖 token lane、后台恢复、幂等副作用、needs_input、记忆来源和最终交付的代表性个人助手 workload。
+- **验收**：评测可重复运行，有明确通过阈值，并阻止 10% / 90% 比例、总预算、恢复性或结果正确性回归。
 
-## P1 · Tool Runtime 安全与产品化
+## P1 · 个人助手核心能力
 
-### 统一 Tool Registry
-
-- **状态**：已完成（归档见 `doc/archive/TOOL_REGISTRY.md`）
-
-### Sensitive / Dangerous 操作确认
-
-- **状态**：已完成（归档见 `doc/archive/SENSITIVE_OPS_APPROVAL.md`）
-
-### 真实个人连接器
+### Calendar + Email Golden Path
 
 - **状态**：待开始
 - **重要等级**：P1
 - **收益程度**：高
 - **预计时间**：2–4 周
 - **改动量**：特大
-- **需求**：按实际使用频率接入至少三个连接器，优先日历、邮件和通用 webhook。
-- **验收**：至少三个真实个人工具可稳定调用，权限和失败状态清晰。
-
-### 工具结果回灌记忆
-
-- **状态**：待开始
-- **重要等级**：P1
-- **收益程度**：中
-- **预计时间**：1–2 周
-- **改动量**：中
-- **需求**：定义哪些结果形成 fact、episodic event、archival artifact 或临时输出。
-- **验收**：关键工具结果第二天仍可 recall，并保留来源信息。
-
-## P1 · Context Engineering 正确性
-
-### Rolling Summary 生命周期
-
-- **状态**：已完成（归档见 `doc/archive/ROLLING_SUMMARY_LIFECYCLE.md`）
-- **重要等级**：P1
-- **收益程度**：中
-- **预计时间**：3–5 个工作日
-- **改动量**：中
-- **需求**：
-  - `RecallStore`：新增 `recall_summary_batches` 表 + `recall_turns.summary_batch_id` 列；提供 `peek_oldest_uncovered` / `commit_summary_batch` / `latest_batch` / `find_batch_by_fingerprint` 原子方法。
-  - `RollingSummarizer`：按 `(session_id, ordered_turn_ids)` 算 fingerprint；命中已有 batch 返回 `skipped="already_committed"` 不调 LLM；新 batch 把上一轮 `summary_text` 注入 prompt；archival 用 deterministic `point_id`（UUID5）。
-  - `MemoryCompactor`：`peek_oldest_uncovered` 跳过已被认领的 turn；作为 raw 兜底保留。
-  - `LettaMemoryService.persist_turn`：顺序改为 summarizer → compactor。
+- **需求**：优先完成“整理明天安排，并结合未读邮件准备重点事项”的端到端场景；先实现 Calendar 读取与经审批写入、Email 只读摘要，再补通用 webhook。
 - **验收**：
-  - 同 hot 窗口连续两次 `maybe_summarize` 第二次 `skipped="already_committed"`，`provider.calls` 仍为 1，archival / batches 仍为 1 行。
-  - 第二轮 prompt 含 `<previous_summary>` + 第一轮 `summary_text`，关键事实不丢。
-  - compactor raw 归档文本中不含任何被 claim 的 turn id。
-  - 后端 585 例测试通过，覆盖率 79.02%。
-
-### Tool Offload 可恢复性
-
-- **状态**：已完成（归档见 `doc/archive/TOOL_RESULT_OFFLOAD.md`）
-
-### Contextual Retrieval 完整接线
-
-- **状态**：原型
-- **重要等级**：P1
-- **收益程度**：中
-- **预计时间**：1–2 周
-- **改动量**：大
-- **需求**：传入真实 parent/reference 文档，并在向量 payload 中分离 original text、contextual prefix 和 embed text。
-- **验收**：真实 Qdrant 路径不向用户展示内部 prefix，离线 eval 证明召回质量提升。
-
-### 有效状态监控
-
-- **状态**：部分实现
-- **重要等级**：P2
-- **收益程度**：中
-- **预计时间**：1–2 个工作日
-- **改动量**：小
-- **需求**：`/api/memory/stats` 区分 configured、instantiated、active 和 degraded/reason，而非只报告配置开关。
-- **验收**：缺少 LLM Key 或依赖失败时，接口准确报告模块未生效及原因。
-
-### Context Engineering 集成评测
-
-- **状态**：待开始
-- **重要等级**：P2
-- **收益程度**：中
-- **预计时间**：3–5 个工作日
-- **改动量**：中
-- **需求**：覆盖摘要事实保留、context retrieval 召回提升、offload 后重读及真实 provider cache marker。
-- **验收**：评测进入 CI 或可重复的离线 runner，并有明确通过阈值。
-
-## P1 · 任务可靠性与主动助理
-
-### 持久任务状态机
-
-- **状态**：已完成（归档见 `doc/archive/TASK_STATE_MACHINE.md`）
-
-### 长任务进度、重试与幂等
-
-- **状态**：已完成（归档见 `doc/archive/TASK_RELIABILITY.md`）
-- **重要等级**：P1
-- **收益程度**：高
-- **预计时间**：1–2 周
-- **改动量**：大
-- **需求**：
-  - TaskStore schema 迁移：新增 `idempotency_key` / `fingerprint` / `progress_json` 列 + `(session_id, idempotency_key)` UNIQUE 部分索引。
-  - `create_task` 接受 `idempotency_key` + `fingerprint`：同 key 同 fingerprint replay；不同 fingerprint 抛 `IdempotencyConflict`。
-  - `claim` / `complete` / `fail` 走 SQLite CAS（`UPDATE ... WHERE status = ? AND attempts < max_attempts`），关闭「同状态重复操作」「超额尝试」「重复副作用」三个 P0 漏洞。
-  - `max_attempts` 真正生效：`claim` 超限抛 `AttemptsExhausted`。
-  - `retry` 用 `_UNSET` sentinel 真清空 error / result / resume_token / timestamps；attempts 只在 claim 时递增。
-  - `update_progress` 合并写 progress dict；`error_history()` 返回结构化 `attempt_failed` 事件列表。
-  - API：`POST /api/tasks` 读 `Idempotency-Key` header；新增 `PATCH /api/tasks/{id}/progress`；响应增加 `progress` / `error_history` / `idempotency_key` / `fingerprint` 字段。
-- **验收**：
-  - 同 key 同 fingerprint 的 `POST /api/tasks` 复用原 task，DB 行数 == 1。
-  - 同 key 不同 fingerprint 返回 409 `idempotency_conflict`。
-  - 两个 TaskStore 句柄同文件并发 claim 仅一个成功；其余返回 409。
-  - claim 超 `max_attempts` 返回 409 `attempts_exhausted`。
-  - failed → retry 后 `error_code` / `error_message` / `started_at` / `finished_at` 全清零，attempts 不增。
-  - 多次失败后 `error_history` 按 attempt 编号累加。
-  - 后端 607 例测试通过，覆盖率 78.99%。
+  - 用户可从 Web 或手机发起，后台完成跨连接器工作并返回带来源的简短结果。
+  - 权限、审批、失败、重试和撤销状态清晰；敏感写操作不得绕过审批。
+  - 首个 vertical slice 验收后再抽象 Connector SDK 和扩展连接器数量。
 
 ### 外部 channel 闭环
 
@@ -232,62 +130,112 @@
 - **收益程度**：高
 - **预计时间**：1–2 周
 - **改动量**：大
-- **需求**：Proactive Loop 引用真实任务状态，Telegram 等外部 channel 能处理 `needs_input`。
-- **验收**：只用手机可接收任务、补充输入并收到最终结果。
+- **需求**：Proactive Loop 引用真实任务状态；Telegram 能接收进度、处理 `needs_input`、取消任务并接收最终结果。
+- **验收**：只用手机可完成任务发起、补充输入、审批、取消和接收结果的闭环，重复 update 不产生重复副作用。
 
-## P1 · 隐私与数据生命周期
-
-### 一键遗忘
-
-- **状态**：已完成（归档见 `doc/archive/ONE_CLICK_FORGET.md`）
-
-### 数据导出与来源
+### 工具结果记忆、数据导出与来源
 
 - **状态**：待开始
 - **重要等级**：P1
-- **收益程度**：中
-- **预计时间**：3–5 个工作日
-- **改动量**：中
-- **需求**：提供 JSON/JSONL 导出，并展示记忆和工具结果的 provenance。
-- **验收**：用户可完整导出个人数据，每条长期数据可追溯来源。
+- **收益程度**：高
+- **预计时间**：1–2 周
+- **改动量**：大
+- **需求**：
+  - 定义工具结果何时形成 fact、episodic event、archival artifact 或临时输出。
+  - 为长期记忆和 artifact 保存来源、时间、任务、工具与外部对象引用。
+  - 提供 JSON / JSONL 导出，并在 UI 中展示 provenance。
+- **验收**：关键工具结果第二天仍可 recall；用户可完整导出个人数据；每条长期数据可追溯来源并可删除。
 
-## P2 · 可观测性与体验
+### Voice System 2.0 与真实语音 E2E
 
-### 结构化运行日志与延迟指标
+- **状态**：待开始
+- **重要等级**：P1
+- **收益程度**：高
+- **预计时间**：2–4 周
+- **改动量**：大
+- **需求**：
+  - 明确唯一默认语音路径与降级路径，使用真实 ASR / TTS 建立基线，不以 stub 作为质量验收。
+  - 优化首音频延迟、连续分句的音色 / 语速 / 韵律一致性，以及数字、日期、URL、中英文混读。
+  - 保证打断后旧队列不再播放；Safari / 浏览器 STT 失败时可明确降级到文字或后续本地 ASR。
+  - 在真实桌面和手机设备记录延迟、失败率与受控主观质量样本。
+- **验收**：
+  - 真实设备可重复完成语音输入、后台工作、语音输出和中途打断。
+  - 有 P50 / P95、失败率和主观质量基线；连续输出无明显声音漂移或旧音频串播。
+  - 默认路径连续使用 30 分钟无阻塞性问题。
+
+### 主次分明的 UI 与后台任务体验
+
+- **状态**：待开始
+- **重要等级**：P1
+- **收益程度**：高
+- **预计时间**：1–2 周
+- **改动量**：大
+- **需求**：
+  - 主 transcript 只展示意图、ack、关键里程碑、`needs_input` 和最终答案。
+  - 统一 Plan、Task、Approval、Trace 的信息层级；桌面使用侧栏，移动端使用不抢焦点的任务抽屉。
+  - 增加 Task Center，清晰展示排队、运行、等待输入、失败、重试、取消和完成状态。
+  - 刷新、切 session 和继续聊天后仍能恢复后台任务视图。
+- **验收**：用户不看 trace 也能理解正在做什么、是否需要行动和结果在哪里；详细过程随时可展开；桌面与移动端流程通过。
+
+### Context Engineering 集成评测与生产接线
+
+- **状态**：部分实现
+- **重要等级**：P1
+- **收益程度**：高
+- **预计时间**：1–2 周
+- **改动量**：大
+- **需求**：覆盖摘要事实保留、offload 后重读、真实 provider cache marker、token-aware summary 和多进程安全。
+- **验收**：评测进入 CI 或可重复离线 runner；有明确阈值；摘要、offload 与 cache 行为不因重启或并发破坏正确性。
+
+## P2 · 体验增强与实验
+
+### Visual Design System 2.0
 
 - **状态**：待开始
 - **重要等级**：P2
 - **收益程度**：中
-- **预计时间**：3–5 个工作日
+- **预计时间**：1–2 周
 - **改动量**：中
-- **需求**：统一 tool、skill、ASR、TTS 日志，统计端到端 P50/P95。
-- **验收**：可按 session 定位慢点和失败阶段，不记录密钥或完整敏感内容。
+- **需求**：
+  - 建立 spacing、radius、shadow、color、motion design tokens，替换临时样式。
+  - 为消息、状态、审批和空状态补充克制的 motion；支持 reduced-motion。
+  - 打磨 `StatusChip`、`Composer`、Empty / Skeleton / Toast / Tooltip，完成 macOS / iOS Safari safe-area 与滚动走查。
+  - 产出 before / after 截图与可复用规范。
+- **验收**：非团队用户可明显感知专业度提升；新页面可复用令牌和原语；桌面与移动端视觉、可访问性、lint、typecheck、build 通过。
 
-### 真实语音 E2E
+### Contextual Retrieval 完整接线
+
+- **状态**：原型
+- **重要等级**：P2
+- **收益程度**：中
+- **预计时间**：1–2 周
+- **改动量**：大
+- **需求**：传入真实 parent / reference 文档，在向量 payload 中分离 original text、contextual prefix 和 embed text，并先用 eval 证明收益。
+- **验收**：真实 Qdrant 路径不向用户展示内部 prefix；离线 eval 证明召回质量提升后才默认启用。
+
+### Plan Mode 高级编辑
 
 - **状态**：待开始
 - **重要等级**：P2
-- **收益程度**：中
-- **预计时间**：1 周
+- **收益程度**：低
+- **预计时间**：1–2 周
 - **改动量**：中
-- **需求**：增加真实 TTS/ASR 路径验证，不只依赖 stub。
-- **验收**：受控环境可重复完成语音输入到播放输出的端到端测试。
-
-### 可查询的 Agent 执行轨迹
-
-- **状态**：已完成（归档见 `doc/archive/AGENT_TRACE.md`）
+- **需求**：按真实使用反馈评估拖拽重排、undo / history、计划去重与多端编辑冲突。
+- **验收**：只实现有明确用户案例的能力，不破坏现有 CAS、持久化和 LLM prompt 一致性。
 
 ## Backlog · 按需评估
 
-- 本地 ASR（重要等级：P2；收益程度：中；预计时间：2–4 周；改动量：大）
-- 第二 channel / Slack（重要等级：P2；收益程度：中；预计时间：1–2 周；改动量：大）
-- Daily 深化（重要等级：P2；收益程度：低；预计时间：1–2 周；改动量：中）
-- LiveKit 全双工（重要等级：P2；收益程度：低；预计时间：2–4 周；改动量：特大）
-- 多设备高级同步（重要等级：P2；收益程度：中；预计时间：2–4 周；改动量：特大）
-- 多用户（重要等级：P2；收益程度：低；预计时间：4–8 周；改动量：特大）
-- 通用 MCP 适配器（重要等级：P2；收益程度：中；预计时间：2–4 周；改动量：大）
-- OAuth（重要等级：P2；收益程度：低；预计时间：2–4 周；改动量：大）
+| 方向 | 重要等级 | 收益 | 预计时间 | 改动量 | 升级条件 |
+|---|---|---|---|---|---|
+| 本地 ASR | P2 | 中 | 2–4 周 | 大 | 真实设备数据证明浏览器 STT 是主要瓶颈 |
+| 第二 channel / Slack | P2 | 中 | 1–2 周 | 大 | Telegram 闭环稳定且有明确需求 |
+| Daily 深化 | P2 | 低 | 1–2 周 | 中 | 默认语音路径稳定后 |
+| LiveKit 全双工 | P2 | 低 | 2–4 周 | 特大 | 真实多人或低延迟场景出现 |
+| 多设备高级同步 | P2 | 中 | 2–4 周 | 特大 | 后台任务恢复与冲突模型稳定后 |
+| 多用户 | P2 | 低 | 4–8 周 | 特大 | 单用户个人助手达到日常可用 |
+| 通用 MCP 适配器 | P2 | 中 | 2–4 周 | 大 | 首个连接器 vertical slice 验证抽象边界后 |
+| OAuth | P2 | 低 | 2–4 周 | 大 | 连接器进入需要标准授权的阶段 |
 
 ---
 
-**最后整理**：2026-08-01（追加 Plan Mode 手动编辑与重排序归档）
+**最后整理**：2026-08-01（按“轻前台对话、重后台工作”的个人 AI 助手目标重排）

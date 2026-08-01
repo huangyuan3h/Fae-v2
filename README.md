@@ -1,7 +1,7 @@
 # FAE-v2
 
 > **F**ully **A**utonomous **E**cho · v2 · **stable 0.6.0**  
-> 有长期记忆、能主动 loop、可本地部署的语音 Agent。  
+> 有长期记忆、以轻量主对话协调可恢复后台工作的个人 AI 助手。
 > 变更摘要见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 文档
@@ -26,7 +26,7 @@
 | 5.2 Subagents | ✅ M5-2 |
 | P6 Core 常驻 & 快速部署 | ✅ M6 |
 | P7 Client 契约 & 壳化 | ✅ M7 |
-| **下一主线** | **P8 · Tool Runtime & 连接器** |
+| **下一主线** | **前台 / 后台 Token 归因 → 持久后台工作平面 → 个人助手 Golden Path** |
 
 MCP / LiveKit / Slack：**暂缓 / 未实现**。详见 [`doc/TODO.md`](./doc/TODO.md)。
 
