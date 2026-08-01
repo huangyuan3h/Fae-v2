@@ -34,8 +34,15 @@ UPDATE_PLAN_TOOL: dict[str, Any] = {
         "description": (
             "Track a multi-step plan for the current task. Call once with "
             "action=create to publish the plan up front; then call claim / "
-            "complete / block / cancel to update step status. Use this to "
-            "make progress visible to the user across turns."
+            "complete / block / unblock / cancel to update step status. Use "
+            "this to make progress visible to the user across turns. "
+            "Reengage rule: if any step is currently blocked (look for the "
+            "<active_plan> marker [!] blocked) and the user has just sent a "
+            "new message that answers the block, you MUST call "
+            "update_plan(action=unblock, step_index=N, note=<user answer>) "
+            "BEFORE claim/complete on that step so the user-provided info is "
+            "recorded. If the user wants to abort the step instead, call "
+            "action=cancel with step_index=N."
         ),
         "parameters": {
             "type": "object",
@@ -74,11 +81,15 @@ UPDATE_PLAN_TOOL: dict[str, Any] = {
                 },
                 "step_index": {
                     "type": "integer",
-                    "description": "0-based step index for claim/complete/block/cancel.",
+                    "description": "0-based step index for claim/complete/block/unblock/cancel.",
                 },
                 "note": {
                     "type": "string",
-                    "description": "Optional note (complete/block/cancel).",
+                    "description": (
+                        "Optional note. For unblock, pass the user's answer so "
+                        "the note records it; for block, the missing-info reason; "
+                        "for complete/cancel, an outcome summary."
+                    ),
                 },
             },
             "required": ["action"],
@@ -211,7 +222,7 @@ def _dispatch_step_update(
         step = plan_store.block_step(step_id, reason=note or "")
         event_type = "plan_step_update"
     elif action == "unblock":
-        step = plan_store.unblock_step(step_id)
+        step = plan_store.unblock_step(step_id, note=note)
         event_type = "plan_step_update"
     elif action == "cancel":
         step = plan_store.cancel_step(step_id, note=note)
@@ -294,6 +305,39 @@ def active_plan_as_prompt_block(plan: Plan) -> str:
     return "\n".join(lines)
 
 
+def find_blocked_steps(plan: Plan) -> list[PlanStep]:
+    """Return steps that are currently blocked (for user re-engagement)."""
+    if not plan.is_active:
+        return []
+    return [s for s in plan.steps if s.status == PlanStepStatus.BLOCKED.value]
+
+
+def user_response_for_blocked_block(plan: Plan) -> str:
+    """System-prompt block that names any blocked step(s) on the active
+    plan. Combined with the user message, it nudges the LLM to call
+    ``update_plan(action=unblock, step_index=N, note=<user answer>)`` on
+    its next tool turn rather than skipping past the block.
+    """
+    blocked = find_blocked_steps(plan)
+    if not blocked:
+        return ""
+    lines = ["<user_response_for_blocked>"]
+    lines.append(
+        "The active plan has the following blocked step(s). Treat the user's "
+        "current message as their response to the first blocked step unless "
+        "they explicitly say otherwise; call update_plan(action=unblock, "
+        "step_index=N, note=<the user's answer>) before claiming/completing "
+        "that step, or update_plan(action=cancel, step_index=N) if they want "
+        "to drop it."
+    )
+    for step in blocked:
+        lines.append(f"- step_index={step.index}: {step.title}")
+        if step.note:
+            lines.append(f"  last_block_reason: {step.note}")
+    lines.append("</user_response_for_blocked>")
+    return "\n".join(lines)
+
+
 _STATUS_GLYPH: dict[str, str] = {
     PlanStepStatus.PENDING.value: " ",
     PlanStepStatus.IN_PROGRESS.value: "▶",
@@ -309,7 +353,12 @@ _PLAN_MODE_INSTRUCTION = (
     "publish a plan to the user. Then for each step call "
     "update_plan(action=claim, step_index=N) when you start, and "
     "update_plan(action=complete|block|cancel, step_index=N) when you finish. "
-    "Use the plan to keep the user oriented across turns."
+    "Use the plan to keep the user oriented across turns. "
+    "Reengage rule: when the <active_plan> block contains a blocked step and "
+    "the user just sent new input on this turn, you MUST first call "
+    "update_plan(action=unblock, step_index=N, note=<the user's answer>) so "
+    "the resolution is recorded before you claim/complete that step. If the "
+    "user instead wants to drop the step, call action=cancel with step_index=N."
 )
 
 _PLAN_DETECT_PROMPT = (

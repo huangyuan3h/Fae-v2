@@ -8,14 +8,32 @@ Algorithm mirrors Pipecat's ``LLMContextSummaryConfig``:
 
 The summary LLM is configurable and defaults to the proactive / server-side
 model so the main conversation bandwidth is not consumed.
+
+Lifecycle (P1 follow-up)
+------------------------
+
+``maybe_summarize`` now claims ownership of its source turns via
+``RecallStore.commit_summary_batch`` keyed by an idempotent fingerprint
+``(session_id, ordered_turn_ids)``. Subsequent calls observing the same
+hot window return ``SummaryResult(skipped="already_committed")`` without
+re-invoking the LLM or duplicating archival / facts entries.
+
+The committed batch row carries the canonical ``summary_text``; the
+next call injects it into the prompt as a "previous rolling summary"
+so successive summaries are truly cumulative instead of independent
+re-summarizations. ``MemoryCompactor`` is the raw fallback — it skips
+any turn whose ``summary_batch_id`` is set so a summarized turn is
+never raw-archived twice.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -37,9 +55,16 @@ _RECENT_KEEP_DEFAULT = 6
 _TARGET_TOKENS_DEFAULT = 1200
 _MAX_TOKENS_DEFAULT = 2000
 
+# UUID namespace used for stable archival point IDs derived from a
+# fingerprint. Stable namespace keeps every run of the same input set
+# deterministically writing the same archival point.
+_BATCH_FINGERPRINT_NS = uuid.UUID("6f1d9c19-4d7a-4f63-8f4b-7b9a6c5d3e21")
+
 
 _SUMMARY_SYSTEM_PROMPT = (
     "You compress a chat transcript into a single rolling summary block. "
+    "You may also be given a previous rolling summary — merge any durable "
+    "facts from it into the new summary instead of dropping them. "
     "Keep: durable facts about the user (name, location, preferences, ongoing "
     "projects), unresolved questions, and explicit commitments. Drop: greetings, "
     "filler, and any sentence that adds no information. "
@@ -61,6 +86,8 @@ class SummaryResult:
     target_block: str = "current"
     elapsed_s: float = 0.0
     skipped: str | None = None
+    batch_id: str | None = None
+    archive_point_id: str | None = None
 
 
 class RollingSummarizer:
@@ -72,14 +99,24 @@ class RollingSummarizer:
     - estimated char count >= ``max_chars`` (default 9000)
 
     Behaviour:
-    - Pops the oldest ``n = hot_count - recent_keep`` turns (default keep 6)
-    - Sends them to a cheap LLM with a strict JSON prompt
-    - Writes the returned ``summary`` into the Letta ``current`` block
-    - Upserts the same summary into archival with a "recall_summary" tag
-    - Marks the popped turns archived so the compactor doesn't double-process
+    - Selects oldest *uncovered* turns (those without an existing
+      ``summary_batch_id``) and skips the most recent ``recent_keep``
+      turns so they remain verbatim.
+    - Computes a fingerprint from ``(session_id, ordered_turn_ids)``. If
+      a batch row already exists for the fingerprint the call returns
+      ``SummaryResult(skipped="already_committed")`` without invoking
+      the LLM, ensuring idempotency across retries.
+    - Injects the previous batch's summary_text into the prompt so the
+      new summary is cumulative rather than re-derived from scratch.
+    - On LLM success: writes the canonical block + archival (with a
+      deterministic ``point_id`` derived from the fingerprint) + facts,
+      then commits a batch row that atomically claims the source
+      turns' ``summary_batch_id``. The compactor will skip these turns.
+    - On LLM failure: returns ``skipped="timeout"`` / ``"error"`` without
+      committing, leaving the turns for the raw compactor fallback.
 
-    This is non-destructive: original ``RecallTurn`` rows are kept (archived)
-    so a later sleeptime / context-archaeology pass can still surface them.
+    This is non-destructive: original ``RecallTurn`` rows are kept so a
+    later sleeptime / context-archaeology pass can still surface them.
     """
 
     def __init__(
@@ -124,12 +161,54 @@ class RollingSummarizer:
         if char_total < self.max_chars and len(hot) < self.max_turns * 2:
             return None
 
-        to_summarize = hot[: max(1, len(hot) - self.recent_keep)]
-        kept = hot[-self.recent_keep :]
+        # Pick only turns the summarizer hasn't already claimed.
+        candidate_n = max(1, len(hot) - self.recent_keep)
+        # Compute the fingerprint over the *logical* window (oldest
+        # ``len(hot) - recent_keep`` turns) so a subsequent call observing
+        # the same hot window hits the idempotent short-circuit even when
+        # ``peek_oldest_uncovered`` returns 0 rows because the previous
+        # commit already covered them.
+        fingerprint = self._fingerprint_for(sid, hot[:candidate_n])
+        existing = self.recall.find_batch_by_fingerprint(sid, fingerprint)
+        if existing is not None:
+            kept_count = max(0, len(hot) - candidate_n)
+            kept = hot[-kept_count:] if kept_count else []
+            return SummaryResult(
+                session_id=sid,
+                summarized_turns=candidate_n,
+                kept_recent=len(kept),
+                summary_text=existing.get("summary_text", "") or "",
+                facts=[],
+                open_questions=[],
+                target_block=self.target_block,
+                skipped="already_committed",
+                batch_id=existing.get("batch_id"),
+                archive_point_id=existing.get("batch_id"),
+            )
+
+        to_summarize = self.recall.peek_oldest_uncovered(sid, candidate_n)
+        if not to_summarize:
+            # Window grew but everything uncovered has been claimed by an
+            # earlier batch whose fingerprint differs (e.g. a turn was
+            # appended between batches). Nothing to do.
+            return None
+        # ``kept`` is the most-recent turns in the hot window — at least
+        # ``recent_keep`` rows survive verbatim. Anything between
+        # ``to_summarize[-1]`` and ``kept[0]`` would be covered-only
+        # turns (already summarized previously) and is dropped from
+        # the candidate set.
+        kept_count = max(0, len(hot) - len(to_summarize))
+        kept = hot[-kept_count:] if kept_count else []
+
+        previous = self.recall.latest_batch(sid)
+        previous_summary = (previous or {}).get("summary_text") or ""
+
         started = time.monotonic()
         try:
             async with asyncio.timeout(self.timeout_s):
-                payload = await self._call_summary_llm(to_summarize)
+                payload = await self._call_summary_llm(
+                    to_summarize, previous_summary=previous_summary
+                )
         except TimeoutError:
             logger.warning("rolling summary timeout sid=%s", sid)
             return SummaryResult(
@@ -160,6 +239,8 @@ class RollingSummarizer:
         summary_text = payload["summary"][: self.current_char_limit]
         facts = payload.get("facts") or []
         open_questions = payload.get("open_questions") or []
+        batch_id = str(uuid.uuid5(_BATCH_FINGERPRINT_NS, fingerprint))
+        point_id = batch_id  # Stable archival point ID across retries.
 
         # Inject into the persistent block (overwrite, not append).
         if hasattr(self.client, "set_block"):
@@ -169,6 +250,7 @@ class RollingSummarizer:
                 kept=len(kept),
                 summary=summary_text,
                 open_questions=open_questions,
+                batch_id=batch_id,
             )
             try:
                 await self.client.set_block(self.target_block, note)  # type: ignore[misc]
@@ -183,6 +265,7 @@ class RollingSummarizer:
                 await self.archival.upsert(
                     text=summary_text,
                     session_id=sid,
+                    point_id=point_id,
                     tags=["recall_summary", "rolling"],
                 )
             except Exception:  # noqa: BLE001
@@ -209,6 +292,32 @@ class RollingSummarizer:
                 except Exception:  # noqa: BLE001
                     logger.exception("save_fact failed during summarize sid=%s", sid)
 
+        committed = self.recall.commit_summary_batch(
+            session_id=sid,
+            fingerprint=fingerprint,
+            turn_ids=[t.id for t in to_summarize],
+            summary_text=summary_text,
+            batch_id=batch_id,
+        )
+        if committed is None:
+            # Another worker raced us to the same fingerprint — treat as
+            # idempotent success but report the canonical batch id.
+            existing = self.recall.find_batch_by_fingerprint(sid, fingerprint)
+            if existing is not None:
+                return SummaryResult(
+                    session_id=sid,
+                    summarized_turns=len(to_summarize),
+                    kept_recent=len(kept),
+                    summary_text=existing.get("summary_text", "") or summary_text,
+                    facts=[],
+                    open_questions=[],
+                    target_block=self.target_block,
+                    elapsed_s=time.monotonic() - started,
+                    skipped="already_committed",
+                    batch_id=existing.get("batch_id"),
+                    archive_point_id=existing.get("batch_id"),
+                )
+
         return SummaryResult(
             session_id=sid,
             summarized_turns=len(to_summarize),
@@ -218,17 +327,44 @@ class RollingSummarizer:
             open_questions=open_questions,
             target_block=self.target_block,
             elapsed_s=time.monotonic() - started,
+            batch_id=batch_id,
+            archive_point_id=point_id,
         )
 
     # ── private helpers ──────────────────────────────────────────────────
 
+    @staticmethod
+    def _fingerprint_for(session_id: str, turns: list["RecallTurn"]) -> str:
+        """Stable fingerprint over (session_id, ordered turn IDs).
+
+        Two ``maybe_summarize`` calls observing the same source turn
+        window produce the same fingerprint so the second hits the
+        ``already_committed`` short-circuit.
+        """
+        ordered = "|".join(t.id for t in turns)
+        h = hashlib.sha256(f"{session_id}::{ordered}".encode("utf-8")).hexdigest()
+        return h[:32]
+
     async def _call_summary_llm(
-        self, turns: list["RecallTurn"]
+        self,
+        turns: list["RecallTurn"],
+        *,
+        previous_summary: str = "",
     ) -> dict[str, Any]:
         transcript = self._render_transcript(turns)
+        prev_block = ""
+        if previous_summary.strip():
+            prev_block = (
+                "<previous_summary>\n"
+                f"{previous_summary.strip()}\n"
+                "</previous_summary>\n\n"
+                "Merge durable facts from <previous_summary> into the new "
+                "summary instead of dropping them.\n\n"
+            )
         user_msg = (
             "Compress the following conversation transcript into a rolling "
             "summary. Strict JSON only.\n\n"
+            f"{prev_block}"
             f"<transcript>\n{transcript}\n</transcript>"
         )
         req = ChatRequest(
@@ -269,14 +405,17 @@ class RollingSummarizer:
         kept: int,
         summary: str,
         open_questions: list[str],
+        batch_id: str | None = None,
     ) -> str:
         lines = [
             f"# Rolling summary session={sid}",
             f"# compressed={summarized} turns, kept last {kept} verbatim",
-            "",
-            "## Summary",
-            summary.strip(),
         ]
+        if batch_id:
+            lines.append(f"# batch_id={batch_id}")
+        lines.append("")
+        lines.append("## Summary")
+        lines.append(summary.strip())
         if open_questions:
             lines.append("")
             lines.append("## Open questions")

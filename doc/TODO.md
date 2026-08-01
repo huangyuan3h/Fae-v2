@@ -21,7 +21,7 @@
 
 ## 当前焦点
 
-1. **复杂任务 Plan Mode 后续**：补充用户 blocked 接上交互、Plan 手动编辑 / 取消 / 重排序以及跨 turn 续推的边界场景。
+1. **Plan Mode · 手动编辑 / 重排序 / 外部 channel 闭环**：把 PlanPanel 升级为可编辑（修改 step title / acceptance、调整顺序），并让 Telegram / 外部 channel 能复用 blocked reengage（见 `doc/TODO.md:178`）。在 user-reengage（已归档）的基础上，把 plan 从「只读 + 单向驱动」升级为「用户可参与结构」。
 
 ## P0 · 文档与发布完整性
 
@@ -69,6 +69,44 @@
 
 - **状态**：已完成（归档见 `doc/archive/PLAN_MODE.md`）
 
+### Plan Mode · 用户 blocked 接续
+
+- **状态**：已完成（归档见 `doc/archive/PLAN_MODE_REENGAGE.md`）
+- **重要等级**：P1
+- **收益程度**：高
+- **预计时间**：3–5 个工作日
+- **改动量**：中
+- **需求**：
+  - 后端：`unblock_step(note=)` 覆盖 note；`append_step_note` 不改 status；Prompt 强约束 reengage rule；`<user_response_for_blocked>` 注入 system 块。
+  - WS：新增入站 `plan_step_input`（answer / abort）与出站 `plan_step_input_ack`。
+  - HTTP：新增 `GET /api/plans/active` 与 `POST /api/plans/{plan_id}/abandon`。
+  - SDK：`WsClientMessage` / `WsServerMessage` 扩展 + `WsChatClient.sendPlanStepInput`。
+  - FE：PlanPanel 在 blocked step 上加「补一条说明 / 取消这一步」按钮；`useVoiceSession.loadSession` 自动 `fetchActivePlan` 拉取；新方法 `provideStepInput` / `abandonActivePlan`。
+- **验收**：
+  - blocked step 在 PlanPanel 中显红、可被输入或一键取消，输入后转 pending 并保留 note。
+  - 切 session / 刷新后无需先发 chat 即可看到 active plan。
+  - 「放弃计划」可正确释放 plan 占位。
+  - 后端 579 例测试通过；FE `pnpm typecheck/lint/build` 通过。
+
+### Plan Mode · 手动编辑与重排序
+
+- **状态**：待开始
+- **重要等级**：P1
+- **收益程度**：中
+- **预计时间**：1–2 周
+- **改动量**：中
+- **用户感受**：当前 PlanPanel 仍为只读结构；若用户想细化任务或调整顺序必须新开对话，体感上「计划是我不能改的公告」而非「我们一起维护的清单」。
+- **需求**：
+  - 后端：新增 `edit_step(step_id, title=None, acceptance=None)` 与 `reorder_step(step_id, new_index)`；状态机不破坏现有约束（不允许把 completed / cancelled 步骤重排）。
+  - HTTP：`PATCH /api/plans/{plan_id}/steps/{step_id}` 与 `POST /api/plans/{plan_id}/reorder`。
+  - SDK：补齐对应类型与方法。
+  - FE：PlanPanel 支持就地编辑 title / acceptance，长按拖拽或上/下箭头调整顺序。
+  - LLM 看到用户改写后的 plan：`<active_plan>` 块每次 `plan_loaded` 与 step update 都重渲染。
+- **验收**：
+  - 用户可以在不重启对话的前提下修订计划细节。
+  - 重排序后 step index 与 note 持久化到 SQLite，跨 turn 与刷新可见。
+  - LLM 下一轮拿到的 `<active_plan>` 与用户编辑后保持一致。
+
 ### 主线与细节分层的 Agent 执行视图
 
 - **状态**：已完成（归档见 `doc/archive/AGENT_EXECUTION_VIEW.md`）
@@ -107,13 +145,21 @@
 
 ### Rolling Summary 生命周期
 
-- **状态**：部分实现
+- **状态**：已完成（归档见 `doc/archive/ROLLING_SUMMARY_LIFECYCLE.md`）
 - **重要等级**：P1
 - **收益程度**：中
 - **预计时间**：3–5 个工作日
 - **改动量**：中
-- **需求**：统一触发条件，明确 compactor 与 summarizer 的执行顺序和归档所有权，避免重复摘要。
-- **验收**：集成测试证明同一批 turns 不会重复摘要，关键事实不会丢失。
+- **需求**：
+  - `RecallStore`：新增 `recall_summary_batches` 表 + `recall_turns.summary_batch_id` 列；提供 `peek_oldest_uncovered` / `commit_summary_batch` / `latest_batch` / `find_batch_by_fingerprint` 原子方法。
+  - `RollingSummarizer`：按 `(session_id, ordered_turn_ids)` 算 fingerprint；命中已有 batch 返回 `skipped="already_committed"` 不调 LLM；新 batch 把上一轮 `summary_text` 注入 prompt；archival 用 deterministic `point_id`（UUID5）。
+  - `MemoryCompactor`：`peek_oldest_uncovered` 跳过已被认领的 turn；作为 raw 兜底保留。
+  - `LettaMemoryService.persist_turn`：顺序改为 summarizer → compactor。
+- **验收**：
+  - 同 hot 窗口连续两次 `maybe_summarize` 第二次 `skipped="already_committed"`，`provider.calls` 仍为 1，archival / batches 仍为 1 行。
+  - 第二轮 prompt 含 `<previous_summary>` + 第一轮 `summary_text`，关键事实不丢。
+  - compactor raw 归档文本中不含任何被 claim 的 turn id。
+  - 后端 585 例测试通过，覆盖率 79.02%。
 
 ### Tool Offload 可恢复性
 
@@ -230,4 +276,4 @@
 
 ---
 
-**最后整理**：2026-07-26
+**最后整理**：2026-08-01（追加 Rolling Summary 生命周期收口归档）

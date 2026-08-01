@@ -59,23 +59,39 @@ FAE-v2 的 context engineering 由 6 个相互正交的模块组成，全部默�
 
 **入口**：`fae/memory/summarizer.py::RollingSummarizer.maybe_summarize`
 
-- 触发：`len(hot_turns) >= max_turns` **OR** `char_total >= max_chars`
-  （默认 30 / 9000）。
+- 触发：`len(hot_turns) >= max_turns` **AND** (`char_total >= max_chars`
+  **OR** `len(hot_turns) >= 2 * max_turns`)（默认 30 / 9000）。
 - 行为：
-  - 取最旧 `N = hot - recent_keep` 条 turn，调便宜 LLM（默认
-    `resolve_server_llm_config` 的 proactive 模型）。
+  - 仅选**未被任何 batch 认领**的最旧 `N = hot - recent_keep` 条 turn。
+  - 用 `(session_id, ordered_turn_ids)` 算 fingerprint。命中已有 batch
+    → 返回 `SummaryResult(skipped="already_committed")`，**不调 LLM**。
+  - 新指纹：调便宜 LLM（默认 `resolve_server_llm_config` 的 proactive
+    模型），提示词注入上一次 batch 的 `summary_text` 作为
+    `<previous_summary>` 让 summary 真正累计而非重新压缩。
   - 严格 JSON 提示词返回 `{summary, facts, open_questions}`。
   - `summary` → Letta `current` block（overwrite，非 append）。
   - `facts` → 通过 `client.save_fact()` 入事实库。
-  - 同 summary 文本 + `["recall_summary", "rolling"]` 标签 → archival。
+  - 同 summary 文本 + `["recall_summary", "rolling"]` 标签 → archival，
+    `point_id = UUID5(fingerprint)` 让重复写入幂等。
+  - LLM 成功后原子提交 `recall_summary_batches` 行：
+    `(batch_id, session_id, fingerprint, source_first_id,
+    source_last_id, source_count, summary_text, committed_at)`，并把
+    `recall_turns.summary_batch_id` 标上。
 - 不破坏 cache_control：稳定前缀（system/tools）不动；最近 6 条原文
   继续直进 prompt。
 
-**与 `compaction.py` 的关系**：`MemoryCompactor` 是 R2 的"基础版"——把老
-turn 拼字符串落 archival；R2 是 LLM 升级版——压成结构化摘要。两者并存：
-compactor 保证永不丢历史，summarizer 减负。
+**与 `compaction.py` 的关系（执行顺序）**：
 
-**测试**：`backend/tests/test_rolling_summary.py`
+1. `RollingSummarizer` 先跑，claim 它负责的 turns；
+2. `MemoryCompactor` 后跑，**跳过**所有 `summary_batch_id IS NOT NULL`
+   的 turn —— 这些 turn 已经被语义摘要认领过，再走 raw 归档会双写。
+3. 若 summarizer 不可用或上一 batch 失败，compactor 仍兜底剩下的
+   `summary_batch_id IS NULL` overflow，老链路不破。
+
+**测试**：`backend/tests/test_rolling_summary.py` + 新增
+`backend/tests/test_rolling_summary_lifecycle.py`
+（同窗口重复不重复摘要 / 上轮 summary 注入 prompt / compactor 跳过
+已认领 / summarizer 缺席时 compactor 兜底 / batch 提交层幂等）。
 
 ### R3 · Pipecat `LLMContextSummarizer`（Daily 路径）
 

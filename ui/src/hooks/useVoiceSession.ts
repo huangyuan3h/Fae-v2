@@ -53,7 +53,9 @@ import {
 } from "@/lib/voice-prefs";
 import { showBrowserNotification } from "@/lib/notifications-api";
 import {
+  abandonPlan,
   ChatAbortedError,
+  fetchActivePlan,
   fetchChatHistory,
   fetchChatSessions,
   setChatSessionPinned,
@@ -418,6 +420,14 @@ export function useVoiceSession() {
         await hydrateExecutionsFromTrace(sid);
       } catch {
         setHistoryNote(null);
+      }
+      try {
+        const plan = await fetchActivePlan(sid);
+        if (plan && plan.status === "active") {
+          setActivePlan(plan);
+        }
+      } catch {
+        /* ignore — plan restore is best-effort */
       }
       void reloadSessions();
     },
@@ -1232,6 +1242,22 @@ export function useVoiceSession() {
             onPlanSuggested: () => {
               setPlanSuggested(true);
             },
+            onPlanStepInputAck: (_planId, _stepIndex, _kind, ackStep, ackPlan) => {
+              if (ackPlan) {
+                setActivePlan(ackPlan);
+              } else if (ackStep) {
+                setActivePlan((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        steps: prev.steps.map((s) =>
+                          s.id === ackStep.id ? ackStep : s,
+                        ),
+                      }
+                    : prev,
+                );
+              }
+            },
           },
           memorySessionRef.current,
         );
@@ -1417,6 +1443,36 @@ export function useVoiceSession() {
     [],
   );
 
+  const provideStepInput = useCallback(
+    (
+      planId: string,
+      stepIndex: number,
+      inputText: string,
+      kind: "answer" | "abort",
+    ): boolean => {
+      return wsRef.current.sendPlanStepInput(
+        planId,
+        stepIndex,
+        inputText,
+        kind,
+        memorySessionRef.current,
+      );
+    },
+    [],
+  );
+
+  const abandonActivePlan = useCallback(
+    async (planId: string): Promise<void> => {
+      try {
+        await abandonPlan(planId);
+        setActivePlan(null);
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
+
   const pathLabel =
     mode === "daily" || dailyConnected
       ? "Daily 全双工"
@@ -1461,5 +1517,7 @@ export function useVoiceSession() {
     interrupt,
     activePlan,
     planSuggested,
+    provideStepInput,
+    abandonActivePlan,
   };
 }

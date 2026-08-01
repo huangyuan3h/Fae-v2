@@ -75,6 +75,28 @@ export class WsChatClient {
     return true;
   }
 
+  sendPlanStepInput(
+    planId: string,
+    stepIndex: number,
+    inputText: string,
+    kind: "answer" | "abort",
+    sessionId?: string | null,
+  ): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const payload: Record<string, unknown> = {
+      type: "plan_step_input",
+      plan_id: planId,
+      step_index: stepIndex,
+      input_text: inputText,
+      kind,
+    };
+    if (sessionId) payload.session_id = sessionId;
+    this.ws.send(JSON.stringify(payload));
+    return true;
+  }
+
   connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return Promise.resolve();
@@ -183,6 +205,14 @@ export class WsChatClient {
           if (msg.plan && msg.step) {
             handlers.onPlanStepCompleted?.(msg.plan, msg.step);
           }
+        } else if (msg.type === "plan_step_input_ack") {
+          handlers.onPlanStepInputAck?.(
+            msg.plan_id,
+            msg.step_index,
+            msg.kind,
+            msg.step ?? null,
+            msg.plan ?? null,
+          );
         } else if (msg.type === "token") {
           handlers.onToken(msg.content);
         } else if (msg.type === "done") {

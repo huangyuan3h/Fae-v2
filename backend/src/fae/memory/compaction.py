@@ -1,4 +1,20 @@
-"""Compact hot recall turns into archival when over the window limit."""
+"""Compact hot recall turns into archival when over the window limit.
+
+Lifecycle ordering
+-----------------
+
+``MemoryCompactor`` is the **raw fallback** of the rolling summary
+lifecycle. ``RollingSummarizer`` runs first; when it successfully
+commits a summary batch it claims ownership of the source turns by
+writing ``recall_turns.summary_batch_id``. The compactor then **skips**
+any turn that has ``summary_batch_id IS NOT NULL`` so the same turn is
+never raw-archived twice (once by the summarizer's archival mirror,
+once by the compactor).
+
+If the summarizer was unavailable or its batch commit failed, the
+uncovered turns flow through to the compactor as before, so behaviour
+degrades gracefully.
+"""
 
 from __future__ import annotations
 
@@ -44,11 +60,16 @@ class MemoryCompactor:
         return lock
 
     async def maybe_compact(self, session_id: str) -> int:
-        """Archive oldest turns if hot count exceeds max. Returns archived count.
+        """Archive oldest *uncovered* turns if hot count exceeds max.
 
-        Upserts to archival first; only then marks turns archived so a failed
-        write does not drop conversation history. Per-session lock avoids
-        duplicate archival from concurrent persist/sleeptime.
+        Turns already claimed by a committed summary batch
+        (``summary_batch_id IS NOT NULL``) are skipped — they are
+        semantically archived via the summarizer's archival mirror.
+
+        Returns the count of turns actually archived by this call.
+        Upserts to archival first; only then marks turns archived so a
+        failed write does not drop conversation history. Per-session
+        lock avoids duplicate archival from concurrent persist/sleeptime.
         """
         sid = (session_id or "").strip() or "default"
         async with self._lock_for(sid):
@@ -60,13 +81,18 @@ class MemoryCompactor:
             hot = self.recall.count_hot(sid)
             if hot <= self.max_turns:
                 break
-            n = min(self.batch, hot - self.max_turns)
-            turns = self.recall.peek_oldest_hot(sid, n)
+            overflow = hot - self.max_turns
+            n = min(self.batch, overflow)
+            turns = self.recall.peek_oldest_uncovered(sid, n)
             if not turns:
+                # Nothing left to claim (everything is covered by summaries).
                 break
             # Re-check ids still hot (another path may have archived them).
+            # Peek the full hot window so recently-appended uncovered turns
+            # still pass the liveness check even when they're far from the
+            # oldest end.
             still_hot = {
-                t.id for t in self.recall.peek_oldest_hot(sid, max(n, hot))
+                t.id for t in self.recall.peek_oldest_hot(sid, max(hot, n))
             }
             turns = [t for t in turns if t.id in still_hot]
             if not turns:

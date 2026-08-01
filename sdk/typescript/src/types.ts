@@ -91,6 +91,14 @@ export type WsServerMessage =
       plan_id: string;
       plan?: PlanPayload | null;
       step?: PlanStepPayload | null;
+    }
+  | {
+      type: "plan_step_input_ack";
+      plan_id: string;
+      step_index: number;
+      kind: "answer" | "abort";
+      step?: PlanStepPayload | null;
+      plan?: PlanPayload | null;
     };
 
 export type PlanStepStatus =
@@ -136,6 +144,14 @@ export type WsClientMessage =
       confirm?: boolean;
       remember?: "session" | "always" | null;
       decided_by?: string;
+    }
+  | {
+      type: "plan_step_input";
+      plan_id: string;
+      step_index: number;
+      input_text?: string;
+      kind: "answer" | "abort";
+      session_id?: string;
     };
 
 export type ApprovalStatus =
@@ -268,6 +284,13 @@ export type StreamHandlers = {
   onPlanStepUpdate?: (plan: PlanPayload, step: PlanStepPayload) => void;
   onPlanStepCompleted?: (plan: PlanPayload, step: PlanStepPayload) => void;
   onPlanSuggested?: (userText: string) => void;
+  onPlanStepInputAck?: (
+    planId: string,
+    stepIndex: number,
+    kind: "answer" | "abort",
+    step?: PlanStepPayload | null,
+    plan?: PlanPayload | null,
+  ) => void;
 };
 
 export type FaeCapabilities = {

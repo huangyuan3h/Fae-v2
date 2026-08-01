@@ -289,13 +289,18 @@ class LettaMemoryService:
 
             await self._client.append_recall(session_id, user_text, assistant_text)
             await self._persist_episodes(session_id, user_text, saved_facts)
-            if self._compactor is not None:
-                await self._compactor.maybe_compact(session_id)
+            # Lifecycle order: RollingSummarizer first so it can claim
+            # ownership of source turns via summary_batch_id; MemoryCompactor
+            # is the raw fallback and skips any turn the summarizer already
+            # claimed. If the summarizer is unavailable, the compactor still
+            # runs on the uncovered overflow.
             if self._summarizer is not None:
                 try:
                     await self._summarizer.maybe_summarize(session_id)
                 except Exception:  # noqa: BLE001
                     logger.exception("rolling summary failed session=%s", session_id)
+            if self._compactor is not None:
+                await self._compactor.maybe_compact(session_id)
             if self._on_persist is not None:
                 self._on_persist(session_id)
         except Exception:  # noqa: BLE001

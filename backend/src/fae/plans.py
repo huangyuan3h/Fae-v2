@@ -518,8 +518,14 @@ class PlanStore:
     def block_step(self, step_id: str, reason: str) -> PlanStep:
         return self._update_step_status(step_id, PlanStepStatus.BLOCKED.value, note=reason)
 
-    def unblock_step(self, step_id: str) -> PlanStep:
-        return self._update_step_status(step_id, PlanStepStatus.PENDING.value)
+    def unblock_step(self, step_id: str, note: str | None = None) -> PlanStep:
+        """Transition a blocked step back to pending.
+
+        ``note`` (when provided) overwrites the existing note so the
+        next assistant turn can read the user-provided context directly
+        from the step row.
+        """
+        return self._update_step_status(step_id, PlanStepStatus.PENDING.value, note=note)
 
     def cancel_step(self, step_id: str, note: str | None = None) -> PlanStep:
         step = self._update_step_status(step_id, PlanStepStatus.CANCELLED.value, note=note)
@@ -550,6 +556,52 @@ class PlanStore:
                         PlanStatus.ACTIVE.value,
                     ),
                 )
+
+    def append_step_note(self, step_id: str, note: str) -> PlanStep:
+        """Append a free-form note to a step without changing its status.
+
+        Useful for capturing user-provided context (e.g. "user replied with
+        the missing API key on the next turn") that the agent should see
+        when it resumes work on a blocked or pending step.
+        """
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT plan_id, idx, status, note FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise LookupError(f"plan step not found: {step_id}")
+            plan_id, idx, status, existing = row
+            now = _now()
+            merged = (existing + "\n" + note).strip() if existing else note.strip()
+            cur.execute(
+                "UPDATE plan_steps SET note=? WHERE id=? AND plan_id=?",
+                (merged, step_id, plan_id),
+            )
+            cur.execute(
+                "UPDATE plans SET updated_at=? WHERE id=?",
+                (now, plan_id),
+            )
+            cur.execute(
+                "SELECT id, plan_id, idx, title, acceptance, status, note, created_at, started_at, finished_at "
+                "FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            srow = cur.fetchone()
+            return PlanStep(
+                id=srow[0],
+                plan_id=srow[1],
+                index=srow[2],
+                title=srow[3],
+                acceptance=srow[4],
+                status=srow[5],
+                note=srow[6],
+                created_at=srow[7],
+                started_at=srow[8],
+                finished_at=srow[9],
+            )
 
     def abandon_plan(self, plan_id: str) -> None:
         with self._lock:

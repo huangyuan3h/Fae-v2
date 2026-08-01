@@ -59,6 +59,8 @@ function HomeContent() {
     orb,
     activePlan,
     planSuggested,
+    provideStepInput,
+    abandonActivePlan,
   } = useVoiceSession();
   const [active, setActive] = useState<ModelProfile | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -237,7 +239,12 @@ function HomeContent() {
 
         <aside className="hidden w-72 shrink-0 xl:block">
           <div className="sticky top-16 flex flex-col gap-3">
-            <PlanPanel plan={activePlan} suggested={planSuggested} />
+            <PlanPanel
+              plan={activePlan}
+              suggested={planSuggested}
+              onProvideStepInput={provideStepInput}
+              onAbandonPlan={abandonActivePlan}
+            />
             <ExecutionPanel
               execution={currentExecution}
               approval={{

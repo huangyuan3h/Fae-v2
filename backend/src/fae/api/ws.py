@@ -11,6 +11,12 @@ Protocol (JSON over text frames):
      "reason"?: str,
      "confirm"?: bool,
      "remember"?: "session" | "always" | null}
+    {"type": "plan_step_input",
+     "session_id": "<optional>",
+     "plan_id": "<id>",
+     "step_index": <int>,
+     "input_text": "<user answer to the block>",
+     "kind": "answer" | "abort"}
 
   server -> client:
     {"type": "skills", "active": ["technical_debugging"], "lazy_catalog": [...]}
@@ -23,11 +29,17 @@ Protocol (JSON over text frames):
      "tool_name": "...",
      "status": "approved" | "denied" | "expired" | "cancelled" | "awaiting_confirm",
      "decision_reason"?: str,
-     "decided_by"?: str}
+     "decided_by"?: string}
     {"type": "token", "content": "你"}
     {"type": "done",  "usage": {...} | null, "session_id": "..."}
     {"type": "notification", "id": "...", "title": "...", "body": "..."}
     {"type": "error", "code": "auth", "message": "..."}
+    {"type": "plan_step_input_ack",
+     "plan_id": "...",
+     "step_index": <int>,
+     "kind": "answer" | "abort",
+     "step": {...} | null,
+     "plan": {...} | null}
 
 Only one active generation per connection. A new `chat` message cancels
 the in-flight one before starting.
@@ -84,6 +96,138 @@ async def _cancel_active(active: asyncio.Task[None] | None) -> None:
         await active
     except (asyncio.CancelledError, Exception):  # noqa: BLE001
         pass
+
+
+async def _handle_plan_step_input(websocket: WebSocket, raw: dict[str, Any]) -> None:
+    """Apply a user-provided answer (or abort) to a plan step.
+
+    ``answer`` on a blocked step → ``unblock_step(note=input_text)``.
+    ``answer`` on a pending step → ``append_step_note(input_text)``.
+    ``abort`` → ``cancel_step(note=input_text)``.
+    """
+    plan_id = raw.get("plan_id")
+    step_index = raw.get("step_index")
+    kind = str(raw.get("kind") or "answer").strip().lower()
+    if (
+        not isinstance(plan_id, str)
+        or not isinstance(step_index, int)
+        or kind not in {"answer", "abort"}
+    ):
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "bad_request",
+                "message": (
+                    "plan_step_input requires plan_id, step_index, and "
+                    "kind ∈ {answer, abort}"
+                ),
+            },
+        )
+        return
+    plan_store = getattr(websocket.app.state, "plan_store", None)
+    if plan_store is None:
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "no_plan_store",
+                "message": "plan store unavailable",
+            },
+        )
+        return
+    input_text = str(raw.get("input_text") or "")
+    try:
+        plan = await asyncio.to_thread(plan_store.get_plan, plan_id)
+    except Exception:  # noqa: BLE001
+        plan = None
+    if plan is None:
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "not_found",
+                "message": f"plan {plan_id} not found",
+            },
+        )
+        return
+    if step_index < 0 or step_index >= len(plan.steps):
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "bad_request",
+                "message": (
+                    f"step_index {step_index} out of range "
+                    f"(plan has {len(plan.steps)} steps)"
+                ),
+            },
+        )
+        return
+    target = plan.steps[step_index]
+    if target.status not in {"blocked", "pending"}:
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "not_blocked",
+                "message": (
+                    f"step {step_index} is {target.status}; "
+                    "plan_step_input only targets blocked or pending steps"
+                ),
+            },
+        )
+        return
+    try:
+        if kind == "abort":
+            step = await asyncio.to_thread(
+                plan_store.cancel_step,
+                target.id,
+                note=input_text or "aborted by user",
+            )
+        else:
+            if target.status == "blocked":
+                step = await asyncio.to_thread(
+                    plan_store.unblock_step,
+                    target.id,
+                    note=input_text or "user provided info",
+                )
+            else:
+                step = await asyncio.to_thread(
+                    plan_store.append_step_note,
+                    target.id,
+                    input_text or "user provided info",
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("plan_step_input apply failed")
+        await _send(
+            websocket,
+            {
+                "type": "error",
+                "code": "plan_step_input_failed",
+                "message": str(e),
+            },
+        )
+        return
+    refreshed = await asyncio.to_thread(plan_store.get_plan, plan_id)
+    step_payload = None
+    plan_payload = None
+    if refreshed is not None:
+        serialised = plan_store.to_dict(refreshed)
+        plan_payload = serialised
+        if 0 <= step_index < len(serialised["steps"]):
+            step_payload = serialised["steps"][step_index]
+    await _send(
+        websocket,
+        {
+            "type": "plan_step_input_ack",
+            "plan_id": plan_id,
+            "step_index": step_index,
+            "kind": kind,
+            "step": step_payload,
+            "plan": plan_payload,
+        },
+    )
 
 
 def _memory_from_app(ws: WebSocket) -> LettaMemoryService | None:
@@ -159,15 +303,23 @@ async def _run_stream(
         plan_store = getattr(ws.app.state, "plan_store", None)
         active_plan = plan_store.get_active_for_session(session_id) if plan_store is not None else None
         if active_plan is not None:
-            from fae.agent.plan_tools import active_plan_as_prompt_block
+            from fae.agent.plan_tools import (
+                active_plan_as_prompt_block,
+                find_blocked_steps,
+                user_response_for_blocked_block,
+            )
             plan_block = active_plan_as_prompt_block(active_plan)
-            if plan_block:
+            reengage_block = user_response_for_blocked_block(active_plan)
+            combined_block = "\n\n".join(
+                b for b in (plan_block, reengage_block) if b
+            )
+            if combined_block:
                 sys_msg = next(
                     (m for m in stream_request.messages if m.role == "system"),
                     None,
                 )
                 if sys_msg is not None:
-                    new_content = sys_msg.content + "\n\n" + plan_block
+                    new_content = sys_msg.content + "\n\n" + combined_block
                     stream_request = stream_request.model_copy(
                         update={
                             "messages": [
@@ -180,11 +332,14 @@ async def _run_stream(
                     stream_request = stream_request.model_copy(
                         update={
                             "messages": [
-                                ChatMessage(role="system", content=plan_block),
+                                ChatMessage(role="system", content=combined_block),
                                 *stream_request.messages,
                             ]
                         }
                     )
+            # Expose find_blocked_steps to keep it referenced even when no
+            # blocked steps exist — FE can rely on the persisted step state.
+            _ = find_blocked_steps
             await _send(
                 ws,
                 {
@@ -517,6 +672,10 @@ async def ws_chat(
                         "decided_by": updated.decided_by,
                     },
                 )
+                continue
+
+            if msg_type == "plan_step_input":
+                await _handle_plan_step_input(websocket, raw)
                 continue
 
             if msg_type == "chat":

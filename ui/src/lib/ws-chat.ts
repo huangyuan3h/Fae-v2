@@ -47,6 +47,7 @@ import type {
   ApprovalDecisionInput,
   ApprovalRequestHandler,
   ApprovalResolvedHandler,
+  PlanPayload,
 } from "@fae/client";
 
 export type {
@@ -82,6 +83,22 @@ export class WsChatClient {
 
   sendApprovalDecision(approvalId: string, decision: ApprovalDecisionInput): boolean {
     return this.inner.sendApprovalDecision(approvalId, decision);
+  }
+
+  sendPlanStepInput(
+    planId: string,
+    stepIndex: number,
+    inputText: string,
+    kind: "answer" | "abort",
+    sessionId?: string | null,
+  ): boolean {
+    return this.inner.sendPlanStepInput(
+      planId,
+      stepIndex,
+      inputText,
+      kind,
+      sessionId,
+    );
   }
 
   connect(): Promise<void> {
@@ -142,6 +159,23 @@ export async function fetchChatHistory(
     params.set("before", opts.before);
   }
   return jsonFetch<ChatHistory>(`/api/chat/history?${params}`);
+}
+
+export async function fetchActivePlan(
+  sessionId: string,
+): Promise<PlanPayload | null> {
+  const params = new URLSearchParams({ session_id: sessionId });
+  const data = await jsonFetch<{ plan: PlanPayload | null }>(
+    `/api/plans/active?${params}`,
+  );
+  return data.plan ?? null;
+}
+
+export async function abandonPlan(planId: string): Promise<void> {
+  await jsonFetch<{ plan_id: string; status: string }>(
+    `/api/plans/${encodeURIComponent(planId)}/abandon`,
+    { method: "POST" },
+  );
 }
 
 export async function fetchChatSessions(): Promise<ChatSessionsResponse> {

@@ -41,6 +41,7 @@ from fae.api.data_forget import router as data_forget_router
 from fae.api.memory import router as memory_router
 from fae.api.notifications import router as notifications_router
 from fae.api.pipeline import router as pipeline_router
+from fae.api.plans import router as plans_router
 from fae.api.schedules import router as schedules_router
 from fae.api.schedules import status_router as scheduler_status_router
 from fae.api.skills import router as skills_router
@@ -1090,6 +1091,9 @@ def create_app(
     # ── Sensitive op approval flow (P1) ────────────────────────────────
     app.include_router(approvals_router)
     app.include_router(session_policies_router)
+
+    # ── Active plan HTTP surface (P1: Plan Mode reengage) ──────────────
+    app.include_router(plans_router)
 
     return app
 
