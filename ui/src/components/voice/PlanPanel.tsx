@@ -9,6 +9,7 @@ import type {
   PlanStepPayload,
   PlanStepStatus as PlanStepStatusType,
 } from "@fae/client";
+import type { StepEditPatch } from "@/lib/ws-chat";
 
 const STEP_STATUS_LABEL: Record<PlanStepStatusType, string> = {
   pending: "待开始",
@@ -47,6 +48,8 @@ export function PlanPanel({
   suggested,
   onProvideStepInput,
   onAbandonPlan,
+  onEditPlanStep,
+  onReorderPlanStep,
 }: {
   plan: PlanPayload | null;
   suggested: boolean;
@@ -57,6 +60,16 @@ export function PlanPanel({
     kind: "answer" | "abort",
   ) => void;
   onAbandonPlan?: (planId: string) => void;
+  onEditPlanStep?: (
+    planId: string,
+    stepId: string,
+    patch: StepEditPatch,
+  ) => boolean | Promise<boolean>;
+  onReorderPlanStep?: (
+    planId: string,
+    stepId: string,
+    newIndex: number,
+  ) => boolean | Promise<boolean>;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -158,12 +171,22 @@ export function PlanPanel({
           </div>
           {plan.steps.length > 0 && (
             <ol className="flex flex-col gap-1.5">
-              {plan.steps.map((step) => (
+              {plan.steps.map((step, idx, arr) => (
                 <StepRow
                   key={step.id}
                   step={step}
+                  stepIndex={idx}
+                  stepCount={arr.length}
                   planId={plan.id}
+                  canEdit={!onEditPlanStep ? false : step.status !== "completed" && step.status !== "cancelled"}
+                  canReorder={
+                    !!onReorderPlanStep &&
+                    step.status !== "completed" &&
+                    step.status !== "cancelled"
+                  }
                   onProvideStepInput={onProvideStepInput}
+                  onEditPlanStep={onEditPlanStep}
+                  onReorderPlanStep={onReorderPlanStep}
                 />
               ))}
             </ol>
@@ -176,22 +199,74 @@ export function PlanPanel({
 
 function StepRow({
   step,
+  stepIndex,
+  stepCount,
   planId,
+  canEdit,
+  canReorder,
   onProvideStepInput,
+  onEditPlanStep,
+  onReorderPlanStep,
 }: {
   step: PlanStepPayload;
+  stepIndex: number;
+  stepCount: number;
   planId: string;
+  canEdit: boolean;
+  canReorder: boolean;
   onProvideStepInput?: (
     planId: string,
     stepIndex: number,
     inputText: string,
     kind: "answer" | "abort",
   ) => void;
+  onEditPlanStep?: (
+    planId: string,
+    stepId: string,
+    patch: StepEditPatch,
+  ) => boolean | Promise<boolean>;
+  onReorderPlanStep?: (
+    planId: string,
+    stepId: string,
+    newIndex: number,
+  ) => boolean | Promise<boolean>;
 }) {
   const [answerOpen, setAnswerOpen] = useState(false);
   const [answerDraft, setAnswerDraft] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(step.title);
+  const [editingAcceptance, setEditingAcceptance] = useState(false);
+  const [acceptanceDraft, setAcceptanceDraft] = useState(step.acceptance ?? "");
   const isBlocked = step.status === "blocked";
   const showActions = isBlocked && Boolean(onProvideStepInput);
+
+  const commitTitle = async () => {
+    const trimmed = titleDraft.trim();
+    setEditingTitle(false);
+    if (!trimmed || trimmed === step.title) {
+      setTitleDraft(step.title);
+      return;
+    }
+    const ok = await onEditPlanStep?.(planId, step.id, { title: trimmed });
+    if (ok === false) setTitleDraft(step.title);
+  };
+
+  const commitAcceptance = async () => {
+    const trimmed = acceptanceDraft.trim();
+    setEditingAcceptance(false);
+    if (trimmed === (step.acceptance ?? "")) return;
+    const ok = await onEditPlanStep?.(planId, step.id, { acceptance: trimmed });
+    if (ok === false) setAcceptanceDraft(step.acceptance ?? "");
+  };
+
+  const moveUp = () => {
+    if (stepIndex <= 0) return;
+    void onReorderPlanStep?.(planId, step.id, stepIndex - 1);
+  };
+  const moveDown = () => {
+    if (stepIndex >= stepCount - 1) return;
+    void onReorderPlanStep?.(planId, step.id, stepIndex + 1);
+  };
   return (
     <li
       className={
@@ -213,26 +288,113 @@ function StepRow({
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={
-              step.status === "completed"
-                ? "line-through text-[var(--ink-soft)]"
-                : "text-[var(--ink)]"
-            }
-          >
-            {step.title}
-          </span>
+          {editingTitle ? (
+            <input
+              type="text"
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") {
+                  setTitleDraft(step.title);
+                  setEditingTitle(false);
+                }
+              }}
+              autoFocus
+              className="min-w-0 flex-1 rounded-md border border-[var(--accent)]/40 bg-white/80 px-1.5 py-0.5 text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+              data-testid={`plan-step-title-input-${step.index}`}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => canEdit && setEditingTitle(true)}
+              disabled={!canEdit}
+              className={
+                canEdit
+                  ? "rounded-md text-left hover:bg-black/5 px-1 -mx-1"
+                  : "text-left"
+              }
+              data-testid={`plan-step-title-${step.index}`}
+            >
+              <span
+                className={
+                  step.status === "completed"
+                    ? "line-through text-[var(--ink-soft)]"
+                    : "text-[var(--ink)]"
+                }
+              >
+                {step.title}
+              </span>
+            </button>
+          )}
           <Badge tone={stepTone(step.status)}>{STEP_STATUS_LABEL[step.status]}</Badge>
         </div>
-        {step.acceptance && (
-          <p className="mt-0.5 text-[11px] text-[var(--ink-soft)]">
-            验收：{step.acceptance}
-          </p>
+        {(step.acceptance || editingAcceptance) && (
+          <div className="mt-0.5">
+            {editingAcceptance ? (
+              <input
+                type="text"
+                value={acceptanceDraft}
+                onChange={(e) => setAcceptanceDraft(e.target.value)}
+                onBlur={commitAcceptance}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") {
+                    setAcceptanceDraft(step.acceptance ?? "");
+                    setEditingAcceptance(false);
+                  }
+                }}
+                autoFocus
+                placeholder="验收条件…"
+                className="w-full rounded-md border border-[var(--accent)]/40 bg-white/80 px-1.5 py-0.5 text-[11px] text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+                data-testid={`plan-step-acceptance-input-${step.index}`}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => canEdit && setEditingAcceptance(true)}
+                disabled={!canEdit}
+                className={
+                  canEdit
+                    ? "rounded-md text-left text-[11px] text-[var(--ink-soft)] hover:bg-black/5 px-1 -mx-1"
+                    : "text-left text-[11px] text-[var(--ink-soft)]"
+                }
+                data-testid={`plan-step-acceptance-${step.index}`}
+              >
+                验收：{step.acceptance || "（点击编辑验收条件）"}
+              </button>
+            )}
+          </div>
         )}
         {isBlocked && step.note && (
           <p className="mt-0.5 text-[11px] text-[var(--danger)]">
             原因：{step.note}
           </p>
+        )}
+        {canReorder && (
+          <div className="mt-1 flex gap-1">
+            <button
+              type="button"
+              onClick={moveUp}
+              disabled={stepIndex <= 0}
+              className="rounded-md border border-black/10 px-1.5 text-[11px] text-[var(--ink-soft)] hover:bg-black/5 disabled:opacity-40"
+              data-testid={`plan-step-up-${step.index}`}
+              aria-label="上移"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={moveDown}
+              disabled={stepIndex >= stepCount - 1}
+              className="rounded-md border border-black/10 px-1.5 text-[11px] text-[var(--ink-soft)] hover:bg-black/5 disabled:opacity-40"
+              data-testid={`plan-step-down-${step.index}`}
+              aria-label="下移"
+            >
+              ↓
+            </button>
+          </div>
         )}
         {showActions && (
           <div className="mt-1 flex flex-col gap-1.5">

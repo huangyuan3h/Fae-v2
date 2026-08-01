@@ -178,6 +178,38 @@ export async function abandonPlan(planId: string): Promise<void> {
   );
 }
 
+export type StepEditPatch = {
+  title?: string;
+  acceptance?: string;
+};
+
+export async function editPlanStep(
+  planId: string,
+  stepId: string,
+  patch: StepEditPatch,
+): Promise<PlanPayload> {
+  const data = await jsonFetch<{ plan: PlanPayload }>(
+    `/api/plans/${encodeURIComponent(planId)}/steps/${encodeURIComponent(stepId)}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  );
+  return data.plan;
+}
+
+export async function reorderPlanStep(
+  planId: string,
+  stepId: string,
+  newIndex: number,
+): Promise<PlanPayload> {
+  const data = await jsonFetch<{ plan: PlanPayload }>(
+    `/api/plans/${encodeURIComponent(planId)}/reorder`,
+    {
+      method: "POST",
+      body: JSON.stringify({ step_id: stepId, new_index: newIndex }),
+    },
+  );
+  return data.plan;
+}
+
 export async function fetchChatSessions(): Promise<ChatSessionsResponse> {
   return jsonFetch<ChatSessionsResponse>(`/api/chat/sessions`);
 }

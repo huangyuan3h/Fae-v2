@@ -61,6 +61,8 @@ function HomeContent() {
     planSuggested,
     provideStepInput,
     abandonActivePlan,
+    editPlanStepField,
+    reorderPlanStepBy,
   } = useVoiceSession();
   const [active, setActive] = useState<ModelProfile | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -244,6 +246,8 @@ function HomeContent() {
               suggested={planSuggested}
               onProvideStepInput={provideStepInput}
               onAbandonPlan={abandonActivePlan}
+              onEditPlanStep={editPlanStepField}
+              onReorderPlanStep={reorderPlanStepBy}
             />
             <ExecutionPanel
               execution={currentExecution}

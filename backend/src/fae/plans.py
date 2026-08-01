@@ -532,6 +532,188 @@ class PlanStore:
         self._maybe_complete_plan(step.plan_id)
         return step
 
+    def edit_step(
+        self,
+        step_id: str,
+        *,
+        title: str | None = None,
+        acceptance: str | None = None,
+    ) -> PlanStep:
+        """Edit a step's ``title`` / ``acceptance`` in place.
+
+        Allowed only while the step is non-terminal
+        (``pending`` / ``in_progress`` / ``blocked``). Does not touch
+        ``status``, ``note``, ``idx`` or timestamps so the agent's
+        progress view remains stable across edits.
+
+        At least one of ``title`` / ``acceptance`` must be provided.
+        Empty strings are normalised to ``""`` so callers can clear
+        fields explicitly.
+        """
+        if title is None and acceptance is None:
+            raise ValueError("edit_step: nothing to update")
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT plan_id, status FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise LookupError(f"plan step not found: {step_id}")
+            plan_id, status = row
+            if status in _STEP_TERMINAL:
+                raise InvalidPlanTransition(status, status)
+            now = _now()
+            sets: list[str] = []
+            params: list[Any] = []
+            if title is not None:
+                sets.append("title=?")
+                params.append(title.strip())
+            if acceptance is not None:
+                sets.append("acceptance=?")
+                params.append(acceptance.strip())
+            params += [step_id, plan_id]
+            cur.execute(
+                f"UPDATE plan_steps SET {', '.join(sets)} WHERE id=? AND plan_id=?",
+                params,
+            )
+            cur.execute(
+                "UPDATE plans SET updated_at=? WHERE id=?",
+                (now, plan_id),
+            )
+            cur.execute(
+                "SELECT id, plan_id, idx, title, acceptance, status, note, created_at, started_at, finished_at "
+                "FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            srow = cur.fetchone()
+            return PlanStep(
+                id=srow[0],
+                plan_id=srow[1],
+                index=srow[2],
+                title=srow[3],
+                acceptance=srow[4],
+                status=srow[5],
+                note=srow[6],
+                created_at=srow[7],
+                started_at=srow[8],
+                finished_at=srow[9],
+            )
+
+    def reorder_step(self, step_id: str, new_index: int) -> PlanStep:
+        """Move ``step_id`` to ``new_index`` within its plan.
+
+        Allowed only while the step is non-terminal. The schema has no
+        ``(plan_id, idx)`` UNIQUE constraint, so we perform a 3-step swap
+        inside a single transaction: temporary ``-1`` slot → displace
+        the row at ``new_index`` → drop the moved step into place.
+        This keeps any concurrent ``SELECT`` consistent and avoids
+        transient duplicate idx rows even if another process reads
+        mid-transaction (SQLite's WAL serialises writers).
+
+        ``new_index`` is 0-based and must satisfy ``0 <= new_index < N``
+        where ``N`` is the step count of the plan. ``note`` / status /
+        timestamps are untouched — the agent's progress view is
+        preserved across reorder.
+        """
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT plan_id, idx, status FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise LookupError(f"plan step not found: {step_id}")
+            plan_id, old_idx, status = row
+            if status in _STEP_TERMINAL:
+                raise InvalidPlanTransition(status, status)
+            cur.execute(
+                "SELECT COUNT(*) FROM plan_steps WHERE plan_id=?",
+                (plan_id,),
+            )
+            n = int(cur.fetchone()[0])
+            if new_index < 0 or new_index >= n:
+                raise ValueError(
+                    f"reorder_step: new_index {new_index} out of range (0..{n-1})"
+                )
+            if new_index == old_idx:
+                # No-op fast path — just return the current row.
+                cur.execute(
+                    "SELECT id, plan_id, idx, title, acceptance, status, note, created_at, started_at, finished_at "
+                    "FROM plan_steps WHERE id=?",
+                    (step_id,),
+                )
+                srow = cur.fetchone()
+                return PlanStep(
+                    id=srow[0],
+                    plan_id=srow[1],
+                    index=srow[2],
+                    title=srow[3],
+                    acceptance=srow[4],
+                    status=srow[5],
+                    note=srow[6],
+                    created_at=srow[7],
+                    started_at=srow[8],
+                    finished_at=srow[9],
+                )
+            now = _now()
+            try:
+                cur.execute("BEGIN IMMEDIATE")
+                # 1) Park the moved step on a sentinel slot so the
+                #    subsequent range UPDATE doesn't see its old idx.
+                cur.execute(
+                    "UPDATE plan_steps SET idx=-1 WHERE id=? AND plan_id=?",
+                    (step_id, plan_id),
+                )
+                # 2) Shift the rows in (old_idx, new_index] (moving
+                #    down) or [new_index, old_idx) (moving up) so the
+                #    new_index slot becomes free.
+                if old_idx < new_index:
+                    cur.execute(
+                        "UPDATE plan_steps SET idx=idx-1 "
+                        "WHERE plan_id=? AND idx > ? AND idx <= ?",
+                        (plan_id, old_idx, new_index),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE plan_steps SET idx=idx+1 "
+                        "WHERE plan_id=? AND idx >= ? AND idx < ?",
+                        (plan_id, new_index, old_idx),
+                    )
+                # 3) Drop the moved step into new_index.
+                cur.execute(
+                    "UPDATE plan_steps SET idx=? WHERE id=? AND plan_id=?",
+                    (new_index, step_id, plan_id),
+                )
+                cur.execute(
+                    "UPDATE plans SET updated_at=? WHERE id=?",
+                    (now, plan_id),
+                )
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
+            cur.execute(
+                "SELECT id, plan_id, idx, title, acceptance, status, note, created_at, started_at, finished_at "
+                "FROM plan_steps WHERE id=?",
+                (step_id,),
+            )
+            srow = cur.fetchone()
+            return PlanStep(
+                id=srow[0],
+                plan_id=srow[1],
+                index=srow[2],
+                title=srow[3],
+                acceptance=srow[4],
+                status=srow[5],
+                note=srow[6],
+                created_at=srow[7],
+                started_at=srow[8],
+                finished_at=srow[9],
+            )
+
     def _maybe_complete_plan(self, plan_id: str) -> None:
         with self._lock:
             cur = self._conn.cursor()

@@ -21,7 +21,7 @@
 
 ## 当前焦点
 
-1. **Plan Mode · 手动编辑 / 重排序 / 外部 channel 闭环**：把 PlanPanel 升级为可编辑（修改 step title / acceptance、调整顺序），并让 Telegram / 外部 channel 能复用 blocked reengage（见 `doc/TODO.md:178`）。在 user-reengage（已归档）的基础上，把 plan 从「只读 + 单向驱动」升级为「用户可参与结构」。
+1. **Agent 工作台式 FE 视觉打磨 2.0**（P1 高收益，1–2 周）：把 FAE 的页面观感拉到 Cursor / Codex / Linear 的「看得舒服」水位。design tokens、micro-animation、VoiceOrb 背景融合、空状态 Composition 引导、Safari 走查、复用 Empty / Skeleton / Toast / Tooltip 原语。
 
 ## P0 · 文档与发布完整性
 
@@ -90,22 +90,22 @@
 
 ### Plan Mode · 手动编辑与重排序
 
-- **状态**：待开始
+- **状态**：已完成（归档见 `doc/archive/PLAN_MODE_EDIT.md`）
 - **重要等级**：P1
 - **收益程度**：中
 - **预计时间**：1–2 周
 - **改动量**：中
-- **用户感受**：当前 PlanPanel 仍为只读结构；若用户想细化任务或调整顺序必须新开对话，体感上「计划是我不能改的公告」而非「我们一起维护的清单」。
 - **需求**：
-  - 后端：新增 `edit_step(step_id, title=None, acceptance=None)` 与 `reorder_step(step_id, new_index)`；状态机不破坏现有约束（不允许把 completed / cancelled 步骤重排）。
-  - HTTP：`PATCH /api/plans/{plan_id}/steps/{step_id}` 与 `POST /api/plans/{plan_id}/reorder`。
-  - SDK：补齐对应类型与方法。
-  - FE：PlanPanel 支持就地编辑 title / acceptance，长按拖拽或上/下箭头调整顺序。
-  - LLM 看到用户改写后的 plan：`<active_plan>` 块每次 `plan_loaded` 与 step update 都重渲染。
+  - `PlanStore.edit_step(step_id, *, title=None, acceptance=None)`：拒绝 terminal（completed/cancelled），只改 title/acceptance，不动 status/note/idx/timestamps。
+  - `PlanStore.reorder_step(step_id, new_index)`：`BEGIN IMMEDIATE` + 三步 swap（-1 哨兵 → 范围 shift → 落位），不动 status/note/timestamps。
+  - HTTP：`PATCH /api/plans/{plan_id}/steps/{step_id}` + `POST /api/plans/{plan_id}/reorder`，错误码 400/404/409 完整。
+  - SDK：`editPlanStep` / `reorderPlanStep` HTTP helper。
+  - FE：PlanPanel 就地编辑 title/acceptance（点击 → input → blur 提交 / Esc 取消）+ ↑/↓ 重排序按钮。
 - **验收**：
-  - 用户可以在不重启对话的前提下修订计划细节。
+  - 用户可在不重启对话的前提下修订 title/acceptance；失败回滚 UI 草稿。
   - 重排序后 step index 与 note 持久化到 SQLite，跨 turn 与刷新可见。
-  - LLM 下一轮拿到的 `<active_plan>` 与用户编辑后保持一致。
+  - LLM 下一轮拿到的 `<active_plan>` 含新 title 与新 idx。
+  - 后端 637 例测试通过，覆盖率 79.11%。
 
 ### 主线与细节分层的 Agent 执行视图
 
@@ -290,4 +290,4 @@
 
 ---
 
-**最后整理**：2026-08-01（追加 Rolling Summary 生命周期 + 长任务可靠性收口归档）
+**最后整理**：2026-08-01（追加 Plan Mode 手动编辑与重排序归档）

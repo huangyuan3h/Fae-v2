@@ -55,14 +55,17 @@ import { showBrowserNotification } from "@/lib/notifications-api";
 import {
   abandonPlan,
   ChatAbortedError,
+  editPlanStep,
   fetchActivePlan,
   fetchChatHistory,
   fetchChatSessions,
+  reorderPlanStep,
   setChatSessionPinned,
   updateChatSessionTitle,
   WsChatClient,
   type ApprovalRequestMsg,
   type ChatSessionSummary,
+  type StepEditPatch,
   type TokenUsage,
 } from "@/lib/ws-chat";
 
@@ -1473,6 +1476,40 @@ export function useVoiceSession() {
     [],
   );
 
+  const editPlanStepField = useCallback(
+    async (
+      planId: string,
+      stepId: string,
+      patch: StepEditPatch,
+    ): Promise<boolean> => {
+      try {
+        const next = await editPlanStep(planId, stepId, patch);
+        setActivePlan(next);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
+  const reorderPlanStepBy = useCallback(
+    async (
+      planId: string,
+      stepId: string,
+      newIndex: number,
+    ): Promise<boolean> => {
+      try {
+        const next = await reorderPlanStep(planId, stepId, newIndex);
+        setActivePlan(next);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   const pathLabel =
     mode === "daily" || dailyConnected
       ? "Daily 全双工"
@@ -1519,5 +1556,7 @@ export function useVoiceSession() {
     planSuggested,
     provideStepInput,
     abandonActivePlan,
+    editPlanStepField,
+    reorderPlanStepBy,
   };
 }
