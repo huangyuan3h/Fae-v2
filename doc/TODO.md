@@ -203,13 +203,27 @@
 
 ### 长任务进度、重试与幂等
 
-- **状态**：待开始
+- **状态**：已完成（归档见 `doc/archive/TASK_RELIABILITY.md`）
 - **重要等级**：P1
 - **收益程度**：高
 - **预计时间**：1–2 周
 - **改动量**：大
-- **需求**：提供进度查询、失败重试、幂等键和错误审计。
-- **验收**：重复请求不会产生重复副作用，失败任务可安全重试。
+- **需求**：
+  - TaskStore schema 迁移：新增 `idempotency_key` / `fingerprint` / `progress_json` 列 + `(session_id, idempotency_key)` UNIQUE 部分索引。
+  - `create_task` 接受 `idempotency_key` + `fingerprint`：同 key 同 fingerprint replay；不同 fingerprint 抛 `IdempotencyConflict`。
+  - `claim` / `complete` / `fail` 走 SQLite CAS（`UPDATE ... WHERE status = ? AND attempts < max_attempts`），关闭「同状态重复操作」「超额尝试」「重复副作用」三个 P0 漏洞。
+  - `max_attempts` 真正生效：`claim` 超限抛 `AttemptsExhausted`。
+  - `retry` 用 `_UNSET` sentinel 真清空 error / result / resume_token / timestamps；attempts 只在 claim 时递增。
+  - `update_progress` 合并写 progress dict；`error_history()` 返回结构化 `attempt_failed` 事件列表。
+  - API：`POST /api/tasks` 读 `Idempotency-Key` header；新增 `PATCH /api/tasks/{id}/progress`；响应增加 `progress` / `error_history` / `idempotency_key` / `fingerprint` 字段。
+- **验收**：
+  - 同 key 同 fingerprint 的 `POST /api/tasks` 复用原 task，DB 行数 == 1。
+  - 同 key 不同 fingerprint 返回 409 `idempotency_conflict`。
+  - 两个 TaskStore 句柄同文件并发 claim 仅一个成功；其余返回 409。
+  - claim 超 `max_attempts` 返回 409 `attempts_exhausted`。
+  - failed → retry 后 `error_code` / `error_message` / `started_at` / `finished_at` 全清零，attempts 不增。
+  - 多次失败后 `error_history` 按 attempt 编号累加。
+  - 后端 607 例测试通过，覆盖率 78.99%。
 
 ### 外部 channel 闭环
 
@@ -276,4 +290,4 @@
 
 ---
 
-**最后整理**：2026-08-01（追加 Rolling Summary 生命周期收口归档）
+**最后整理**：2026-08-01（追加 Rolling Summary 生命周期 + 长任务可靠性收口归档）

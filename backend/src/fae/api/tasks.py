@@ -11,31 +11,43 @@ documented status graph:
     failed | cancelled → queued    (operator retry, attempts += 1)
 
 Endpoints
-  POST   /api/tasks                       create
+  POST   /api/tasks                       create (supports Idempotency-Key)
   GET    /api/tasks                       list (filters + cursor)
   GET    /api/tasks/summary               status counts
-  GET    /api/tasks/{task_id}             fetch
-  POST   /api/tasks/{task_id}/claim       queued → running
+  GET    /api/tasks/{task_id}             fetch (incl. progress + error_history)
+  POST   /api/tasks/{task_id}/claim       queued | needs_input → running
   POST   /api/tasks/{task_id}/needs-input running → needs_input
   POST   /api/tasks/{task_id}/provide-input
-                                         needs_input → running
+                                          needs_input → running
   POST   /api/tasks/{task_id}/complete    running → done
   POST   /api/tasks/{task_id}/fail        running | needs_input → failed
   POST   /api/tasks/{task_id}/cancel      any non-terminal → cancelled
   POST   /api/tasks/{task_id}/retry       failed | cancelled → queued
+  PATCH  /api/tasks/{task_id}/progress    merge progress dict (non-terminal)
 
-Invalid transitions return HTTP 409 (Conflict).
+Idempotency:
+  ``POST /api/tasks`` honours the ``Idempotency-Key`` header. Repeats
+  with the same key + matching fingerprint replay the original task
+  (HTTP 201 with the same id); mismatched fingerprints return 409
+  ``idempotency_conflict`` so the caller can detect divergent retries.
+
+Invalid transitions / exhausted attempts / duplicate terminal actions
+return HTTP 409 (Conflict).
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from fae.scheduler.tasks import (
+    AttemptsExhausted,
+    IdempotencyConflict,
     InvalidTaskTransition,
     Task,
     TaskNotFound,
@@ -87,6 +99,11 @@ class TaskNoteBody(BaseModel):
     note: str | None = None
 
 
+class TaskProgressBody(BaseModel):
+    progress: dict[str, Any] = Field(default_factory=dict)
+    note: str | None = None
+
+
 class TaskOut(BaseModel):
     id: str
     kind: str
@@ -110,9 +127,18 @@ class TaskOut(BaseModel):
     is_parked: bool
     extra: dict[str, Any]
     notes: list[dict[str, Any]] = Field(default_factory=list)
+    idempotency_key: str | None = None
+    fingerprint: str | None = None
+    progress: dict[str, Any] = Field(default_factory=dict)
+    error_history: list[dict[str, Any]] = Field(default_factory=list)
 
     @classmethod
-    def from_task(cls, task: Task) -> "TaskOut":
+    def from_task(
+        cls,
+        task: Task,
+        *,
+        error_history: list[dict[str, Any]] | None = None,
+    ) -> "TaskOut":
         return cls(
             id=task.id,
             kind=task.kind,
@@ -136,6 +162,10 @@ class TaskOut(BaseModel):
             is_parked=is_parked(task.status),
             extra=task.extra,
             notes=task.notes,
+            idempotency_key=task.idempotency_key,
+            fingerprint=task.fingerprint,
+            progress=task.progress,
+            error_history=error_history if error_history is not None else [],
         )
 
 
@@ -166,28 +196,87 @@ def _conflict_message(message: str) -> HTTPException:
     )
 
 
+def _attempts_exhausted(exc: AttemptsExhausted) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "attempts_exhausted",
+            "attempts": exc.attempts,
+            "max_attempts": exc.max_attempts,
+        },
+    )
+
+
+def _idempotency_conflict(exc: IdempotencyConflict) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "idempotency_conflict",
+            "task_id": exc.task_id,
+            "idempotency_key": exc.key,
+            "message": "Idempotency-Key already bound to a different payload.",
+        },
+    )
+
+
+def _fingerprint(
+    *, kind: str, title: str, payload: dict[str, Any], session_id: str | None
+) -> str:
+    """Stable fingerprint over the request fields that distinguish
+    idempotent calls. Excludes transient fields (created_at / channel)."""
+    canonical = json.dumps(
+        {
+            "kind": kind,
+            "title": title,
+            "payload": dict(payload),
+            "session_id": session_id or "default",
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()[:32]
+
+
 # ── Routes ───────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=TaskOut, status_code=201)
-async def create_task(body: TaskCreateBody, request: Request) -> TaskOut:
+async def create_task(
+    body: TaskCreateBody,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> TaskOut:
     store = _store(request)
+    safe_key = (idempotency_key or "").strip() or None
+    session_id = body.session_id or "default"
+    fingerprint = _fingerprint(
+        kind=body.kind,
+        title=body.title,
+        payload=body.payload,
+        session_id=session_id,
+    )
     try:
         task = await asyncio.to_thread(
             store.create_task,
             kind=body.kind,
             title=body.title,
             payload=body.payload,
-            session_id=body.session_id or "default",
+            session_id=session_id,
             channel=body.channel or "http",
             parent_id=body.parent_id,
             max_attempts=body.max_attempts,
+            idempotency_key=safe_key,
+            fingerprint=fingerprint if safe_key else None,
         )
+    except IdempotencyConflict as exc:
+        raise _idempotency_conflict(exc) from exc
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task.id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.get("/summary", response_model=dict[str, int])
@@ -232,7 +321,8 @@ async def get_task(task_id: str, request: Request) -> TaskOut:
     task = await asyncio.to_thread(store.get_task, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task.id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/claim", response_model=TaskOut)
@@ -244,9 +334,12 @@ async def claim_task(
         task = await asyncio.to_thread(store.claim, task_id, note=body.note)
     except TaskNotFound:
         raise HTTPException(status_code=404, detail="task not found")
+    except AttemptsExhausted as exc:
+        raise _attempts_exhausted(exc) from exc
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/needs-input", response_model=TaskOut)
@@ -266,7 +359,8 @@ async def task_needs_input(
         raise HTTPException(status_code=404, detail="task not found")
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/provide-input", response_model=TaskOut)
@@ -285,7 +379,8 @@ async def task_provide_input(
         raise HTTPException(status_code=404, detail="task not found")
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/complete", response_model=TaskOut)
@@ -304,7 +399,8 @@ async def task_complete(
         raise HTTPException(status_code=404, detail="task not found")
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/fail", response_model=TaskOut)
@@ -324,7 +420,28 @@ async def task_fail(
         raise HTTPException(status_code=404, detail="task not found")
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
+
+
+@router.patch("/{task_id}/progress", response_model=TaskOut)
+async def task_progress(
+    task_id: str, body: TaskProgressBody, request: Request
+) -> TaskOut:
+    store = _store(request)
+    try:
+        task = await asyncio.to_thread(
+            store.update_progress,
+            task_id,
+            progress=body.progress,
+            note=body.note,
+        )
+    except TaskNotFound:
+        raise HTTPException(status_code=404, detail="task not found")
+    except InvalidTaskTransition as exc:
+        raise _conflict(exc) from exc
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 @router.post("/{task_id}/cancel", response_model=TaskOut)
@@ -360,7 +477,8 @@ async def task_retry(
         raise HTTPException(status_code=404, detail="task not found")
     except InvalidTaskTransition as exc:
         raise _conflict(exc) from exc
-    return TaskOut.from_task(task)
+    error_history = await asyncio.to_thread(store.error_history, task_id)
+    return TaskOut.from_task(task, error_history=error_history)
 
 
 __all__ = ["router"]
